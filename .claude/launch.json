@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "widget-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4181",
+        "--directory",
+        "/private/tmp/claude-501/-Users-arav-Vault-voiceOS-grokbot-integration/b43a0c7e-efee-4ad7-aa1f-a518a79df290/scratchpad/preview"
+      ],
+      "port": 4181
+    }
+  ]
+}

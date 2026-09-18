@@ -1,0 +1,17 @@
+node_modules/
+.env
+
+# Planning & handoff docs (not part of the shipped integration)
+PLAN.md
+SPIKE.md
+HOW-WE-CONNECTED.md
+JONAH-ASKS.md
+JONAH-CSP-BUG.md
+JONAH-INVOKE-ASK.md
+docs/
+
+# Scratch / preview output
+_card.html
+
+# Unused asset (icon.png is the manifest icon, mark.png is the card mark)
+logo.webp

@@ -1,0 +1,18 @@
+/* Only frame bounds; the handoff's visual styles and animation engine stay intact. */
+#v-thread{max-height:420px;display:flex;flex-direction:column;overflow:hidden}
+#v-thread[hidden],#v-members[hidden]{display:none}
+#v-thread>.hd,#v-thread>#c{flex-shrink:0}
+#v-thread>#msgs{min-height:0;flex:1 1 auto;overflow-y:auto;overflow-wrap:anywhere}
+#v-members{max-height:420px;overflow-y:auto;overscroll-behavior:contain}
+#v-members>.hd{position:sticky;top:0;z-index:2;background:var(--card)}
+#stack{max-width:110px;flex-wrap:wrap;row-gap:3px;flex-shrink:0}
+#stack:empty{min-width:30px;min-height:30px}
+#hd .mark{flex-shrink:0}
+.mrow .t2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#send-status{padding:0 14px;max-height:48px;overflow-y:auto;flex-shrink:0}
+#msgs{overflow-wrap:anywhere;max-height:268px;overflow-y:auto}
+/* VoiceOS positions its 30px approval button 12px right / 10px bottom.
+   Reserve that exact slot; the iframe has no API for approving a tool itself. */
+.thread-confirmation .compose{margin-bottom:4px;padding-right:54px}
+.thread-confirmation .compose .send{display:none}
+.thread-confirmation #v-members{padding-bottom:46px}
