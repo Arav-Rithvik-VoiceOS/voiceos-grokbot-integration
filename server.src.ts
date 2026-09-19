@@ -718,8 +718,8 @@ server.registerTool(
     handle("grokbot_open_screen", async () => {
       // The card sends the bot's id; resolveMembers matches ids first, then names.
       const [bot] = await resolveMembers([args.bot.trim()]);
-      await openBotComputer(bot.id);
-      return result({ opened: true, bot: bot.name });
+      const command = await openBotComputer(bot.id);
+      return result({ opened: true, bot: bot.name, command });
     }),
 );
 

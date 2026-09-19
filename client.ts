@@ -637,10 +637,13 @@ export async function resolveMembers(tokens: string[]): Promise<Agent[]> {
  * for takeover, so the user takes over from there. A card cannot open this
  * link itself (VoiceOS only lets cards open https:), hence a server-side open.
  */
-export function openBotComputer(agentId: string): Promise<void> {
+export function openBotComputer(agentId: string): Promise<string> {
   const url = `grokbot://app/v1/sidebar?agent=${encodeURIComponent(agentId)}&tab=computer`;
+  // The exact command, returned so the card can print what its click ran.
+  const command = `/usr/bin/open "${url}"`;
+  log("screen click →", command);
   return new Promise((resolve, reject) => {
-    execFile("/usr/bin/open", [url], (error) => (error ? reject(error) : resolve()));
+    execFile("/usr/bin/open", [url], (error) => (error ? reject(error) : resolve(command)));
   });
 }
 
