@@ -19936,6 +19936,19 @@ async function resolveAgent(spoken, agents) {
   const names = list.map((a) => a.name).slice(0, 6).join(", ");
   throw new IntegrationError("not_found", `I couldn't find a bot called "${spoken}".${names ? ` You have: ${names}.` : ""}`);
 }
+async function resolveMembers(tokens) {
+  const list = await listAgents();
+  return Promise.all(tokens.map((t) => {
+    const byId = list.find((a) => a.id === t);
+    return byId ? Promise.resolve(byId) : resolveAgent(t, list);
+  }));
+}
+function openBotComputer(agentId) {
+  const url = `grokbot://app/v1/sidebar?agent=${encodeURIComponent(agentId)}&tab=computer`;
+  return new Promise((resolve, reject) => {
+    execFile("/usr/bin/open", [url], (error2) => error2 ? reject(error2) : resolve());
+  });
+}
 function openGrokBotApp() {
   try {
     execFile("/usr/bin/open", ["-a", "Grok Bot"], () => {});
@@ -21055,8 +21068,10 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 <style>
 /* Caption inside the frame (avatar · "Name's screen" · tag), brand mark top-right; the header row is gone so the frame can be wider. */
 .screen{position:relative;margin:10px 6px 0;border-radius:16px;overflow:hidden;aspect-ratio:16/10;cursor:pointer;padding:5px;background:linear-gradient(180deg,#2c2c31 0%,#15151a 45%,#0a0a0c 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.22),inset 0 -1px 0 rgba(0,0,0,.8),0 1px 0 rgba(255,255,255,.04),0 22px 44px -18px rgba(0,0,0,.75),0 0 70px -24px var(--glow,rgba(255,138,0,.5));transition:transform .5s cubic-bezier(.2,.8,.2,1),box-shadow .5s}
-.screen:hover{transform:translateY(-1px);box-shadow:inset 0 1px 0 rgba(255,255,255,.26),inset 0 -1px 0 rgba(0,0,0,.8),0 1px 0 rgba(255,255,255,.04),0 28px 54px -18px rgba(0,0,0,.8),0 0 90px -22px var(--glow,rgba(255,138,0,.6))}
+/* --hs = +4px a side (set in report); must stay under the 6px margin, body clips */
+.screen:hover{transform:translateY(-1px) scale(var(--hs,1.01));box-shadow:inset 0 1px 0 rgba(255,255,255,.26),inset 0 -1px 0 rgba(0,0,0,.8),0 1px 0 rgba(255,255,255,.04),0 28px 54px -18px rgba(0,0,0,.8),0 0 90px -22px var(--glow,rgba(255,138,0,.6))}
 html[data-theme=light] .screen{background:linear-gradient(180deg,#f2f2f5,#c9c9cf 50%,#9a9aa2);box-shadow:inset 0 1px 0 rgba(255,255,255,.9),inset 0 -1px 0 rgba(0,0,0,.25),0 22px 44px -18px rgba(0,0,0,.35),0 0 70px -24px var(--glow,rgba(255,138,0,.4))}
+.screen:active{transform:scale(.995);transition-duration:.12s}
 .screen::after{content:"";position:absolute;inset:5px;border-radius:11px;pointer-events:none;z-index:2;background:linear-gradient(115deg,rgba(255,255,255,.09) 0%,rgba(255,255,255,.03) 28%,transparent 42%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),inset 0 0 40px rgba(0,0,0,.25)}
 .screen canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .feed{position:absolute;inset:5px;border-radius:11px;overflow:hidden;background:#0a0a0b;transition:opacity .4s}
@@ -21097,7 +21112,7 @@ html[data-theme=light] .screen{background:linear-gradient(180deg,#f2f2f5,#c9c9cf
 .sp{display:inline-block;width:9px;height:9px;border:1.5px solid var(--ink-3);border-right-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
-<div class="screen" id="screen" role="button" aria-label="Open full screen">
+<div class="screen" id="screen" role="button" aria-label="Open in Grok Bot">
   <div class="feed" id="feed"><canvas id="cv" width="800" height="500"></canvas></div>
   <span class="mark" id="brand"><i></i></span>
   <div class="cap"><span id="capav"></span><div class="grow"><div class="who" id="who"></div><div class="what" id="what"></div></div><span class="ctl"><button class="tb" id="pause">Pause</button><button class="tb bad" id="stop">Stop</button></span></div>
@@ -21114,15 +21129,15 @@ const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelecto
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const EYES='<span class="eyes"><i class="eye l"></i><i class="eye r"></i></span>';
 const av=(b,cls='')=>'<span class="av '+(b.shape||'blob')+' '+cls+'" data-state="'+esc(b.status||'idle')+'" style="--c:'+esc(b.color)+'">'+EYES+'</span>';
-let inited=false;
-addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
+let inited=false,CAN_INVOKE=false;
+addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;if(e.source===parent&&m.capabilities)CAN_INVOKE=!!m.capabilities.invokeTool;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
 setTimeout(()=>{if(!inited)boot(DEMO.data,DEMO.args,'dark')},350);
 function boot(data,args,mode){document.documentElement.dataset.theme=mode;render(data||{},args||{});hydrate(args||{});report();new ResizeObserver(report).observe(document.body);}
 function getVal(el){return 'value' in el&&el.tagName!=='BUTTON'?el.value:(el.dataset.value??'')}
 function setVal(el,v){if('value' in el&&el.tagName!=='BUTTON')el.value=v??'';else{el.dataset.value=v;el.dispatchEvent(new CustomEvent('hydrate',{detail:v}))}}
 function hydrate(args){$$('[data-voiceos-key]').forEach(el=>{const k=el.dataset.voiceosKey;if(k in args)setVal(el,args[k]);el.addEventListener('input',()=>stage(k,getVal(el)))})}
 function stage(key,value){parent.postMessage({type:'voiceos:updateInput',key,value},'*')}
-function report(){if(document.hidden||!document.documentElement.offsetWidth)return;const h=Math.ceil(document.body.getBoundingClientRect().height);if(h>=8)parent.postMessage({type:'voiceos:resize',height:h},'*')}
+function report(){if(document.hidden||!document.documentElement.offsetWidth)return;const sc=$('#screen');sc.style.setProperty('--hs',1+8/sc.offsetWidth);const h=Math.ceil(document.body.getBoundingClientRect().height);if(h>=8)parent.postMessage({type:'voiceos:resize',height:h},'*')}
 
 /* Motion — an original avatar liveness engine: wandering gaze, blinks, cursor-follow, per-state behavior. */
 const Motion=(()=>{
@@ -21272,7 +21287,8 @@ function render(d,a){D=d;B=botById(d,a.bot||'pepper');
  $('#who').innerHTML=esc(B.name)+'’s screen'+(B.label?' <span class="chip">'+esc(B.label)+'</span>':'');
  $('#pause').onclick=e=>{e.stopPropagation();paused=!paused;Feed.pause(paused);$('#live').classList.toggle('paused',paused);$('#live').lastChild.textContent=paused?'PAUSED':'LIVE';$('#pause').textContent=paused?'Resume':'Pause';if(paused)clearTimeout(timer);else if(!isLive)step()};
  $('#stop').onclick=e=>{e.stopPropagation();clearTimeout(timer);Feed.pause(true);$('#live').classList.add('paused');$('#live').lastChild.textContent='STOPPED';$('#what').textContent='Stopped by you';Motion.set($('#capav .av'),'blocked');$('#stop').disabled=true;$('#pause').disabled=true};
- $('#screen').onclick=()=>parent.postMessage({type:'voiceos:openUrl',url:a.deepLink||'grokbot://screen/'+B.id},'*');
+ /* openUrl is https-only, so the server opens the grokbot:// link (see cards.ts screenCard). */
+ $('#screen').onclick=()=>{if(CAN_INVOKE)parent.postMessage({type:'voiceos:invokeTool',name:'grokbot_open_screen',args:{bot:B.id},requestId:'o'+Date.now()},'*')};
  if(a.stream){goLive(a)}else{goIdle()}
 }
 /* Real feed: the bot's own desktop over its websockify socket. No demo cursor, no scripted steps.
@@ -21805,7 +21821,7 @@ function connectCard(account) {
 function screenCard(bot, stream) {
   const payload = (live) => ({
     data: { bots: [toBot(bot)] },
-    args: { bot: bot.id, stream: live ? stream.wsUrl : "", deepLink: "" }
+    args: { bot: bot.id, stream: live ? stream.wsUrl : "" }
   });
   if (stream) {
     const card = glance("screen", payload(true), 380, "Grok Bot", { RFB: RFB_B64 });
@@ -22270,6 +22286,17 @@ server.registerTool("view_bot_desktop_live", {
     live,
     message: live ? working ? `Live view of ${bot.name}'s screen.` : `${bot.name}'s desktop is up but ${bot.name} is idle right now.` : `${bot.name}'s computer is not running right now.`
   }, screenCard(bot, live ? { wsUrl: probe.wsUrl, viewerUrl: probe.viewerUrl } : undefined));
+}));
+server.registerTool("grokbot_open_screen", {
+  title: "Open a bot's computer in Grok Bot",
+  description: "Internal — invoked by the screen card when the user clicks the live screen. Opens the Grok Bot app on that bot's Computer tab so the user can control it there. Do not call from voice; use view_bot_desktop_live to show a bot's screen.",
+  inputSchema: {
+    bot: exports_external.string().describe("The exact bot ID shown on the card.")
+  }
+}, async (args) => handle("grokbot_open_screen", async () => {
+  const [bot] = await resolveMembers([args.bot.trim()]);
+  await openBotComputer(bot.id);
+  return result({ opened: true, bot: bot.name });
 }));
 await server.connect(new StdioServerTransport);
 log("server started, awaiting MCP requests on stdio");

@@ -362,7 +362,9 @@ export function connectCard(account?: { name?: string; email?: string }) {
  * screen.html — live view of a bot's computer. `stream.wsUrl` is the computer's
  * websockify WebSocket; the card opens it with its own bundled noVNC client
  * (RFB_B64). `stream.viewerUrl` is the pod's vnc.html, kept for reference
- * only (see deepLink below). Each bot has its own cloud computer, so every
+ * only (it is unusable in a browser: its assets 404 without the token header).
+ * A click on the screen invokes `grokbot_open_screen`, which opens the bot's
+ * Computer tab in the Grok Bot app. Each bot has its own cloud computer, so every
  * bot's "screen" is its own persistent desktop. With no stream the card shows
  * its idle state and ships without the viewer bundle.
  *
@@ -372,10 +374,7 @@ export function connectCard(account?: { name?: string; email?: string }) {
 export function screenCard(bot: Agent, stream?: { wsUrl: string; viewerUrl: string }) {
   const payload = (live: boolean) => ({
     data: { bots: [toBot(bot)] },
-    // deepLink stays empty on purpose: the pod's vnc.html viewer is unusable in a
-    // browser (its assets 404 without the token header), so the card falls back
-    // to the design's `grokbot://screen/<id>` deep link into the Grok Bot app.
-    args: { bot: bot.id, stream: live ? stream!.wsUrl : "", deepLink: "" },
+    args: { bot: bot.id, stream: live ? stream!.wsUrl : "" },
   });
   if (stream) {
     const card = glance("screen", payload(true), 380, "Grok Bot", { RFB: RFB_B64 });
