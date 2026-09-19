@@ -185,62 +185,11 @@ const Motion=(()=>{
  return{scan,set,react};
 })();
 
-function autosize(t){t.style.height='auto';t.style.height=t.scrollHeight+'px'}
-
-
 const botById=(d,id)=>(d.bots||[]).find(b=>b.id===id)||{name:id,color:'#888',shape:'blob'};
-const statusText=b=>({working:'Working',thinking:'Thinking',waiting:'Needs you',blocked:'Blocked',done:'Done',idle:'Idle'}[b.status]||'Idle');
-const dotCls=b=>({working:'on',thinking:'on',waiting:'warn',blocked:'bad'}[b.status]||'');
-function thread(d,botId){return (d.thread||[]).map(m=>{if(m.sys){const b=botById(d,m.bot);return '<div class="sys">'+esc(m.sys)+' '+av(b,'tiny')+' '+esc(b.name)+'</div>'}return (m.t?'<div class="sys">'+esc(m.t)+'</div>':'')+'<div class="bubble '+m.from+' fade-in">'+(m.html||esc(m.text))+'</div>'}).join('')}
-function composer(name,ph){return '<form class="compose" id="compose"><span class="plus">+</span><input id="msg" placeholder="'+esc(ph||('Message '+name))+'" autocomplete="off"><button class="send" type="submit" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form>'}
-function wireComposer(root,onSend){const f=$('#compose',root),i=$('#msg',f),b=$('.send',f);i.addEventListener('input',()=>b.disabled=!i.value.trim());f.addEventListener('submit',e=>{e.preventDefault();const v=i.value.trim();if(!v)return;i.value='';b.disabled=true;onSend(v)})}
-function appendMe(list,text){const el=document.createElement('div');el.className='bubble me fade-in';el.textContent=text;list.appendChild(el);const s=document.createElement('div');s.className='sys';s.textContent='Delivered via VoiceOS';list.appendChild(s);list.scrollTop=list.scrollHeight;typing(list)}
-function typing(list){const t=document.createElement('div');t.className='bubble bot fade-in';t.innerHTML='<span class="ty"><i></i><i></i><i></i></span>';list.appendChild(t);list.scrollTop=list.scrollHeight;setTimeout(()=>t.remove(),2600)}
 
-
-/* ---- Screen feed. Real: pass args.stream (MJPEG/WebRTC/WS url) → hook in Feed.connect(). Demo: procedural desktop the bot "uses". ---- */
+/* ---- Screen feed: args.stream is the bot computer's websockify socket. ---- */
 const Feed=(()=>{
- const cv=$('#cv'),g=cv.getContext('2d');let W=cv.width,H=cv.height,t=0,paused=false,scene=0,connected=false;
- const ck=(x,y,w,h,r,c)=>{g.fillStyle=c;g.beginPath();g.roundRect(x,y,w,h,r);g.fill()};
- const txt=(x,y,w,h,c,a)=>{g.fillStyle=c;g.globalAlpha=a??1;g.beginPath();g.roundRect(x,y,w,h,h/2);g.fill();g.globalAlpha=1};
- function drawBrowser(){
-  g.fillStyle='#1c1d21';g.fillRect(0,0,W,H);
-  // menubar
-  g.fillStyle='#0f0f11';g.fillRect(0,0,W,22);txt(12,8,40,6,'#fff',.7);txt(60,8,28,6,'#fff',.35);txt(96,8,34,6,'#fff',.35);txt(W-90,8,22,6,'#fff',.5);txt(W-60,8,46,6,'#fff',.5);
-  // window
-  ck(26,40,W-52,H-60,10,'#24262b');
-  g.fillStyle='#2b2d33';g.beginPath();g.roundRect(26,40,W-52,34,[10,10,0,0]);g.fill();
-  [['#ff5f57',40],['#febc2e',56],['#28c840',72]].forEach(([c,x])=>{g.fillStyle=c;g.beginPath();g.arc(x,57,5,0,7);g.fill()});
-  ck(100,48,W-200,18,9,'#1a1b1f');txt(112,55,150,5,'#fff',.55);
-  // page: LMS-like
-  g.fillStyle='#f6f7f9';g.fillRect(26,74,W-52,H-94);
-  g.fillStyle='#fff';g.fillRect(26,74,W-52,50);g.fillStyle='#e6e8ec';g.fillRect(26,124,W-52,1);
-  ck(44,88,22,22,6,'#1f6feb');txt(76,96,90,7,'#111',.85);txt(180,97,44,5,'#111',.4);txt(236,97,44,5,'#111',.4);txt(292,97,44,5,'#111',.4);
-  // sidebar
-  g.fillStyle='#eef0f3';g.fillRect(26,125,150,H-145);
-  for(let i=0;i<7;i++)txt(44,146+i*26,90-(i%3)*18,6,'#111',i===2?.85:.35);
-  if(scene>=1)ck(36,140+2*26-6,132,20,6,'rgba(31,111,235,.12)');
-  // content
-  txt(200,146,220,10,'#111',.9);txt(200,166,300,6,'#111',.4);
-  ck(200,190,W-260,60,8,'#fff');g.strokeStyle='#e3e5ea';g.lineWidth=1;g.strokeRect(200.5,190.5,W-261,59);
-  txt(216,204,180,7,'#111',.8);txt(216,222,260,5,'#111',.4);
-  if(scene>=2){ck(W-190,212,110,26,7,'#1f6feb');txt(W-165,222,60,5,'#fff',.95)}
-  // upload card
-  ck(200,266,W-260,H-330,8,'#fff');g.strokeRect(200.5,266.5,W-261,H-331);
-  if(scene>=3){g.setLineDash([6,5]);g.strokeStyle='#1f6feb';g.lineWidth=2;g.strokeRect(220,286,W-300,H-380);g.setLineDash([]);
-   if(scene>=4){ck(236,300,190,44,8,'#eef4ff');ck(246,310,24,24,5,'#1f6feb');txt(280,316,110,6,'#111',.85);txt(280,330,70,4,'#111',.4)}
-   if(scene>=5){ck(W-330,H-108,100,30,8,'#111');txt(W-300,H-96,40,5,'#fff',.95)}
-   if(scene>=6){g.fillStyle='rgba(246,247,249,.85)';g.fillRect(26,74,W-52,H-94);ck(W/2-130,H/2-50,260,90,14,'#fff');g.fillStyle='#34c96e';g.beginPath();g.arc(W/2,H/2-22,16,0,7);g.fill();txt(W/2-70,H/2+8,140,7,'#111',.85);txt(W/2-50,H/2+24,100,5,'#111',.4)}
-  } else {txt(220,290,160,6,'#111',.35)}
-  // dock
-  g.fillStyle='rgba(255,255,255,.12)';g.beginPath();g.roundRect(W/2-150,H-32,300,26,10);g.fill();
-  ['#ff8a00','#3d7bff','#e3213c','#1fae5b','#9b5cff','#f5c400','#14b8c4','#fff'].forEach((c,i)=>ck(W/2-138+i*37,H-28,18,18,5,c));
- }
- function frame(){if(connected)return;if(!paused){t++;drawBrowser();
-  // subtle scanline shimmer = "live" feel
-  g.fillStyle='rgba(255,255,255,.025)';g.fillRect(0,(t*3)%H,W,2)}
-  requestAnimationFrame(frame)}
- frame();
+ const cv=$('#cv');let paused=false,connected=false;
  /* Live path. `url` is the bot computer's websockify WebSocket (wss://…/websockify?token=…&network_token=…).
     The viewer (noVNC RFB) ships INSIDE this card as gzip+base64 (RFB_B64, built by scripts/build-rfb.ts):
     the pod's own vnc.html can't be iframed (its relative asset loads carry no token → 404) and the
@@ -280,23 +229,15 @@ const Feed=(()=>{
  function pause(p){paused=p;$('#feed').classList.toggle('stale',p);if(!connected)return;
   if(p&&rfb){const r=rfb;rfb=null;r._stale=true;try{r.disconnect()}catch(e){}badge('PAUSED',true)}
   else if(!p&&!rfb&&lastUrl)connect(lastUrl)}
- return{set(s){scene=s},pause,connect}
+ return{pause,connect}
 })();
 
-const SCRIPT=[ // [cursor x%, y%, click?, app, step label, scene]
- {x:12,y:44,click:true,app:'Schoology · Assignments',step:'Opened CSA 1.7 assignment page',scene:1,ms:1600},
- {x:85,y:44,click:true,step:'Reading rubric and file requirements',scene:2,ms:2200},
- {x:52,y:62,click:true,app:'Schoology · Submit',step:'Clicked Submit Assignment',scene:3,ms:1500},
- {x:40,y:66,click:true,app:'Finder',step:'Attached CSA_1.7_Screenshot.png',scene:4,ms:2400},
- {x:66,y:80,click:true,app:'Schoology · Submit',step:'Submitting…',scene:5,ms:1700},
- {x:50,y:52,click:false,step:'Submission confirmed · receipt saved',scene:6,ms:3600,done:true},
-];
-let D,B,i=0,paused=false,timer,isLive=false;
+let D,B,paused=false,isLive=false;
 function render(d,a){D=d;B=botById(d,a.bot||'pepper');
  $('#capav').innerHTML=av({...B,status:'working'},'');$('#screen').style.setProperty('--glow',B.color+'80');
  $('#who').innerHTML=esc(B.name)+'’s screen'+(B.label?' <span class="chip">'+esc(B.label)+'</span>':'');
- $('#pause').onclick=e=>{e.stopPropagation();paused=!paused;Feed.pause(paused);$('#live').classList.toggle('paused',paused);$('#live').lastChild.textContent=paused?'PAUSED':'LIVE';$('#pause').textContent=paused?'Resume':'Pause';if(paused)clearTimeout(timer);else if(!isLive)step()};
- $('#stop').onclick=e=>{e.stopPropagation();clearTimeout(timer);Feed.pause(true);$('#live').classList.add('paused');$('#live').lastChild.textContent='STOPPED';$('#what').textContent='Stopped by you';Motion.set($('#capav .av'),'blocked');$('#stop').disabled=true;$('#pause').disabled=true};
+ $('#pause').onclick=e=>{e.stopPropagation();paused=!paused;Feed.pause(paused);$('#live').classList.toggle('paused',paused);$('#live').lastChild.textContent=paused?'PAUSED':'LIVE';$('#pause').textContent=paused?'Resume':'Pause'};
+ $('#stop').onclick=e=>{e.stopPropagation();Feed.pause(true);$('#live').classList.add('paused');$('#live').lastChild.textContent='STOPPED';$('#what').textContent='Stopped by you';Motion.set($('#capav .av'),'blocked');$('#stop').disabled=true;$('#pause').disabled=true};
  /* openUrl is https-only, so the server opens the grokbot:// link (see cards.ts screenCard). */
  $('#screen').onclick=()=>{if(CAN_INVOKE)parent.postMessage({type:'voiceos:invokeTool',name:'grokbot_open_screen',args:{bot:B.id},requestId:'o'+Date.now()},'*')};
  if(a.stream){goLive(a)}else{goIdle()}
@@ -315,12 +256,5 @@ function goIdle(){isLive=false;Feed.pause(true);
  $('#live').classList.add('paused');$('#live').lastChild.textContent='IDLE';
  $('#what').textContent=B.name+'’s computer is off right now';
  Motion.set($('#capav .av'),'idle');$('#pause').disabled=true;$('#stop').disabled=true;
-}
-function step(){if(paused)return;const s=SCRIPT[i];if(!s)return;
- const cur=$('#cur');cur.style.left=s.x+'%';cur.style.top=s.y+'%';
- if(s.click)setTimeout(()=>{cur.classList.remove('click');void cur.offsetWidth;cur.classList.add('click');Feed.set(s.scene)},560);else Feed.set(s.scene);
- $('#what').innerHTML=(s.done?'':'<i class="sp"></i>')+esc(s.step);
- if(s.done){Motion.set($('#capav .av'),'done');$('#live').classList.add('paused');$('#live').lastChild.textContent='IDLE'}
- i++;timer=setTimeout(step,s.ms);
 }
 </script>
