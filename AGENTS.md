@@ -82,6 +82,35 @@ Then in VoiceOS: Dashboard → Agent tab → Integration Studio → My
 Integrations → open **Grok Bot** → **Reload**. The agent sees your
 changes on its next turn — just talk to it.
 
+## After every change Arav needs to test
+
+VoiceOS loads the MAIN folder (`/Users/arav/Vault/voiceOS-grokbot-integration`),
+not a worktree, and it caches the manifest — a plain restart keeps the stale
+copy. Whenever a change is ready for Arav to test, first get it into the main
+folder (merge the worktree branch into `main`; do not push unless asked), then
+run these steps yourself, in this order. Do not only list them.
+
+1. Quit VoiceOS.
+
+```bash
+osascript -e 'quit app "VoiceOS"'
+```
+
+2. Run this in the main folder. It refuses to run while VoiceOS is open.
+
+```bash
+cd /Users/arav/Vault/voiceOS-grokbot-integration && bun run push-cache
+```
+
+3. Open VoiceOS again.
+
+```bash
+open -a VoiceOS
+```
+
+Then tell Arav what to say or click to test. Cards already on screen are
+stale; the tool must be invoked again.
+
 ## Definition of done
 
 - Manifest tools and server.ts registrations match exactly.
