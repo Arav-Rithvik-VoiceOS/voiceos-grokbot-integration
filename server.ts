@@ -21227,6 +21227,13 @@ function goIdle(){isLive=false;Feed.pause(true);
     }
     #message[hidden] { display: block; opacity: 0; }
     @media (prefers-reduced-motion: reduce) { #message { transition: none; } }
+    /* TEMP clipboard diagnostic overlay. */
+    #dbg {
+      position: fixed; z-index: 6; right: 12px; bottom: 12px; max-width: 300px;
+      padding: 8px 10px; border-radius: 8px; background: rgba(0, 0, 0, .72);
+      color: #8fe08f; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap; pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -21239,6 +21246,7 @@ function goIdle(){isLive=false;Feed.pause(true);
       </div>
     </div>
     <div id="message" role="status" aria-live="polite">Connecting to the computer…</div>
+    <div id="dbg" aria-hidden="true">clipboard debug…</div>
   </main>
   <script type="module" nonce="__VOICEOS_NONCE__">
     console.debug = console.info = console.warn = console.error = () => {};
@@ -21289,9 +21297,13 @@ function goIdle(){isLive=false;Feed.pause(true);
       // clipboard and pushes it in through __voiceosPushClipboard; VM-side copies
       // ride RFB's "clipboard" event back out to the host's message handler.
       const clipboardBridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.voiceosClipboard;
+      const dbg = document.getElementById("dbg");
+      const dlog = m => { if (dbg) dbg.textContent = (new Date().toISOString().slice(11, 19) + " " + m + "\\n" + dbg.textContent).slice(0, 700); };
+      dlog("boot bridge:" + (clipboardBridge ? "yes" : "NO"));
       window.__voiceosPushClipboard = text => {
+        dlog("→VM push rfb:" + (rfb ? "y" : "n") + " len:" + (typeof text === "string" ? text.length : "?"));
         if (!rfb || clearing || typeof text !== "string") return;
-        try { rfb.clipboardPasteFrom(text); } catch {}
+        try { rfb.clipboardPasteFrom(text); dlog("→VM sent " + text.length + "ch"); } catch (e) { dlog("→VM ERR " + (e && e.message || e)); }
       };
 
       if (!config || typeof config.wsUrl !== "string" || typeof config.botName !== "string" || typeof VoiceOSRFB !== "function") {
@@ -21314,11 +21326,13 @@ function goIdle(){isLive=false;Feed.pause(true);
             retries = 0;
             setState("connected", "Live");
             try { current.focus(); } catch {}
+            dlog("connected pasteFn:" + typeof current.clipboardPasteFrom);
           });
           current.addEventListener("clipboard", event => {
-            if (current !== rfb || !clipboardBridge) return;
             const text = event.detail && event.detail.text;
-            if (typeof text === "string") { try { clipboardBridge.postMessage(text); } catch {} }
+            dlog("←VM clip len:" + (text && text.length) + " bridge:" + (clipboardBridge ? "y" : "n"));
+            if (current !== rfb || !clipboardBridge) return;
+            if (typeof text === "string") { try { clipboardBridge.postMessage(text); dlog("←VM →host ok"); } catch (e) { dlog("←VM host ERR " + (e && e.message || e)); } }
           });
           current.addEventListener("disconnect", () => {
             if (current !== rfb || clearing) return;
