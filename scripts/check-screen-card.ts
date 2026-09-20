@@ -41,6 +41,7 @@ const liveCard = screenCard(bot, { wsUrl: WS_URL, viewerUrl: "https://example.cu
 const live = html(liveCard);
 const liveChars = glanceChars(liveCard);
 if (liveChars > CAP - HEADROOM) fail(`live screen card glance is ${liveChars} chars; it must stay under ${CAP - HEADROOM} (${CAP} cap minus ${HEADROOM} headroom for real bot data)`);
+if (/\/\*/.test(live.replace(/const RFB_B64='[^']*'/, ""))) fail("live card still carries a /* comment */ — renderCard's comment strip missed one (a \"/*\" inside a string would also break it)");
 if (/__VOICEOS_[A-Z]+__/.test(live)) fail("live card still has an unfilled __VOICEOS_*__ placeholder");
 if (!/body\{display:flow-root;/.test(live)) fail("screen card body must establish a flow root so its top margin is included in the reported height");
 if (!/const RFB_B64='H4sI/.test(live)) fail("live card is missing the gzip+base64 RFB bundle");

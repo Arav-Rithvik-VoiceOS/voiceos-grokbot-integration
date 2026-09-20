@@ -21039,11 +21039,12 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 <style>
 /* Caption inside the frame (avatar · "Name's screen" · tag), brand mark top-right; the header row is gone so the frame can be wider. */
 .screen{position:relative;margin:10px 6px 0;border-radius:16px;overflow:hidden;aspect-ratio:16/10;cursor:pointer;padding:5px;background:linear-gradient(180deg,#2c2c31 0%,#15151a 45%,#0a0a0c 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.22),inset 0 -1px 0 rgba(0,0,0,.8),0 1px 0 rgba(255,255,255,.04),0 22px 44px -18px rgba(0,0,0,.75),0 0 70px -24px var(--glow,rgba(255,138,0,.5));transition:transform .5s cubic-bezier(.2,.8,.2,1),box-shadow .5s}
-/* --hs = +4px a side (set in report); must stay under the 6px margin, body clips */
-.screen:hover{transform:translateY(-1px) scale(var(--hs,1.01));box-shadow:inset 0 1px 0 rgba(255,255,255,.26),inset 0 -1px 0 rgba(0,0,0,.8),0 1px 0 rgba(255,255,255,.04),0 28px 54px -18px rgba(0,0,0,.8),0 0 90px -22px var(--glow,rgba(255,138,0,.6))}
+.screen:hover{transform:translateY(-1px);box-shadow:inset 0 1px 0 rgba(255,255,255,.26),inset 0 -1px 0 rgba(0,0,0,.8),0 1px 0 rgba(255,255,255,.04),0 28px 54px -18px rgba(0,0,0,.8),0 0 90px -22px var(--glow,rgba(255,138,0,.6))}
 html[data-theme=light] .screen{background:linear-gradient(180deg,#f2f2f5,#c9c9cf 50%,#9a9aa2);box-shadow:inset 0 1px 0 rgba(255,255,255,.9),inset 0 -1px 0 rgba(0,0,0,.25),0 22px 44px -18px rgba(0,0,0,.35),0 0 70px -24px var(--glow,rgba(255,138,0,.4))}
-.screen:active{transform:scale(.995);transition-duration:.12s}
 .screen::after{content:"";position:absolute;inset:5px;border-radius:11px;pointer-events:none;z-index:2;background:linear-gradient(115deg,rgba(255,255,255,.09) 0%,rgba(255,255,255,.03) 28%,transparent 42%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),inset 0 0 40px rgba(0,0,0,.25)}
+.open{position:absolute;inset:5px;border-radius:11px;z-index:3;display:grid;place-items:center;background:rgba(0,0,0,.45);opacity:0;transition:opacity .18s;pointer-events:none}
+.open span{display:flex;align-items:center;gap:8px;height:40px;padding:0 18px 0 14px;border-radius:20px;background:rgba(22,22,24,.82);backdrop-filter:blur(10px);color:#fff;font-size:17px;font-weight:600;letter-spacing:-.01em}
+.screen.can:hover .open{opacity:1}.screen:has(.ctl:hover) .open{opacity:0}
 .screen canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .feed{position:absolute;inset:5px;border-radius:11px;overflow:hidden;background:#0a0a0b;transition:opacity .4s}
 .feed.stale{opacity:.5}
@@ -21103,6 +21104,7 @@ html[data-theme=light] .screen{background:linear-gradient(180deg,#f2f2f5,#c9c9cf
 </style>
 <div class="screen" id="screen" role="button" aria-label="Open in Grok Bot">
   <div class="feed" id="feed"><canvas id="cv" width="800" height="500"></canvas></div>
+  <div class="open"><span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg>Open</span></div>
   <span class="mark" id="brand"><i></i></span>
   <div class="cap"><span id="capav"></span><div class="grow"><div class="who" id="who"></div><div class="what" id="what"></div></div><span class="ctl"><button class="tb" id="pause">Pause</button><button class="tb bad" id="stop">Stop</button></span></div>
   <div class="cur" id="cur" style="left:44%;top:42%"><span class="ring"></span><svg viewBox="0 0 14 20"><path d="M1 1l12 9-5 1 3 6-2.5 1.2L5.6 12 1 15z" fill="#fff" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/></svg></div>
@@ -21121,7 +21123,7 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const EYES='<span class="eyes"><i class="eye l"></i><i class="eye r"></i></span>';
 const av=(b,cls='')=>'<span class="av '+(b.shape||'blob')+' '+cls+'" data-state="'+esc(b.status||'idle')+'" style="--c:'+esc(b.color)+'">'+EYES+'</span>';
 let inited=false,CAN_INVOKE=false;
-addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;if(e.source===parent&&m.capabilities)CAN_INVOKE=!!m.capabilities.invokeTool;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
+addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;if(e.source===parent&&m.capabilities)$('#screen').classList.toggle('can',CAN_INVOKE=!!m.capabilities.invokeTool);boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
 setTimeout(()=>{if(!inited)boot(DEMO.data,DEMO.args,'dark')},350);
 /* Card→host tool bridge (voiceos:invokeTool → toolResult). The message bar's grokbot_card_send has no host confirmation; its result's receipt card is ignored so this card stays put. */
 const TERMINAL={completed:1,cancelled:1,failed:1,unknown:1};
@@ -21167,7 +21169,7 @@ function watchReply(at){
 $('#rx').onclick=e=>{e.stopPropagation();hideReply()};
 wireMessageBar();
 function boot(data,args,mode){document.documentElement.dataset.theme=mode;render(data||{},args||{});report();new ResizeObserver(report).observe(document.body);}
-function report(){if(document.hidden||!document.documentElement.offsetWidth)return;const sc=$('#screen');sc.style.setProperty('--hs',1+8/sc.offsetWidth);const h=Math.ceil(document.body.getBoundingClientRect().height);if(h>=8)parent.postMessage({type:'voiceos:resize',height:h},'*')}
+function report(){if(document.hidden||!document.documentElement.offsetWidth)return;const h=Math.ceil(document.body.getBoundingClientRect().height);if(h>=8)parent.postMessage({type:'voiceos:resize',height:h},'*')}
 
 /* Motion — an original avatar liveness engine: wandering gaze, blinks, cursor-follow, per-state behavior. */
 const Motion=(()=>{
@@ -21564,7 +21566,8 @@ var MAX_GLANCE_CHARS = 96000;
 var glanceChars = (card) => JSON.stringify({ blocks: card._voiceos_glance.blocks }).length;
 function renderCard(name, payload = {}, fills = {}) {
   const json = JSON.stringify({ data: payload.data ?? {}, args: payload.args ?? {} }).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-  let html = injectMark(WIDGETS[name]).replace(/__VOICEOS_([A-Z]+)__/g, (token, key) => key === "DEMO" ? token : fills[key] ?? "");
+  const template = name === "screen" ? WIDGETS[name].replace(/\/\*[\s\S]*?\*\/\n?/g, "") : WIDGETS[name];
+  let html = injectMark(template).replace(/__VOICEOS_([A-Z]+)__/g, (token, key) => key === "DEMO" ? token : fills[key] ?? "");
   if (["thread", "sent", "sent-group"].includes(name)) {
     html = html.replace(/^const DEMO=.*;$/m, () => `const DEMO=${json};`);
     html = html.replace("<script>", `<script>

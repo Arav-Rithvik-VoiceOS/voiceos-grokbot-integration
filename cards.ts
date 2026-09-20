@@ -59,7 +59,11 @@ export function renderCard(
   const json = JSON.stringify({ data: payload.data ?? {}, args: payload.args ?? {} })
     .replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   // Function replacers so `$` in the data can't be read as a replacement pattern.
-  let html = injectMark(WIDGETS[name]).replace(/__VOICEOS_([A-Z]+)__/g, (token, key: string) => key === "DEMO" ? token : fills[key] ?? "");
+  // The live screen card sits near the 96k glance cap, so its source comments are
+  // dropped at render time (before any data/viewer fill, so only our own template
+  // is touched). screen.html has no "/*" inside a string — check-screen guards that.
+  const template = name === "screen" ? WIDGETS[name].replace(/\/\*[\s\S]*?\*\/\n?/g, "") : WIDGETS[name];
+  let html = injectMark(template).replace(/__VOICEOS_([A-Z]+)__/g, (token, key: string) => key === "DEMO" ? token : fills[key] ?? "");
   if (["thread", "sent", "sent-group"].includes(name)) {
     html = html.replace(/^const DEMO=.*;$/m, () => `const DEMO=${json};`);
     // One lexical scope per document, including after the in-place sent transition.
