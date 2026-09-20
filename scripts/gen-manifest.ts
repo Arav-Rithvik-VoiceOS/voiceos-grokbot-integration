@@ -46,7 +46,7 @@ const manifest = {
   // Bump on any manifest change (tools/schema/permissions). NOTE: a plain restart
   // does NOT re-sync the cache even on a bump — push the new manifest into
   // config.json's installedIntegrations[].manifest (see the cache-push step).
-  version: "1.0.17",
+  version: "1.0.18",
   name: "Grok Bot",
   summary: "Talk to your Grok Bot AI teammates by voice.",
   description:

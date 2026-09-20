@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "com.arav.grokbot",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "name": "Grok Bot",
   "summary": "Talk to your Grok Bot AI teammates by voice.",
   "description": "See your Grok Bot teammates, message one, catch up on what a bot said, create a new bot, or start a group chat with several at once — all by voice, from the notch.",
