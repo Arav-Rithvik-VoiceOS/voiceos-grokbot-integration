@@ -95,7 +95,7 @@ test("a live bot opens one native view-only computer window with plain JSON", as
   const wsUrl = "wss://pod.cursorvm.com/websockify?token=5&network_token=secret";
   desktopProbe = { live: true, wsUrl, viewerUrl: "https://pod.cursorvm.com/vnc.html" };
   const r = await call("grokbot_open_computer_window", { bot: "Pepper" });
-  expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", wsUrl }]);
+  expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", botColor: "#FF6700", botShape: "blob", wsUrl }]);
   expect(r).toMatchObject({
     opened: true,
     bot: "Pepper",
@@ -114,7 +114,7 @@ test("the computer-window tool accepts the exact bot ID carried by a screen card
 
   expect(r.opened).toBe(true);
   expect(r.bot).toBe("Pepper");
-  expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", wsUrl }]);
+  expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", botColor: "#FF6700", botShape: "blob", wsUrl }]);
 });
 
 test("a live screen card opens its exact bot in the hardened computer-window tool", async () => {
