@@ -69,6 +69,7 @@ export const CONFIRMATION_ADAPTER = ${s(text("widgets/confirmation-adapter.js"))
 export const MESSAGING_CSS = ${s(text("widgets/messaging-adapter.css"))};
 export const MARK_DATA_URI = ${s(`data:image/png;base64,${markB64}`)};
 export const RFB_B64 = ${s(text("widgets/rfb.b64").trim())};
+export const RFB_FULL_B64 = ${s(text("widgets/rfb-full.b64").trim())};
 export const COMPUTER_VIEWER_BINARY_B64 = ${s(computerViewerB64)};
 `;
 

@@ -3,10 +3,11 @@ import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 const modulePath = "../computerWindow.ts";
 const computerWindow = await import(modulePath).catch(() => ({} as Record<string, unknown>));
+const assets = await import("../assets.generated.ts").catch(() => ({} as Record<string, string>));
 
 test("desktop websocket validation is part of the computer-window boundary", () => {
   expect(typeof computerWindow.validateDesktopWebSocketUrl).toBe("function");
@@ -70,6 +71,19 @@ test("viewer bundling preserves JavaScript replacement tokens without recreating
   expect(html).toContain('replacementToken="$&"');
   expect(html).toContain("var VoiceOSRFB=f");
   expect(html).not.toContain("__VOICEOS_RFB_SOURCE__");
+});
+
+test("the standalone window ships a full noVNC with a real keyboard, the notch card a stubbed one", () => {
+  // The window is a native WKWebView with no glance size cap, so it must carry
+  // the FULL client — a stubbed keyboard (grab(){}) silently drops every
+  // keystroke, which is exactly the "clicks work, typing doesn't" bug.
+  const full = gunzipSync(Buffer.from(String(assets.RFB_FULL_B64), "base64")).toString("utf8");
+  expect(full).toContain("keydown");
+  expect(full).not.toMatch(/grab\(\)\{\}ungrab\(\)\{\}/);
+
+  // The notch card stays stubbed to fit under VoiceOS's 96k glance cap.
+  const view = gunzipSync(Buffer.from(String(assets.RFB_B64), "base64")).toString("utf8");
+  expect(view).toMatch(/grab\(\)\{\}ungrab\(\)\{\}/);
 });
 
 test("the standalone viewer page exists", () => {
