@@ -4,7 +4,7 @@ import { chmodSync, lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync, 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { COMPUTER_VIEWER_BINARY_B64, RFB_B64, WIDGETS } from "./assets.generated.ts";
+import { COMPUTER_VIEWER_BINARY_B64, RFB_FULL_B64, WIDGETS } from "./assets.generated.ts";
 
 const VIEWER_TEMP_PREFIX = "voiceos-grokbot-viewer-";
 
@@ -257,7 +257,7 @@ export async function openComputerWindow(input: {
   const wsUrl = validateDesktopWebSocketUrl(input.wsUrl);
   const template = WIDGETS.computer;
   if (!template) throw new Error("The view-only desktop viewer is unavailable.");
-  const html = buildViewerDocument(template, RFB_B64, wsUrl);
+  const html = buildViewerDocument(template, RFB_FULL_B64, wsUrl);
   const { session, reused } = viewerSession(input.botId);
   const requestId = randomBytes(18).toString("base64url");
 
