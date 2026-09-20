@@ -105,6 +105,35 @@ test("a live bot opens one native view-only computer window with plain JSON", as
   expect(r._voiceos_glance).toBeUndefined();
 });
 
+test("the computer-window tool accepts the exact bot ID carried by a screen card", async () => {
+  const wsUrl = "wss://pod.cursorvm.com/websockify?token=5&network_token=secret";
+  desktopProbe = { live: true, wsUrl, viewerUrl: "https://pod.cursorvm.com/vnc.html" };
+
+  const r = await call("grokbot_open_computer_window", { bot: "p" });
+
+  expect(r.opened).toBe(true);
+  expect(r.bot).toBe("Pepper");
+  expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", wsUrl }]);
+});
+
+test("a live screen card opens its exact bot in the hardened computer-window tool", async () => {
+  desktopProbe = {
+    live: true,
+    wsUrl: "wss://pod.cursorvm.com/websockify?token=5&network_token=secret",
+    viewerUrl: "https://pod.cursorvm.com/vnc.html",
+  };
+
+  const r = await call("view_bot_desktop_live", { bot: "Pepper" });
+  const html = r._voiceos_glance.blocks[0].html;
+  const manifest = await Bun.file(new URL("../voiceos.integration.json", import.meta.url)).json();
+  const tool = manifest.tools.find((candidate: any) => candidate.name === "grokbot_open_computer_window");
+
+  expect(tool.uiCallable).toBe(true);
+  expect(tool.confirmation).toBeUndefined();
+  expect(html).toContain("invoke('grokbot_open_computer_window',{bot:B.id})");
+  expect(html).not.toContain("grokbot_open_screen");
+});
+
 test("unknown recipients fail lookup without opening a message card", async () => {
   const r = await call("grokbot_prepare_message", { bot: "James", message: "Hello" });
   expect(r.isError).toBe(true);

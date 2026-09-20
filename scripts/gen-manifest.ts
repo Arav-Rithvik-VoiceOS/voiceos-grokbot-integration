@@ -46,7 +46,7 @@ const manifest = {
   // Bump on any manifest change (tools/schema/permissions). NOTE: a plain restart
   // does NOT re-sync the cache even on a bump — push the new manifest into
   // config.json's installedIntegrations[].manifest (see the cache-push step).
-  version: "1.0.18",
+  version: "1.0.19",
   name: "Grok Bot",
   summary: "Talk to your Grok Bot AI teammates by voice.",
   description:
@@ -78,6 +78,9 @@ const manifest = {
     {
       name: "grokbot_open_computer_window",
       title: "Open a bot's computer window",
+      // Voice routes here directly, and the live screen card invokes the same
+      // hardened path when its user clicks Open.
+      uiCallable: true,
       description:
         "Open a Grok Bot teammate's live computer in a larger, chromeless, view-only window. Use when the user asks to see a bot's screen bigger, enlarge a bot's computer, or open the screen in its own window.",
       inputSchema: {

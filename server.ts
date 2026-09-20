@@ -21112,6 +21112,7 @@ let D,B,paused=false,isLive=false;
 function render(d,a){D=d;B=botById(d,a.bot||'pepper');
  $('#capav').innerHTML=av({...B,status:'working'},'');$('#mmsg').placeholder='Message '+B.name;$('#screen').style.setProperty('--glow',B.color+'80');
  $('#who').innerHTML=esc(B.name)+'’s screen'+(B.label?' <span class="chip">'+esc(B.label)+'</span>':'');
+ $('#screen').onclick=()=>{if(!isLive)return;if(!CAN_INVOKE){toast('Opening isn’t available here',true);return}invoke('grokbot_open_computer_window',{bot:B.id}).catch(err=>toast((err&&err.error)||'Couldn’t open window',true))};
  $('#pause').onclick=e=>{e.stopPropagation();paused=!paused;Feed.pause(paused);$('#live').classList.toggle('paused',paused);$('#live').lastChild.textContent=paused?'PAUSED':'LIVE';$('#pause').textContent=paused?'Resume':'Pause'};
  $('#stop').onclick=e=>{e.stopPropagation();Feed.pause(true);$('#live').classList.add('paused');$('#live').lastChild.textContent='STOPPED';$('#what').textContent='Stopped by you';Motion.set($('#capav .av'),'blocked');$('#stop').disabled=true;$('#pause').disabled=true};
  if(a.stream){goLive(a)}else{goIdle()}
@@ -22907,7 +22908,7 @@ server.registerTool("grokbot_open_computer_window", {
   },
   annotations: { readOnlyHint: true }
 }, async (args) => handle("grokbot_open_computer_window", async () => {
-  const bot = await resolveAgent(args.bot.trim());
+  const [bot] = await resolveMembers([args.bot.trim()]);
   const probe = await agentScreen(bot.id);
   if (!probe.live || !probe.wsUrl) {
     return result({
