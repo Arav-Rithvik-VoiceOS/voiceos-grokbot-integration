@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { chmodSync, lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync, type Dirent } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { COMPUTER_VIEWER_BINARY_B64, RFB_B64, WIDGETS } from "./assets.generated.ts";
 
 const VIEWER_TEMP_PREFIX = "voiceos-grokbot-viewer-";
@@ -49,11 +50,14 @@ export function validateDesktopWebSocketUrl(raw: string): string {
 }
 
 /**
- * Ship the gzip+base64 noVNC client into the page exactly as the notch screen
- * card does: the compressed bundle is embedded as-is and the page inflates it
- * and imports it as a module at runtime (the bundle uses top-level await, so it
- * MUST load as an awaited module, not a classic script). The CSP receives only
- * the validated socket origin; the bearer-token query is never written into the
+ * Inflate the gzip+base64 noVNC client on the host and inject its source into
+ * the viewer's single inline module. The bundle uses top-level await, so it must
+ * run as a module — and computer.html keeps the boot code in that SAME module so
+ * it runs only after the await settles, without a blob: URL import (WKWebView
+ * blocks importing a blob: module in an opaque-origin, baseURL-nil document — the
+ * bug that left the window on "The viewer could not start"). The bundle's
+ * `export default` becomes a module-scoped `VoiceOSRFB`. The CSP carries only the
+ * validated socket origin; the bearer-token query is never written into the
  * document, and the page never fetches anything from the pod.
  */
 export function buildViewerDocument(
@@ -65,17 +69,30 @@ export function buildViewerDocument(
   validateDesktopWebSocketUrl(wsUrl);
   const socketOrigin = new URL(wsUrl).origin;
 
-  // The bundle is our own build artifact; guard against an empty/garbled embed.
-  if (!compressedRfbBase64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(compressedRfbBase64)) {
+  let rfbSource: string;
+  try {
+    rfbSource = gunzipSync(Buffer.from(compressedRfbBase64, "base64")).toString("utf8");
+  } catch {
     throw new Error("The view-only desktop viewer is unavailable.");
   }
 
+  const moduleSource = rfbSource.replace(
+    /export\{([A-Za-z_$][\w$]*) as default\};?\s*$/,
+    "var VoiceOSRFB=$1;",
+  );
+  if (moduleSource === rfbSource) {
+    throw new Error("The view-only desktop viewer is unavailable.");
+  }
+
+  // An HTML parser must never read bundle bytes as a closing script tag. This
+  // only respells string literals inside the JS.
+  const htmlSafeSource = moduleSource.replace(/<\/script/gi, "<\\/script");
   const html = template
     .replaceAll("__VOICEOS_CSP_CONNECT__", socketOrigin)
     .replaceAll("__VOICEOS_NONCE__", nonce)
-    .replace("__VOICEOS_RFB_B64__", () => compressedRfbBase64);
+    .replace("__VOICEOS_RFB_SOURCE__", () => htmlSafeSource);
 
-  if (/__VOICEOS_(?:CSP_CONNECT|NONCE|RFB_B64)__/.test(html)) {
+  if (/__VOICEOS_(?:CSP_CONNECT|NONCE|RFB_SOURCE)__/.test(html)) {
     throw new Error("The view-only desktop viewer is unavailable.");
   }
   return html;

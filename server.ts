@@ -21255,11 +21255,14 @@ function goIdle(){isLive=false;Feed.pause(true);
     </div>
     <div id="message" role="status" aria-live="polite">Connecting to the computer…</div>
   </main>
-  <script nonce="__VOICEOS_NONCE__">
+  <script type="module" nonce="__VOICEOS_NONCE__">
     console.debug = console.info = console.warn = console.error = () => {};
+    // The noVNC client bundle, gzip-inflated on the host and injected here. It
+    // uses top-level await, so it MUST run as a module; keeping the boot code in
+    // this SAME module means it runs only after that await settles — with no
+    // blob: URL import, which WKWebView blocks for an opaque-origin (baseURL nil)
+    // document. The injected bundle ends by defining VoiceOSRFB in this scope.
     __VOICEOS_RFB_SOURCE__
-  </script>
-  <script nonce="__VOICEOS_NONCE__">
     (() => {
       "use strict";
       const config = window.__VOICEOS_CONFIG__;
@@ -21295,7 +21298,7 @@ function goIdle(){isLive=false;Feed.pause(true);
       addEventListener("pagehide", clearCredential, { once: true });
       addEventListener("contextmenu", event => event.preventDefault());
 
-      if (!config || typeof config.wsUrl !== "string" || typeof config.botName !== "string" || !window.VoiceOSRFB) {
+      if (!config || typeof config.wsUrl !== "string" || typeof config.botName !== "string" || typeof VoiceOSRFB !== "function") {
         setState("error", "Unavailable", "The viewer could not start. Close this window and try again.");
         return;
       }
@@ -21305,7 +21308,7 @@ function goIdle(){isLive=false;Feed.pause(true);
         if (clearing || !config.wsUrl) return;
         setState("connecting", retries ? "Reconnecting" : "Connecting", retries ? "The stream dropped. Reconnecting…" : "Connecting to the computer…");
         try {
-          const current = rfb = new window.VoiceOSRFB(viewport, config.wsUrl, { shared: true });
+          const current = rfb = new VoiceOSRFB(viewport, config.wsUrl, { shared: true });
           current.viewOnly = true;
           current.scaleViewport = true;
           current.resizeSession = false;
@@ -21655,11 +21658,11 @@ function buildViewerDocument(template, compressedRfbBase64, wsUrl, nonce = rando
   } catch {
     throw new Error("The view-only desktop viewer is unavailable.");
   }
-  const exported = rfbSource.replace(/export\{([A-Za-z_$][\w$]*) as default\};?\s*$/, "window.VoiceOSRFB=$1;");
-  if (exported === rfbSource) {
+  const moduleSource = rfbSource.replace(/export\{([A-Za-z_$][\w$]*) as default\};?\s*$/, "var VoiceOSRFB=$1;");
+  if (moduleSource === rfbSource) {
     throw new Error("The view-only desktop viewer is unavailable.");
   }
-  const htmlSafeSource = exported.replace(/<\/script/gi, "<\\/script");
+  const htmlSafeSource = moduleSource.replace(/<\/script/gi, "<\\/script");
   const html = template.replaceAll("__VOICEOS_CSP_CONNECT__", socketOrigin).replaceAll("__VOICEOS_NONCE__", nonce).replace("__VOICEOS_RFB_SOURCE__", () => htmlSafeSource);
   if (/__VOICEOS_(?:CSP_CONNECT|NONCE|RFB_SOURCE)__/.test(html)) {
     throw new Error("The view-only desktop viewer is unavailable.");
