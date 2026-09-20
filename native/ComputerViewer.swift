@@ -115,7 +115,7 @@ private final class ViewerController: NSObject, NSWindowDelegate, WKNavigationDe
                 WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page)
             )
             self.webView.loadHTMLString(command.html, baseURL: nil)
-            self.window.title = "\(command.botName)’s computer — View only"
+            self.window.title = "\(command.botName)’s computer"
             self.window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
