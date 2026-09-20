@@ -27,7 +27,6 @@ import {
   listAgents,
   listAllAutomations,
   log,
-  openBotComputer,
   openComputerWindow,
   openGrokBotApp,
   resolveAgent,
@@ -740,30 +739,6 @@ server.registerTool(
         viewOnly: true,
         message: `Opened ${bot.name}'s computer in a view-only window.`,
       });
-    }),
-);
-
-// ── CARD: grokbot_open_screen — the screen card's click, NO host confirmation ──
-// A card may only open https: links, so the screen card cannot hand off to the
-// Grok Bot app itself; its click invokes this tool and the server opens the
-// app's deep link instead. Plain JSON result (no glance): the app coming to the
-// front is the feedback, and the card stays as it is.
-server.registerTool(
-  "grokbot_open_screen",
-  {
-    title: "Open a bot's computer in Grok Bot",
-    description:
-      "Internal — invoked by the screen card when the user clicks the live screen. Opens the Grok Bot app on that bot's Computer tab so the user can control it there. Do not call from voice; use view_bot_desktop_live to show a bot's screen.",
-    inputSchema: {
-      bot: z.string().describe("The exact bot ID shown on the card."),
-    },
-  },
-  async (args: { bot: string }) =>
-    handle("grokbot_open_screen", async () => {
-      // The card sends the bot's id; resolveMembers matches ids first, then names.
-      const [bot] = await resolveMembers([args.bot.trim()]);
-      const command = await openBotComputer(bot.id);
-      return result({ opened: true, bot: bot.name, command });
     }),
 );
 

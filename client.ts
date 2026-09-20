@@ -644,23 +644,6 @@ export async function resolveMembers(tokens: string[]): Promise<Agent[]> {
   );
 }
 
-/**
- * Open the Grok Bot app on one bot's Computer tab. The app registers the
- * `grokbot://` scheme; `/v1/sidebar` with `agent` + `tab=computer` is the
- * closest route it declares — there is no route for the enlarged desktop or
- * for takeover, so the user takes over from there. A card cannot open this
- * link itself (VoiceOS only lets cards open https:), hence a server-side open.
- */
-export function openBotComputer(agentId: string): Promise<string> {
-  const url = `grokbot://app/v1/sidebar?agent=${encodeURIComponent(agentId)}&tab=computer`;
-  // The exact command, returned so the card can print what its click ran.
-  const command = `/usr/bin/open "${url}"`;
-  log("screen click →", command);
-  return new Promise((resolve, reject) => {
-    execFile("/usr/bin/open", [url], (error) => (error ? reject(error) : resolve(command)));
-  });
-}
-
 /** Open the bot's larger view-only desktop in the hardened native host. */
 export async function openComputerWindow(input: {
   botId: string;
