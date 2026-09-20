@@ -251,6 +251,8 @@ export async function openComputerWindow(input: {
   botId: string;
   botName: string;
   wsUrl: string;
+  botColor?: string;
+  botShape?: string;
 }): Promise<{ reused: boolean }> {
   const wsUrl = validateDesktopWebSocketUrl(input.wsUrl);
   const template = WIDGETS.computer;
@@ -270,6 +272,10 @@ export async function openComputerWindow(input: {
       requestId,
       botId: input.botId,
       botName: input.botName,
+      // Cosmetic only: a hex like "#FF6700" and a known shape id. Kept simple so
+      // the native host can pass them straight into the viewer's orb config.
+      botColor: /^#[0-9a-fA-F]{6}$/.test(input.botColor ?? "") ? input.botColor : "",
+      botShape: /^[a-z]{1,16}$/.test(input.botShape ?? "") ? input.botShape : "",
       wsUrl,
       html,
     });

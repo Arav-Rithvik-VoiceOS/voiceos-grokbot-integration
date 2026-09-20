@@ -738,7 +738,14 @@ server.registerTool(
         });
       }
 
-      await openComputerWindow({ botId: bot.id, botName: bot.name, wsUrl: probe.wsUrl });
+      const avatar = toBot(bot);
+      await openComputerWindow({
+        botId: bot.id,
+        botName: bot.name,
+        botColor: avatar.color,
+        botShape: avatar.shape,
+        wsUrl: probe.wsUrl,
+      });
       return result({
         opened: true,
         bot: bot.name,
