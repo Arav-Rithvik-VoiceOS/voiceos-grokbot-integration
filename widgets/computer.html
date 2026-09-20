@@ -157,6 +157,7 @@
             if (current !== rfb) return;
             retries = 0;
             setState("connected", "Live");
+            try { current.focus(); } catch {}
           });
           current.addEventListener("disconnect", () => {
             if (current !== rfb || clearing) return;

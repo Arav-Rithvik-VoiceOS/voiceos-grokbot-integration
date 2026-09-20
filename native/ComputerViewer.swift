@@ -118,6 +118,10 @@ private final class ViewerController: NSObject, NSWindowDelegate, WKNavigationDe
             self.window.title = "\(command.botName)’s computer"
             self.window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+            // Route physical keystrokes into the web content. Without this the
+            // WKWebView never becomes first responder, so macOS sends key events
+            // to the window (mouse still works — clicks don't need focus).
+            self.window.makeFirstResponder(self.webView)
         }
     }
 
