@@ -13936,7 +13936,7 @@ class JSONSchemaGenerator {
               if (val === undefined) {
                 if (this.unrepresentable === "throw") {
                   throw new Error("Literal `undefined` cannot be represented in JSON Schema");
-                }
+                } else {}
               } else if (typeof val === "bigint") {
                 if (this.unrepresentable === "throw") {
                   throw new Error("BigInt literals cannot be represented in JSON Schema");
@@ -19848,9 +19848,8 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 .bubble b{font-weight:650}
 .sys{align-self:center;color:var(--ink-3);font-size:11.5px;display:flex;align-items:center;gap:5px;padding:2px 0}
 .msgs{display:flex;flex-direction:column;gap:6px;padding:4px 14px 8px;overflow-y:auto}
-.compose{display:flex;align-items:center;gap:8px;margin:4px 12px 12px;background:var(--fill-1);border:1px solid var(--line);border-radius:22px;padding:5px 5px 5px 6px}
+.compose{display:flex;align-items:center;gap:8px;margin:4px 12px 12px;background:var(--fill-1);border:1px solid var(--line);border-radius:22px;padding:5px 5px 5px 14px}
 .compose input{background:none;border:0;padding:6px 4px;flex:1;min-width:0}
-.compose .plus{width:30px;height:30px;border-radius:50%;background:var(--fill-2);color:var(--ink-2);font-size:18px;line-height:30px;text-align:center;flex:none}
 .compose .send{width:30px;height:30px;border-radius:50%;background:var(--ink-1);color:#000;flex:none;display:grid;place-items:center;transition:transform .12s,opacity .15s}
 .compose .send:active{transform:scale(.92)}
 .compose .send[disabled]{opacity:.35}
@@ -19942,11 +19941,17 @@ const dotCls=b=>({working:'on',thinking:'on',waiting:'warn',blocked:'bad'}[b.sta
 /* Per-bot recent messages come in d.threads[botId] (from grokbot_show); fall
    back to a flat d.thread (older shape) or empty (just the composer). */
 function thread(d,botId){const list=(d.threads&&d.threads[botId])||d.thread||[];return list.map(m=>{if(m.sys){const b=botById(d,m.bot);return '<div class="sys">'+esc(m.sys)+' '+av(b,'tiny')+' '+esc(b.name)+'</div>'}return (m.t?'<div class="sys">'+esc(m.t)+'</div>':'')+'<div class="bubble '+m.from+' fade-in">'+(m.html||esc(m.text))+'</div>'}).join('')}
-function composer(name,ph){return '<form class="compose" id="compose" onsubmit="return false"><span class="plus">+</span><input id="msg" placeholder="'+esc(ph||('Message '+name))+'" autocomplete="off"><button class="send" type="button" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form>'}
+function composer(name,ph){return '<form class="compose" id="compose" onsubmit="return false"><input id="msg" placeholder="'+esc(ph||('Message '+name))+'" autocomplete="off"><button class="send" type="button" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form>'}
 /* The card iframe is sandboxed "allow-scripts" only — no allow-forms — so a
    <form> submit event NEVER fires (the host blocks it silently). Drive the send
    from the button's click and the input's Enter instead, never from submit. */
-function wireComposer(root,onSend){const f=$('#compose',root),i=$('#msg',f),b=$('.send',f);const go=()=>{const v=i.value.trim();if(!v)return;i.value='';b.disabled=true;onSend(v)};i.addEventListener('input',()=>b.disabled=!i.value.trim());b.addEventListener('click',e=>{e.preventDefault();go()});i.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();go()}})}
+/* Focus: the chat pane is built after a tap and slides in while the host is
+   still animating the card to its new height, so the composer takes focus
+   itself (openChat calls focus() once the slide ends and again after the host
+   settles) instead of relying on the user's first click landing. A press on
+   the pill's padding or the send button keeps focus in the input rather than
+   blurring it, and the input stays focused after a send. */
+function wireComposer(root,onSend){const f=$('#compose',root),i=$('#msg',f),b=$('.send',f);const focus=()=>{if(document.activeElement===i)return;try{i.focus({preventScroll:true})}catch(_){i.focus()}};const go=()=>{const v=i.value.trim();if(!v)return;i.value='';b.disabled=true;onSend(v);focus()};i.addEventListener('input',()=>b.disabled=!i.value.trim());f.addEventListener('mousedown',e=>{if(e.target!==i){e.preventDefault();focus()}});b.addEventListener('click',e=>{e.preventDefault();go()});i.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();go()}});return{focus}}
 function appendMe(list,text){const el=document.createElement('div');el.className='bubble me fade-in';el.textContent=text;list.appendChild(el);const s=document.createElement('div');s.className='sys';s.textContent='Delivered via VoiceOS';list.appendChild(s);list.scrollTop=list.scrollHeight}
 /* Optimistic send bubble: shows "Sending…" while the tool runs. On success the
    whole card swaps to the receipt (swapTo); on failure it resolves to failed
@@ -19990,10 +19995,17 @@ function render(d){D=d;const w=d.bots.filter(b=>['working','thinking'].includes(
 function openChat(b){const c=$('#chat');
  c.innerHTML='<div class="hd"><button class="back" id="back" aria-label="Back"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>'+(b.group?'<span class="stack">'+b.members.map(id=>av(botById(D,id),'small')).join('')+'</span>':av(b))+'<div class="grow"><div class="t2">'+esc(b.name)+'</div><div class="st"><span class="dot '+dotCls(b)+'"></span>'+statusText(b)+(b.label?' · '+esc(b.label):'')+'</div></div><span class="mark"><i></i>Grok Bot</span></div>'
  +'<div class="msgs" id="msgs" style="max-height:268px">'+thread(D,b.id)+'</div>'+composer(b.name);
- $('#panes').classList.add('open');$('#back').onclick=()=>$('#panes').classList.remove('open');
- const m=$('#msgs');m.scrollTop=m.scrollHeight;wireComposer(c,v=>{const a=$('.hd .av',c);Motion.react(a);
+ $('#panes').classList.add('open');$('#back').onclick=()=>{$('#panes').classList.remove('open');if(document.activeElement)document.activeElement.blur()};
+ const m=$('#msgs');m.scrollTop=m.scrollHeight;const w=wireComposer(c,v=>{const a=$('.hd .av',c);Motion.react(a);
   if(!CAN_INVOKE){appendMe(m,v);return}
   const h=sendBubble(m,v);invoke('grokbot_card_send',{bot:b.name,message:v}).then(r=>{let body=null;try{body=unpackResult(r)}catch(_){}if(body&&body.sent===true&&body.receipt&&body.receipt.html)swapTo(body.receipt);else h.ok()}).catch(e=>{const st=e&&e.status;if(st==='cancelled')h.cancelled();else if(st==='unknown')h.unknown();else h.fail((e&&e.error)||'Not sent')})});
+ /* Put the cursor in the composer: after the pane's slide (transitionend; the
+    timeouts cover reduced motion, where no transition runs) and once more
+    after the host has finished resizing the card. No-ops if the pane was
+    closed again or the input already has focus. */
+ const settle=()=>{if($('#panes').classList.contains('open'))w.focus()};
+ c.ontransitionend=e=>{if(e.target===c&&e.propertyName==='transform')settle()};
+ [380,900].forEach(ms=>setTimeout(settle,ms));
 }
 
 </script>
