@@ -28,6 +28,7 @@ import {
   listAllAutomations,
   log,
   openBotComputer,
+  openComputerWindow,
   openGrokBotApp,
   resolveAgent,
   resolveMembers,
@@ -703,6 +704,42 @@ server.registerTool(
         },
         screenCard(bot, live ? { wsUrl: probe.wsUrl!, viewerUrl: probe.viewerUrl! } : undefined),
       );
+    }),
+);
+
+// ── READ: grokbot_open_computer_window (larger native view-only screen) ──────
+server.registerTool(
+  "grokbot_open_computer_window",
+  {
+    title: "Open a bot's computer window",
+    description:
+      "Open a Grok Bot teammate's live computer in a larger, chromeless, view-only window. Use when the user asks to see a bot's screen bigger, enlarge a bot's computer, or open the screen in its own window.",
+    inputSchema: {
+      bot: z.string().describe("The bot's name or identifier as the user said it, e.g. 'Pepper'."),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async (args: { bot: string }) =>
+    handle("grokbot_open_computer_window", async () => {
+      const bot = await resolveAgent(args.bot.trim());
+      const probe = await agentScreen(bot.id);
+      if (!probe.live || !probe.wsUrl) {
+        return result({
+          opened: false,
+          bot: bot.name,
+          live: false,
+          message: `${bot.name}'s computer is not running right now.`,
+        });
+      }
+
+      await openComputerWindow({ botId: bot.id, botName: bot.name, wsUrl: probe.wsUrl });
+      return result({
+        opened: true,
+        bot: bot.name,
+        live: true,
+        viewOnly: true,
+        message: `Opened ${bot.name}'s computer in a view-only window.`,
+      });
     }),
 );
 

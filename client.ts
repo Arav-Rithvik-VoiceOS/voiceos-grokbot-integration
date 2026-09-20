@@ -17,6 +17,10 @@
 import { readFileSync } from "node:fs";
 import { execFileSync, execFile } from "node:child_process";
 import { pbkdf2Sync, createDecipheriv } from "node:crypto";
+import {
+  openComputerWindow as launchComputerWindow,
+  validateDesktopWebSocketUrl,
+} from "./computerWindow.ts";
 
 /** Human name of the service, used in spoken error messages. */
 export const SERVICE_NAME = "Grok Bot";
@@ -278,10 +282,20 @@ export async function agentScreen(
   if (!localUrl) return { live: false, boxState: box?.state };
   const urls = publicVncUrls(localUrl);
   if (!urls) {
-    log("unrecognised box vncUrl shape:", localUrl);
+    log("unrecognised box desktop URL shape");
     return { live: false, boxState: box?.state };
   }
-  const live = await wsHasDesktop(urls.wsUrl, timeoutMs);
+  let safeWsUrl: string;
+  try {
+    safeWsUrl = validateDesktopWebSocketUrl(urls.wsUrl);
+  } catch {
+    log("rejected an invalid desktop websocket destination");
+    throw new IntegrationError(
+      "upstream",
+      `${SERVICE_NAME} returned an invalid desktop connection. Try reopening the computer in a moment.`,
+    );
+  }
+  const live = await wsHasDesktop(safeWsUrl, timeoutMs);
   return { live, boxState: box?.state, ...urls };
 }
 
@@ -645,6 +659,22 @@ export function openBotComputer(agentId: string): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile("/usr/bin/open", [url], (error) => (error ? reject(error) : resolve(command)));
   });
+}
+
+/** Open the bot's larger view-only desktop in the hardened native host. */
+export async function openComputerWindow(input: {
+  botId: string;
+  botName: string;
+  wsUrl: string;
+}): Promise<{ reused: boolean }> {
+  try {
+    return await launchComputerWindow(input);
+  } catch {
+    throw new IntegrationError(
+      "upstream",
+      "The secure computer viewer could not open on this Mac. Close any old viewer window and try again.",
+    );
+  }
 }
 
 /** Launch the Grok Bot app (used on the setup / not-connected path). */
