@@ -21865,15 +21865,22 @@ var DESCRIPTOR_PATH = `${process.env.HOME}/Library/Application Support/Grok Bot/
 var KEYCHAIN_SERVICE = "Grok Bot Safe Storage";
 var credsCache = null;
 var CREDS_TTL_MS = 60000;
+var KEYCHAIN_ITEM_NOT_FOUND = 44;
+var keychainRead = null;
 function keychainKey() {
-  try {
-    return execFileSync("/usr/bin/security", ["find-generic-password", "-w", "-s", KEYCHAIN_SERVICE], { encoding: "utf8" }).trim();
-  } catch (error2) {
-    log("keychain read failed:", error2);
-    throw new IntegrationError("setup", `${SERVICE_NAME} isn't set up on this Mac yet. Open the Grok Bot app and sign in, then try again.`);
-  }
+  keychainRead ??= new Promise((resolve, reject) => {
+    execFile(process.env.GROKBOT_SECURITY_BIN || "/usr/bin/security", ["find-generic-password", "-w", "-s", KEYCHAIN_SERVICE], { encoding: "utf8" }, (error2, stdout) => {
+      if (!error2)
+        return resolve(stdout.trim());
+      log("keychain read failed:", error2);
+      reject(error2.code === KEYCHAIN_ITEM_NOT_FOUND ? new IntegrationError("setup", `${SERVICE_NAME} isn't set up on this Mac yet. Open the Grok Bot app and sign in, then try again.`) : new IntegrationError("setup", `${SERVICE_NAME} needs Keychain access. Try again and click Always Allow when macOS asks.`));
+    });
+  }).finally(() => {
+    keychainRead = null;
+  });
+  return keychainRead;
 }
-function loadCreds(force = false) {
+async function loadCreds(force = false) {
   if (!force && credsCache && Date.now() - credsCache.at < CREDS_TTL_MS) {
     return credsCache.creds;
   }
@@ -21883,6 +21890,7 @@ function loadCreds(force = false) {
   } catch {
     throw new IntegrationError("setup", `${SERVICE_NAME} isn't signed in on this Mac. Open the Grok Bot app and sign in, then try again.`);
   }
+  const masterKey = await keychainKey();
   let baseUrl;
   let token;
   let networkToken;
@@ -21894,7 +21902,7 @@ function loadCreds(force = false) {
     if (!entry)
       throw new Error("descriptor has no entries");
     const blob = Buffer.from(entry.encrypted, "base64");
-    const aesKey = pbkdf2Sync(keychainKey(), "saltysalt", 1003, 16, "sha1");
+    const aesKey = pbkdf2Sync(masterKey, "saltysalt", 1003, 16, "sha1");
     const decipher = createDecipheriv("aes-128-cbc", aesKey, Buffer.alloc(16, 32));
     const plain = Buffer.concat([decipher.update(blob.subarray(3)), decipher.final()]).toString("utf8");
     const creds2 = JSON.parse(plain);
@@ -21944,8 +21952,8 @@ async function wsHasDesktop(wsUrl, timeoutMs) {
 var VNC_PRIMARY_PORT = "6080";
 var VNC_FORK_PORT = "6081";
 var VNC_RESUME = "resume_lower_s=900&resume_upper_s=18000";
-function publicVncUrls(localUrl) {
-  const creds = loadCreds();
+async function publicVncUrls(localUrl) {
+  const creds = await loadCreds();
   let u;
   try {
     u = new URL(localUrl);
@@ -21984,7 +21992,7 @@ async function agentScreen(agentId, timeoutMs = 2500) {
   const localUrl = box?.vncUrl ?? box?.windows?.find((w) => w.vncUrl)?.vncUrl ?? null;
   if (!localUrl)
     return { live: false, boxState: box?.state };
-  const urls = publicVncUrls(localUrl);
+  const urls = await publicVncUrls(localUrl);
   if (!urls) {
     log("unrecognised box desktop URL shape");
     return { live: false, boxState: box?.state };
@@ -22000,7 +22008,7 @@ async function agentScreen(agentId, timeoutMs = 2500) {
   return { live, boxState: box?.state, ...urls };
 }
 async function gateway(command, body = {}, { timeoutMs = READ_TIMEOUT_MS, _retried = false } = {}) {
-  const creds = loadCreds(_retried);
+  const creds = await loadCreds(_retried);
   const started = performance.now();
   let status;
   let text;

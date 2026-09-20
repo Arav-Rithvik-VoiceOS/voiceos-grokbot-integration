@@ -85,28 +85,52 @@ interface GatewayCreds {
 let credsCache: { creds: GatewayCreds; at: number } | null = null;
 const CREDS_TTL_MS = 60_000;
 
-/** The Chromium master key, read from the login Keychain. */
-function keychainKey(): string {
-  try {
+// `security` exits 44 when the Keychain item does not exist.
+const KEYCHAIN_ITEM_NOT_FOUND = 44;
+let keychainRead: Promise<string> | null = null;
+
+/**
+ * The Chromium master key, read from the login Keychain.
+ *
+ * Async on purpose. The first read raises the one-time macOS "Allow / Always
+ * Allow" prompt, and `security` does not return until the user answers. The
+ * boot-time intent refresh reaches this before the host's `initialize`, so a
+ * sync spawn froze the event loop, the handshake timed out, and the host
+ * dropped the server — taking the prompt with it. Concurrent callers share one
+ * read, so the user gets one prompt, not one per caller.
+ */
+function keychainKey(): Promise<string> {
+  keychainRead ??= new Promise<string>((resolve, reject) => {
     // Absolute path: the VoiceOS-spawned sandbox resets PATH, so a bare
-    // `security` is "command not found". The first read may raise a one-time
-    // macOS "allow access" prompt — the user clicks Always Allow once.
-    return execFileSync(
-      "/usr/bin/security",
+    // `security` is "command not found". GROKBOT_SECURITY_BIN is a test seam.
+    execFile(
+      process.env.GROKBOT_SECURITY_BIN || "/usr/bin/security",
       ["find-generic-password", "-w", "-s", KEYCHAIN_SERVICE],
       { encoding: "utf8" },
-    ).trim();
-  } catch (error) {
-    log("keychain read failed:", error);
-    throw new IntegrationError(
-      "setup",
-      `${SERVICE_NAME} isn't set up on this Mac yet. Open the Grok Bot app and sign in, then try again.`,
+      (error, stdout) => {
+        if (!error) return resolve(stdout.trim());
+        log("keychain read failed:", error);
+        reject(
+          error.code === KEYCHAIN_ITEM_NOT_FOUND
+            ? new IntegrationError(
+                "setup",
+                `${SERVICE_NAME} isn't set up on this Mac yet. Open the Grok Bot app and sign in, then try again.`,
+              )
+            : new IntegrationError(
+                "setup",
+                `${SERVICE_NAME} needs Keychain access. Try again and click Always Allow when macOS asks.`,
+              ),
+        );
+      },
     );
-  }
+  }).finally(() => {
+    keychainRead = null;
+  });
+  return keychainRead;
 }
 
 /** Read + decrypt the descriptor into live gateway creds. */
-function loadCreds(force = false): GatewayCreds {
+async function loadCreds(force = false): Promise<GatewayCreds> {
   if (!force && credsCache && Date.now() - credsCache.at < CREDS_TTL_MS) {
     return credsCache.creds;
   }
@@ -121,6 +145,10 @@ function loadCreds(force = false): GatewayCreds {
       `${SERVICE_NAME} isn't signed in on this Mac. Open the Grok Bot app and sign in, then try again.`,
     );
   }
+
+  // Outside the try below: its catch would turn a Keychain error into the
+  // wrong "needs a refresh" message.
+  const masterKey = await keychainKey();
 
   let baseUrl: string;
   let token: string;
@@ -141,7 +169,7 @@ function loadCreds(force = false): GatewayCreds {
     // 1003, 16) → AES-128-CBC, IV = 16 spaces, over the blob after the "v10"
     // prefix. Node's crypto strips the PKCS7 padding for us.
     const blob = Buffer.from(entry.encrypted, "base64");
-    const aesKey = pbkdf2Sync(keychainKey(), "saltysalt", 1003, 16, "sha1");
+    const aesKey = pbkdf2Sync(masterKey, "saltysalt", 1003, 16, "sha1");
     const decipher = createDecipheriv("aes-128-cbc", aesKey, Buffer.alloc(16, 0x20));
     const plain = Buffer.concat([decipher.update(blob.subarray(3)), decipher.final()]).toString("utf8");
 
@@ -170,8 +198,8 @@ function loadCreds(force = false): GatewayCreds {
 }
 
 /** The noVNC viewer URL for the shared cloud computer (for the live screen card). */
-export function vncViewerUrl(): string | undefined {
-  return loadCreds().vncPrimaryUrl;
+export async function vncViewerUrl(): Promise<string | undefined> {
+  return (await loadCreds()).vncPrimaryUrl;
 }
 
 /**
@@ -235,8 +263,8 @@ const VNC_RESUME = "resume_lower_s=900&resume_upper_s=18000";
  *  - port 6081 → this bot's OWN desktop: `${forkBaseUrl}/vnc.html?network_token=…&path=websockify?token=<N>&network_token=…`
  * Returns undefined when the URL is not one of those two shapes.
  */
-function publicVncUrls(localUrl: string): { viewerUrl: string; wsUrl: string } | undefined {
-  const creds = loadCreds();
+async function publicVncUrls(localUrl: string): Promise<{ viewerUrl: string; wsUrl: string } | undefined> {
+  const creds = await loadCreds();
   let u: URL;
   try { u = new URL(localUrl); } catch { return undefined; }
   if (!["127.0.0.1", "localhost"].includes(u.hostname) || !u.pathname.endsWith("/vnc.html")) return undefined;
@@ -280,7 +308,7 @@ export async function agentScreen(
   }
   const localUrl = box?.vncUrl ?? box?.windows?.find((w) => w.vncUrl)?.vncUrl ?? null;
   if (!localUrl) return { live: false, boxState: box?.state };
-  const urls = publicVncUrls(localUrl);
+  const urls = await publicVncUrls(localUrl);
   if (!urls) {
     log("unrecognised box desktop URL shape");
     return { live: false, boxState: box?.state };
@@ -312,7 +340,7 @@ export async function gateway<T = unknown>(
   body: Record<string, unknown> = {},
   { timeoutMs = READ_TIMEOUT_MS, _retried = false }: { timeoutMs?: number; _retried?: boolean } = {},
 ): Promise<T> {
-  const creds = loadCreds(_retried);
+  const creds = await loadCreds(_retried);
   const started = performance.now();
 
   let status: number;
