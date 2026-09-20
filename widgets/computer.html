@@ -130,13 +130,16 @@
       window.__voiceosClearCredential = clearCredential;
       addEventListener("pagehide", clearCredential, { once: true });
       addEventListener("contextmenu", event => event.preventDefault());
-      // Forward a local paste (⌘V) into the remote session's clipboard so the
-      // human can paste text they copied on their Mac straight onto the VM.
-      addEventListener("paste", event => {
-        if (!rfb || clearing) return;
-        const text = event.clipboardData && event.clipboardData.getData("text");
-        if (text) { try { rfb.clipboardPasteFrom(text); } catch {} }
-      });
+      // Clipboard bridge to the native host (NSPasteboard). noVNC forwards ⌘C/⌘V
+      // to the VM as keystrokes, so the browser never sees a copy/paste event —
+      // the Mac↔VM clipboard is synced as DATA instead. The host polls the Mac
+      // clipboard and pushes it in through __voiceosPushClipboard; VM-side copies
+      // ride RFB's "clipboard" event back out to the host's message handler.
+      const clipboardBridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.voiceosClipboard;
+      window.__voiceosPushClipboard = text => {
+        if (!rfb || clearing || typeof text !== "string") return;
+        try { rfb.clipboardPasteFrom(text); } catch {}
+      };
 
       if (!config || typeof config.wsUrl !== "string" || typeof config.botName !== "string" || typeof VoiceOSRFB !== "function") {
         setState("error", "Unavailable", "The viewer could not start. Close this window and try again.");
@@ -158,6 +161,11 @@
             retries = 0;
             setState("connected", "Live");
             try { current.focus(); } catch {}
+          });
+          current.addEventListener("clipboard", event => {
+            if (current !== rfb || !clipboardBridge) return;
+            const text = event.detail && event.detail.text;
+            if (typeof text === "string") { try { clipboardBridge.postMessage(text); } catch {} }
           });
           current.addEventListener("disconnect", () => {
             if (current !== rfb || clearing) return;

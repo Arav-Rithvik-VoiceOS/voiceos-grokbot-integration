@@ -44,11 +44,13 @@ private func isTrustedDesktopURL(_ raw: String) -> Bool {
 }
 
 @MainActor
-private final class ViewerController: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
+private final class ViewerController: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     private let window: NSWindow
     private let webView: WKWebView
     private var pendingRequestId: String?
     private var activeBotId: String?
+    private var clipboardTimer: Timer?
+    private var lastPasteboardChange = NSPasteboard.general.changeCount
 
     override init() {
         let configuration = WKWebViewConfiguration()
@@ -68,6 +70,7 @@ private final class ViewerController: NSObject, NSWindowDelegate, WKNavigationDe
 
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        webView.configuration.userContentController.add(self, name: "voiceosClipboard")
         webView.allowsMagnification = false
         window.contentView = webView
         window.delegate = self
@@ -122,7 +125,40 @@ private final class ViewerController: NSObject, NSWindowDelegate, WKNavigationDe
             // WKWebView never becomes first responder, so macOS sends key events
             // to the window (mouse still works — clicks don't need focus).
             self.window.makeFirstResponder(self.webView)
+            self.startClipboardSync()
         }
+    }
+
+    /// Poll the Mac clipboard and push new copies into the VM's clipboard, so a
+    /// ⌘C in any Mac app becomes pasteable inside the remote session. VM→Mac
+    /// copies flow the other way through the "voiceosClipboard" message handler.
+    private func startClipboardSync() {
+        clipboardTimer?.invalidate()
+        lastPasteboardChange = NSPasteboard.general.changeCount
+        clipboardTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.syncPasteboardToRemote() }
+        }
+    }
+
+    private func syncPasteboardToRemote() {
+        let pasteboard = NSPasteboard.general
+        guard pasteboard.changeCount != lastPasteboardChange else { return }
+        lastPasteboardChange = pasteboard.changeCount
+        guard
+            let text = pasteboard.string(forType: .string), !text.isEmpty,
+            let data = try? JSONEncoder().encode(text),
+            let json = String(data: data, encoding: .utf8)
+        else { return }
+        webView.evaluateJavaScript("window.__voiceosPushClipboard?.(\(json))", completionHandler: nil)
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "voiceosClipboard", let text = message.body as? String else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        // Record our own write so the poller does not echo it straight back to the VM.
+        lastPasteboardChange = pasteboard.changeCount
     }
 
     private func clearRenderer(completion: @escaping () -> Void) {
@@ -188,6 +224,8 @@ private final class ViewerController: NSObject, NSWindowDelegate, WKNavigationDe
     }
 
     func windowWillClose(_ notification: Notification) {
+        clipboardTimer?.invalidate()
+        clipboardTimer = nil
         webView.stopLoading()
         webView.configuration.userContentController.removeAllUserScripts()
         webView.evaluateJavaScript("window.__voiceosClearCredential?.()", completionHandler: nil)
