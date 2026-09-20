@@ -13,6 +13,8 @@ let agents: actual.Agent[], writes: any[], rejectSend: boolean;
 let publishCreated = true;
 const EARLIER: actual.TranscriptEntry[] = [{ kind: "message", role: "user", content: "Earlier message", id: "old" }];
 let tail: actual.TranscriptEntry[] = EARLIER;
+let desktopProbe: Awaited<ReturnType<typeof actual.agentScreen>>;
+let computerWindows: Array<{ botId: string; botName: string; wsUrl: string }>;
 mock.module("@modelcontextprotocol/sdk/server/mcp.js", () => ({ McpServer: class {
   server = { request: async () => ({ notificationId: "test" }) };
   registerTool(name: string, _schema: any, handler: any) { handlers.set(name, handler); }
@@ -31,6 +33,11 @@ mock.module("../client.ts", () => ({
   },
   resolveAgent: async (name: string, list = agents) => resolveReal(name, list),
   transcriptTail: async () => ({ entries: tail }),
+  agentScreen: async () => desktopProbe,
+  openComputerWindow: async (input: { botId: string; botName: string; wsUrl: string }) => {
+    computerWindows.push(input);
+    return { reused: false };
+  },
   sendPrompt: async (id: string, message: string) => {
     writes.push(["send", id, message]);
     if (rejectSend) throw new actual.IntegrationError("upstream", "Send failed");
@@ -67,6 +74,35 @@ beforeEach(() => {
   writes = []; rejectSend = false;
   publishCreated = true;
   tail = EARLIER;
+  desktopProbe = { live: false, boxState: "absent" };
+  computerWindows = [];
+});
+
+test("an offline bot returns a clear result without opening a computer window", async () => {
+  const r = await call("grokbot_open_computer_window", { bot: "Pepper" });
+  expect(r).toMatchObject({
+    opened: false,
+    bot: "Pepper",
+    live: false,
+    message: "Pepper's computer is not running right now.",
+  });
+  expect(computerWindows).toEqual([]);
+  expect(r._voiceos_glance).toBeUndefined();
+});
+
+test("a live bot opens one native view-only computer window with plain JSON", async () => {
+  const wsUrl = "wss://pod.cursorvm.com/websockify?token=5&network_token=secret";
+  desktopProbe = { live: true, wsUrl, viewerUrl: "https://pod.cursorvm.com/vnc.html" };
+  const r = await call("grokbot_open_computer_window", { bot: "Pepper" });
+  expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", wsUrl }]);
+  expect(r).toMatchObject({
+    opened: true,
+    bot: "Pepper",
+    live: true,
+    viewOnly: true,
+    message: "Opened Pepper's computer in a view-only window.",
+  });
+  expect(r._voiceos_glance).toBeUndefined();
 });
 
 test("unknown recipients fail lookup without opening a message card", async () => {

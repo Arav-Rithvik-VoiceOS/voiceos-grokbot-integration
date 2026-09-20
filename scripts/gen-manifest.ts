@@ -46,7 +46,7 @@ const manifest = {
   // Bump on any manifest change (tools/schema/permissions). NOTE: a plain restart
   // does NOT re-sync the cache even on a bump — push the new manifest into
   // config.json's installedIntegrations[].manifest (see the cache-push step).
-  version: "1.0.15",
+  version: "1.0.17",
   name: "Grok Bot",
   summary: "Talk to your Grok Bot AI teammates by voice.",
   description:
@@ -76,18 +76,14 @@ const manifest = {
       },
     },
     {
-      // The screen card's click. uiCallable so the card may invoke it; NO
-      // `confirmation` block — the click is the approval, and a confirm dialog
-      // over a live screen would defeat the one-click hand-off.
-      name: "grokbot_open_screen",
-      title: "Open a bot's computer in Grok Bot",
-      uiCallable: true,
+      name: "grokbot_open_computer_window",
+      title: "Open a bot's computer window",
       description:
-        "Internal — invoked by the screen card when the user clicks the live screen. Opens the Grok Bot app on that bot's Computer tab so the user can control it there. Do not call from voice; use view_bot_desktop_live to show a bot's screen.",
+        "Open a Grok Bot teammate's live computer in a larger, chromeless, view-only window. Use when the user asks to see a bot's screen bigger, enlarge a bot's computer, or open the screen in its own window.",
       inputSchema: {
         type: "object",
         properties: {
-          bot: { type: "string", description: "The exact bot ID shown on the card." },
+          bot: { type: "string", description: "The bot's name or identifier as the user said it, e.g. 'Pepper'." },
         },
         required: ["bot"],
       },

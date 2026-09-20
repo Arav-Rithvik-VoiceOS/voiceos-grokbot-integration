@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; img-src data:; style-src 'nonce-__VOICEOS_NONCE__'; script-src 'nonce-__VOICEOS_NONCE__'; connect-src __VOICEOS_CSP_CONNECT__">
+  <title>Computer viewer</title>
+  <style nonce="__VOICEOS_NONCE__">
+    :root {
+      color-scheme: dark;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      background: #050506;
+      color: rgba(255, 255, 255, .94);
+    }
+    * { box-sizing: border-box; }
+    html, body, main, #viewport { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { background: radial-gradient(circle at 50% 38%, #171719 0, #09090a 52%, #050506 100%); }
+    #viewport { display: grid; place-items: center; }
+    #viewport canvas { pointer-events: none !important; user-select: none !important; }
+    .chrome {
+      position: fixed;
+      inset: 18px 18px auto 84px;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      pointer-events: none;
+    }
+    .identity, .mode {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      border: 1px solid rgba(255, 255, 255, .13);
+      background: rgba(18, 18, 20, .74);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, .32);
+      backdrop-filter: blur(18px) saturate(130%);
+      -webkit-backdrop-filter: blur(18px) saturate(130%);
+    }
+    .identity {
+      min-width: 0;
+      max-width: min(52vw, 520px);
+      gap: 9px;
+      padding: 0 12px;
+      border-radius: 10px;
+    }
+    .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: #ffb340; }
+    .identity[data-state="connected"] .dot { background: #45d37e; }
+    .identity[data-state="disconnected"] .dot,
+    .identity[data-state="error"] .dot { background: #ff6464; }
+    #bot { overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+    #state { color: rgba(255, 255, 255, .58); font-size: 12px; white-space: nowrap; }
+    .spacer { flex: 1; }
+    .mode {
+      flex: none;
+      gap: 7px;
+      padding: 0 11px;
+      border-radius: 999px;
+      color: rgba(255, 255, 255, .72);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .eye { width: 12px; height: 8px; border: 1.5px solid currentColor; border-radius: 50% / 60%; position: relative; }
+    .eye::after { content: ""; position: absolute; width: 3px; height: 3px; inset: 1px auto auto 3px; border-radius: 50%; background: currentColor; }
+    #message {
+      position: fixed;
+      z-index: 4;
+      left: 50%;
+      bottom: 28px;
+      width: min(520px, calc(100vw - 48px));
+      transform: translateX(-50%);
+      padding: 12px 16px;
+      border: 1px solid rgba(255, 255, 255, .13);
+      border-radius: 12px;
+      background: rgba(18, 18, 20, .82);
+      box-shadow: 0 16px 50px rgba(0, 0, 0, .42);
+      color: rgba(255, 255, 255, .72);
+      font-size: 13px;
+      line-height: 1.4;
+      text-align: center;
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      transition: opacity .18s ease;
+    }
+    #message[hidden] { display: block; opacity: 0; }
+    @media (prefers-reduced-motion: reduce) { #message { transition: none; } }
+  </style>
+</head>
+<body>
+  <main aria-label="View-only remote computer">
+    <div id="viewport"></div>
+    <div class="chrome">
+      <div class="identity" id="identity" data-state="connecting">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="bot">Bot computer</span>
+        <span id="state" role="status" aria-live="polite">Connecting</span>
+      </div>
+      <span class="spacer"></span>
+      <div class="mode"><span class="eye" aria-hidden="true"></span>View only</div>
+    </div>
+    <div id="message" role="status" aria-live="polite">Connecting to the computer…</div>
+  </main>
+  <script nonce="__VOICEOS_NONCE__">
+    console.debug = console.info = console.warn = console.error = () => {};
+    __VOICEOS_RFB_SOURCE__
+  </script>
+  <script nonce="__VOICEOS_NONCE__">
+    (() => {
+      "use strict";
+      const config = window.__VOICEOS_CONFIG__;
+      delete window.__VOICEOS_CONFIG__;
+      const viewport = document.getElementById("viewport");
+      const identity = document.getElementById("identity");
+      const bot = document.getElementById("bot");
+      const state = document.getElementById("state");
+      const message = document.getElementById("message");
+      let rfb = null;
+      let retryTimer = 0;
+      let retries = 0;
+      let clearing = false;
+
+      const setState = (kind, label, detail = "") => {
+        identity.dataset.state = kind;
+        state.textContent = label;
+        message.textContent = detail;
+        message.hidden = !detail;
+      };
+
+      const clearCredential = () => {
+        clearing = true;
+        clearTimeout(retryTimer);
+        if (rfb) {
+          const current = rfb;
+          rfb = null;
+          try { current.disconnect(); } catch {}
+        }
+        if (config) config.wsUrl = "";
+      };
+      window.__voiceosClearCredential = clearCredential;
+      addEventListener("pagehide", clearCredential, { once: true });
+      addEventListener("contextmenu", event => event.preventDefault());
+
+      if (!config || typeof config.wsUrl !== "string" || typeof config.botName !== "string" || !window.VoiceOSRFB) {
+        setState("error", "Unavailable", "The viewer could not start. Close this window and try again.");
+        return;
+      }
+      bot.textContent = `${config.botName}’s computer`;
+
+      const connect = () => {
+        if (clearing || !config.wsUrl) return;
+        setState("connecting", retries ? "Reconnecting" : "Connecting", retries ? "The stream dropped. Reconnecting…" : "Connecting to the computer…");
+        try {
+          const current = rfb = new window.VoiceOSRFB(viewport, config.wsUrl, { shared: true });
+          current.viewOnly = true;
+          current.scaleViewport = true;
+          current.resizeSession = false;
+          current.background = "#050506";
+          current.addEventListener("connect", () => {
+            if (current !== rfb) return;
+            retries = 0;
+            setState("connected", "Connected");
+          });
+          current.addEventListener("disconnect", () => {
+            if (current !== rfb || clearing) return;
+            rfb = null;
+            retries += 1;
+            if (retries <= 5) {
+              setState("disconnected", "Disconnected", "The stream dropped. Reconnecting…");
+              retryTimer = setTimeout(connect, Math.min(6000, retries * 1200));
+            } else {
+              setState("error", "Disconnected", "This session ended. Close the window and reopen it for a fresh connection.");
+            }
+          });
+          current.addEventListener("credentialsrequired", () => {
+            clearCredential();
+            setState("error", "Unavailable", "This session ended. Close the window and reopen it for a fresh connection.");
+          });
+          current.addEventListener("securityfailure", () => {
+            clearCredential();
+            setState("error", "Unavailable", "The secure viewer could not connect. Close the window and try again.");
+          });
+        } catch {
+          setState("error", "Unavailable", "The viewer could not start. Close this window and try again.");
+        }
+      };
+
+      connect();
+    })();
+  </script>
+</body>
+</html>

@@ -19,6 +19,7 @@
     "build-publish": "bun scripts/build-publish.mjs",
     "build-rfb": "bun scripts/build-rfb.ts",
     "check-screen": "bun scripts/check-screen-card.ts",
+    "test:computer": "bun test tests/computer-window.test.ts tests/messaging.test.ts",
     "test:messaging": "bun test tests/messaging.test.ts tests/confirmation.test.ts",
     "preview:messaging": "bun scripts/preview-messaging.ts",
     "check:installed": "bun scripts/check-installed.ts",
