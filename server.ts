@@ -21080,11 +21080,10 @@ html[data-theme=light] .screen{background:linear-gradient(180deg,#f2f2f5,#c9c9cf
 .mbar .go[disabled]{opacity:.35;pointer-events:none}
 .mwrap{position:relative}
 .reply{position:absolute;left:8px;right:8px;bottom:calc(100% + 4px);z-index:6;padding:9px 30px 10px 12px;border-radius:14px;background:rgba(52,52,58,.97);color:#fff;box-shadow:0 8px 24px -8px rgba(0,0,0,.7),inset 0 0 0 1px rgba(255,255,255,.18);animation:rin .25s both}
-.reply .rw{font-size:11px;font-weight:650;color:rgba(255,255,255,.62);margin-bottom:2px;display:flex;align-items:center;gap:6px}
+.reply{display:flex;gap:10px;align-items:flex-start}.reply[hidden]{display:none}.reply .av{width:28px;height:28px;margin-top:1px}.reply .rb{flex:1;min-width:0}
+.reply .rw{font-size:11px;font-weight:650;color:rgba(255,255,255,.62);margin-bottom:2px}
 .reply .rt{font-size:13px;line-height:1.38;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;word-wrap:break-word}
 .reply .rx{position:absolute;top:6px;right:7px;width:20px;height:20px;border-radius:50%;color:rgba(255,255,255,.6);font-size:15px;line-height:20px;text-align:center}
-.reply .ty{display:inline-flex;gap:3px}.reply .ty i{width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.6);animation:ty 1s infinite}.reply .ty i:nth-child(2){animation-delay:.15s}.reply .ty i:nth-child(3){animation-delay:.3s}
-@keyframes ty{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}
 @keyframes rin{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .toast{position:fixed;top:8px;left:50%;z-index:20;transform:translate(-50%,-14px);opacity:0;pointer-events:none;display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 12px 0 9px;border-radius:13px;background:rgba(20,20,22,.88);backdrop-filter:blur(10px);color:#fff;font-size:12px;font-weight:600;box-shadow:0 6px 18px -6px rgba(0,0,0,.6),inset 0 0 0 1px rgba(255,255,255,.1);transition:opacity .2s,transform .25s;white-space:nowrap}
 .toast.show{opacity:1;transform:translate(-50%,0)}
@@ -21109,7 +21108,7 @@ html[data-theme=light] .screen{background:linear-gradient(180deg,#f2f2f5,#c9c9cf
   <div class="cur" id="cur" style="left:44%;top:42%"><span class="ring"></span><svg viewBox="0 0 14 20"><path d="M1 1l12 9-5 1 3 6-2.5 1.2L5.6 12 1 15z" fill="#fff" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/></svg></div>
   <div class="live" id="live"><i class="rec"></i>LIVE</div>
 </div>
-<div class="mwrap"><div class="reply" id="reply" hidden><button class="rx" id="rx" aria-label="Dismiss">×</button><div class="rw" id="rw"></div><div class="rt" id="rt"></div></div>
+<div class="mwrap"><div class="reply" id="reply" hidden><button class="rx" id="rx" aria-label="Dismiss">×</button><span id="rav"></span><div class="rb"><div class="rw" id="rw"></div><div class="rt" id="rt"></div></div></div>
 <div class="mbar"><input id="mmsg" placeholder="Message" autocomplete="off" aria-label="Message this bot"><button class="go" id="mgo" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div></div>
 <div class="toast" id="toast" role="status" aria-live="polite"><i></i><span id="toastx">Message sent</span></div>
 <script>
@@ -21144,8 +21143,9 @@ function wireMessageBar(){const inp=$('#mmsg'),go=$('#mgo');
 /* After a send, poll grokbot_reply_check and show the bot's newest reply above the bar. Bounded: MAXP polls per send, BUDGET per card (host caps a card at 64 tool calls). */
 const POLL=4000,MAXP=30,BUDGET=54;
 let _used=0,_gen=0,_shown='',_since=0;
-function hideReply(){_gen++;_since=0;$('#reply').hidden=true}
-function showReply(name,text,typing){const r=$('#reply');r.hidden=false;$('#rw').textContent=name;$('#rt').innerHTML=typing?'<span class="ty"><i></i><i></i><i></i></span>':'';if(!typing)$('#rt').textContent=text}
+function hideReply(){_gen++;_since=0;$('#reply').hidden=true;$('#rav').innerHTML=''}
+function orb(st){const h=$('#rav');if(!h.firstChild)h.innerHTML=av({...B,status:st},'');else Motion.set(h.firstChild,st)}
+function showReply(name,text,st){$('#reply').hidden=false;$('#rw').textContent=name;$('#rt').textContent=text;orb(st)}
 function watchReply(at){
  _since=_since?Math.min(_since,at):at;const gen=++_gen;let n=0,replied=false,idle=0;
  const tick=async()=>{
@@ -21155,8 +21155,9 @@ function watchReply(at){
   try{const r=await invoke('grokbot_reply_check',{bot:B.id,since:_since});const c=r.content&&r.content[0];res=r.structuredContent||JSON.parse(c.text)}catch(e){res=null}
   if(gen!==_gen)return;
   if(res){
-   if(res.reply&&res.reply.id!==_shown){replied=true;_shown=res.reply.id;showReply(B.name+(res.awaiting?' needs an answer':''),res.reply.text,false)}
-   else if(res.busy&&!replied&&$('#reply').hidden)showReply(B.name,'',true);
+   const st=res.awaiting?'waiting':res.busy?'working':'done';
+   if(res.reply&&res.reply.id!==_shown){replied=true;_shown=res.reply.id;showReply(B.name+(res.awaiting?' needs an answer':''),res.reply.text,st)}
+   else if(res.busy&&!replied&&$('#reply').hidden)showReply(B.name+' is working…','',st);else if(!$('#reply').hidden)orb(st);
    idle=res.busy?0:idle+1;
    if(replied&&idle>=1)return;       
    if(!replied&&idle>=8)return;      
