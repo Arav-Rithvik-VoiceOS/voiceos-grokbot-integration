@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; img-src data:; style-src 'nonce-__VOICEOS_NONCE__'; script-src 'nonce-__VOICEOS_NONCE__'; connect-src __VOICEOS_CSP_CONNECT__">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; img-src data:; style-src 'nonce-__VOICEOS_NONCE__'; script-src 'nonce-__VOICEOS_NONCE__' blob:; connect-src __VOICEOS_CSP_CONNECT__">
   <title>Computer viewer</title>
   <style nonce="__VOICEOS_NONCE__">
     :root {
@@ -104,9 +104,19 @@
   </main>
   <script nonce="__VOICEOS_NONCE__">
     console.debug = console.info = console.warn = console.error = () => {};
-    __VOICEOS_RFB_SOURCE__
-  </script>
-  <script nonce="__VOICEOS_NONCE__">
+    // The gzip+base64 noVNC client, embedded exactly like the notch screen card
+    // (widgets/screen.html). It is inflated in-page and imported as a module so
+    // the bundle's top-level await resolves before use — a classic <script>
+    // would throw "await is only valid ... in modules" and never define the
+    // client. Only the desktop WebSocket is contacted; nothing loads from the pod.
+    const RFB_B64 = "__VOICEOS_RFB_B64__";
+    let rfbModule = null;
+    const loadRFB = () => rfbModule || (rfbModule = (async () => {
+      const bytes = Uint8Array.from(atob(RFB_B64), c => c.charCodeAt(0));
+      const inflated = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).blob();
+      const mod = await import(URL.createObjectURL(new Blob([inflated], { type: "text/javascript" })));
+      return mod.default;
+    })());
     (() => {
       "use strict";
       const config = window.__VOICEOS_CONFIG__;
@@ -142,7 +152,7 @@
       addEventListener("pagehide", clearCredential, { once: true });
       addEventListener("contextmenu", event => event.preventDefault());
 
-      if (!config || typeof config.wsUrl !== "string" || typeof config.botName !== "string" || !window.VoiceOSRFB) {
+      if (!config || typeof config.wsUrl !== "string" || typeof config.botName !== "string" || !RFB_B64) {
         setState("error", "Unavailable", "The viewer could not start. Close this window and try again.");
         return;
       }
@@ -151,8 +161,9 @@
       const connect = () => {
         if (clearing || !config.wsUrl) return;
         setState("connecting", retries ? "Reconnecting" : "Connecting", retries ? "The stream dropped. Reconnecting…" : "Connecting to the computer…");
-        try {
-          const current = rfb = new window.VoiceOSRFB(viewport, config.wsUrl, { shared: true });
+        loadRFB().then(RFB => {
+          if (clearing || !config.wsUrl || rfb) return;
+          const current = rfb = new RFB(viewport, config.wsUrl, { shared: true });
           current.viewOnly = true;
           current.scaleViewport = true;
           current.resizeSession = false;
@@ -181,9 +192,9 @@
             clearCredential();
             setState("error", "Unavailable", "The secure viewer could not connect. Close the window and try again.");
           });
-        } catch {
+        }).catch(() => {
           setState("error", "Unavailable", "The viewer could not start. Close this window and try again.");
-        }
+        });
       };
 
       connect();

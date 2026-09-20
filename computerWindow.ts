@@ -3,7 +3,6 @@ import { spawn } from "node:child_process";
 import { chmodSync, lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync, type Dirent } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { gunzipSync } from "node:zlib";
 import { COMPUTER_VIEWER_BINARY_B64, RFB_B64, WIDGETS } from "./assets.generated.ts";
 
 const VIEWER_TEMP_PREFIX = "voiceos-grokbot-viewer-";
@@ -50,9 +49,12 @@ export function validateDesktopWebSocketUrl(raw: string): string {
 }
 
 /**
- * Inline the existing view-only noVNC bundle without eval, blob imports, or a
- * remote asset fetch. The CSP receives only the validated socket origin: its
- * bearer-token query is deliberately never written into the document.
+ * Ship the gzip+base64 noVNC client into the page exactly as the notch screen
+ * card does: the compressed bundle is embedded as-is and the page inflates it
+ * and imports it as a module at runtime (the bundle uses top-level await, so it
+ * MUST load as an awaited module, not a classic script). The CSP receives only
+ * the validated socket origin; the bearer-token query is never written into the
+ * document, and the page never fetches anything from the pod.
  */
 export function buildViewerDocument(
   template: string,
@@ -63,30 +65,17 @@ export function buildViewerDocument(
   validateDesktopWebSocketUrl(wsUrl);
   const socketOrigin = new URL(wsUrl).origin;
 
-  let rfbSource: string;
-  try {
-    rfbSource = gunzipSync(Buffer.from(compressedRfbBase64, "base64")).toString("utf8");
-  } catch {
+  // The bundle is our own build artifact; guard against an empty/garbled embed.
+  if (!compressedRfbBase64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(compressedRfbBase64)) {
     throw new Error("The view-only desktop viewer is unavailable.");
   }
 
-  const exported = rfbSource.replace(
-    /export\{([A-Za-z_$][\w$]*) as default\};?\s*$/,
-    "window.VoiceOSRFB=$1;",
-  );
-  if (exported === rfbSource) {
-    throw new Error("The view-only desktop viewer is unavailable.");
-  }
-
-  // An HTML parser must never interpret bytes from the JavaScript bundle as a
-  // closing script tag. This changes only string-literal spelling in JS.
-  const htmlSafeSource = exported.replace(/<\/script/gi, "<\\/script");
   const html = template
     .replaceAll("__VOICEOS_CSP_CONNECT__", socketOrigin)
     .replaceAll("__VOICEOS_NONCE__", nonce)
-    .replace("__VOICEOS_RFB_SOURCE__", () => htmlSafeSource);
+    .replace("__VOICEOS_RFB_B64__", () => compressedRfbBase64);
 
-  if (/__VOICEOS_(?:CSP_CONNECT|NONCE|RFB_SOURCE)__/.test(html)) {
+  if (/__VOICEOS_(?:CSP_CONNECT|NONCE|RFB_B64)__/.test(html)) {
     throw new Error("The view-only desktop viewer is unavailable.");
   }
   return html;

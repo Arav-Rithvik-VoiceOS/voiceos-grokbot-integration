@@ -3,7 +3,6 @@ import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { gzipSync } from "node:zlib";
 
 const modulePath = "../computerWindow.ts";
 const computerWindow = await import(modulePath).catch(() => ({} as Record<string, unknown>));
@@ -40,32 +39,36 @@ test("desktop websocket validation rejects non-TLS, private, credentialed, and m
 
 test("the self-contained viewer document allowlists only the validated socket origin and excludes its credential", () => {
   const template = [
-    `<meta http-equiv="Content-Security-Policy" content="connect-src __VOICEOS_CSP_CONNECT__; script-src 'nonce-__VOICEOS_NONCE__'">`,
-    `<script nonce="__VOICEOS_NONCE__">__VOICEOS_RFB_SOURCE__</script>`,
+    `<meta http-equiv="Content-Security-Policy" content="connect-src __VOICEOS_CSP_CONNECT__; script-src 'nonce-__VOICEOS_NONCE__' blob:">`,
+    `<script nonce="__VOICEOS_NONCE__">const RFB_B64="__VOICEOS_RFB_B64__";</script>`,
   ].join("\n");
-  const bundle = gzipSync("class f{};export{f as default};").toString("base64");
+  const bundle = Buffer.from("fake-noVNC-gzip-bytes").toString("base64");
   const wsUrl = "wss://pod-7.cursorvm.com/websockify?token=5&network_token=top-secret";
 
   const html = computerWindow.buildViewerDocument(template, bundle, wsUrl, "fixed-nonce");
 
   expect(html).toContain("connect-src wss://pod-7.cursorvm.com");
   expect(html).toContain('nonce="fixed-nonce"');
-  expect(html).toContain("window.VoiceOSRFB=f");
+  // The compressed client is embedded verbatim, exactly like the notch card,
+  // and inflated + module-imported in the page (not decompressed server-side).
+  expect(html).toContain(`const RFB_B64="${bundle}"`);
   expect(html).not.toContain("top-secret");
   expect(html).not.toMatch(/__VOICEOS_[A-Z_]+__/);
 });
 
-test("viewer bundling preserves JavaScript replacement tokens without recreating HTML placeholders", () => {
-  const template = `<script nonce="__VOICEOS_NONCE__">__VOICEOS_RFB_SOURCE__</script>`;
-  const bundle = gzipSync(`const replacementToken="$&";class f{};export{f as default};`).toString("base64");
-  const html = computerWindow.buildViewerDocument(
-    template,
-    bundle,
-    "wss://pod.cursorvm.com/websockify?token=5&network_token=secret",
-    "fixed-nonce",
-  );
-  expect(html).toContain('replacementToken="$&"');
-  expect(html).not.toContain("__VOICEOS_RFB_SOURCE__");
+test("viewer bundling embeds the compressed client verbatim and refuses a garbled bundle", () => {
+  const template = `<script nonce="__VOICEOS_NONCE__">const RFB_B64="__VOICEOS_RFB_B64__";</script>`;
+  const wsUrl = "wss://pod.cursorvm.com/websockify?token=5&network_token=secret";
+  const bundle = Buffer.from("noVNC").toString("base64");
+
+  const html = computerWindow.buildViewerDocument(template, bundle, wsUrl, "fixed-nonce");
+  expect(html).toContain(`const RFB_B64="${bundle}"`);
+  expect(html).not.toContain("__VOICEOS_RFB_B64__");
+
+  // A non-base64 / garbled embed is refused rather than shipped as a broken page.
+  expect(() =>
+    computerWindow.buildViewerDocument(template, "not valid base64 !!", wsUrl, "fixed-nonce"),
+  ).toThrow("view-only desktop viewer is unavailable");
 });
 
 test("the standalone viewer page exists", () => {
