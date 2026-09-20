@@ -1,5 +1,6 @@
 node_modules/
 .env
+.DS_Store
 
 # Planning & handoff docs (not part of the shipped integration)
 PLAN.md
@@ -8,7 +9,10 @@ HOW-WE-CONNECTED.md
 JONAH-ASKS.md
 JONAH-CSP-BUG.md
 JONAH-INVOKE-ASK.md
-docs/
+docs/*
+!docs/security/
+docs/security/*
+!docs/security/computer-viewer-threat-model.md
 
 # Scratch / preview output
 _card.html

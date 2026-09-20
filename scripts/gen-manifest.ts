@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 import { renderCard, toBot, toGroup, toThread, GROK_COLOR_IDS, GROK_SHAPE_IDS } from "../cards.ts";
 import { listAgents, transcriptTail } from "../client.ts";
-import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION } from "../messaging.ts";
+import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, THREAD_DESCRIPTION } from "../messaging.ts";
 
 const root = new URL("..", import.meta.url);
 const MARK = `data:image/png;base64,${readFileSync(new URL("mark.png", root)).toString("base64")}`;
@@ -46,7 +46,7 @@ const manifest = {
   // Bump on any manifest change (tools/schema/permissions). NOTE: a plain restart
   // does NOT re-sync the cache even on a bump — push the new manifest into
   // config.json's installedIntegrations[].manifest (see the cache-push step).
-  version: "1.0.15",
+  version: "1.0.18",
   name: "Grok Bot",
   summary: "Talk to your Grok Bot AI teammates by voice.",
   description:
@@ -76,18 +76,14 @@ const manifest = {
       },
     },
     {
-      // The screen card's click. uiCallable so the card may invoke it; NO
-      // `confirmation` block — the click is the approval, and a confirm dialog
-      // over a live screen would defeat the one-click hand-off.
-      name: "grokbot_open_screen",
-      title: "Open a bot's computer in Grok Bot",
-      uiCallable: true,
+      name: "grokbot_open_computer_window",
+      title: "Open a bot's computer window",
       description:
-        "Internal — invoked by the screen card when the user clicks the live screen. Opens the Grok Bot app on that bot's Computer tab so the user can control it there. Do not call from voice; use view_bot_desktop_live to show a bot's screen.",
+        "Open a Grok Bot teammate's live computer in a larger, chromeless, view-only window. Use when the user asks to see a bot's screen bigger, enlarge a bot's computer, or open the screen in its own window.",
       inputSchema: {
         type: "object",
         properties: {
-          bot: { type: "string", description: "The exact bot ID shown on the card." },
+          bot: { type: "string", description: "The bot's name or identifier as the user said it, e.g. 'Pepper'." },
         },
         required: ["bot"],
       },
@@ -124,13 +120,13 @@ const manifest = {
     {
       name: "grokbot_thread",
       title: "Read a bot's messages",
-      description:
-        "Read the latest messages from one Grok Bot teammate. Use when the user asks what a bot said, to catch up on a bot, or to read its recent replies.",
+      description: THREAD_DESCRIPTION,
       inputSchema: {
         type: "object",
         properties: {
           bot: { type: "string", description: "The bot's name as the user said it." },
           limit: { type: "number", description: "How many recent messages; omit for a short default." },
+          show: { type: "boolean", description: "True only when the user asks to see or open the conversation. Omit to just read it." },
         },
         required: ["bot"],
       },

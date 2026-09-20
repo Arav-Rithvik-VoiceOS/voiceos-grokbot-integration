@@ -27,7 +27,7 @@ import {
   listAgents,
   listAllAutomations,
   log,
-  openBotComputer,
+  openComputerWindow,
   openGrokBotApp,
   resolveAgent,
   resolveMembers,
@@ -39,7 +39,7 @@ import {
 import { recordCardPoll, cardCovers } from "./cardWatch.ts";
 import { connectCard, screenCard, showCard, threadCard, sentCard, sentGroupCard, toBot, toGroup, toThread, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
-import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, resolveMessageGroup, type MessageArgs } from "./messaging.ts";
+import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 
 const server = new McpServer({ name: TOOLKIT, version: "1.0.0" });
 
@@ -391,27 +391,32 @@ server.registerTool(
   "grokbot_thread",
   {
     title: "Read a bot's messages",
-    description:
-      "Read the latest messages from one Grok Bot teammate. Use when the user asks what a bot said, to catch up on a bot, or to read its recent replies.",
+    description: THREAD_DESCRIPTION,
     inputSchema: {
       bot: z.string().describe("The bot's name as the user said it."),
       limit: z.number().int().min(1).max(20).optional().describe("How many recent messages; omit for a short default."),
+      show: z.boolean().optional().describe("True only when the user asks to see or open the conversation. Omit to just read it."),
     },
     annotations: { readOnlyHint: true },
   },
-  async (args: { bot: string; limit?: number }) =>
+  async (args: { bot: string; limit?: number; show?: boolean }) =>
     handle("grokbot_thread", async () => {
       const agents = await listAgents();
       const bot = await resolveAgent(args.bot.trim(), agents);
       const tail = await transcriptTail(bot.id, args.limit ?? 20);
       const entries = tail.entries ?? [];
+      const { thread, truncated } = threadForModel(bot, entries);
+      // No card unless asked: a glance on a read step parks the confirmation of
+      // a send that follows it ("summarize what Pepper said and tell Friday").
       return result(
         {
           bot: bot.name,
-          messages: entries.length,
-          message: entries.length ? `Latest from ${bot.name}.` : `No recent messages from ${bot.name}.`,
+          messages: thread.length,
+          thread,
+          truncated,
+          message: thread.length ? `Latest from ${bot.name}.` : `No recent messages from ${bot.name}.`,
         },
-        threadCard(bot, entries, "", agents),
+        args.show ? threadCard(bot, entries, "", agents) : undefined,
       );
     }),
 );
@@ -706,27 +711,39 @@ server.registerTool(
     }),
 );
 
-// ── CARD: grokbot_open_screen — the screen card's click, NO host confirmation ──
-// A card may only open https: links, so the screen card cannot hand off to the
-// Grok Bot app itself; its click invokes this tool and the server opens the
-// app's deep link instead. Plain JSON result (no glance): the app coming to the
-// front is the feedback, and the card stays as it is.
+// ── READ: grokbot_open_computer_window (larger native view-only screen) ──────
 server.registerTool(
-  "grokbot_open_screen",
+  "grokbot_open_computer_window",
   {
-    title: "Open a bot's computer in Grok Bot",
+    title: "Open a bot's computer window",
     description:
-      "Internal — invoked by the screen card when the user clicks the live screen. Opens the Grok Bot app on that bot's Computer tab so the user can control it there. Do not call from voice; use view_bot_desktop_live to show a bot's screen.",
+      "Open a Grok Bot teammate's live computer in a larger, chromeless, view-only window. Use when the user asks to see a bot's screen bigger, enlarge a bot's computer, or open the screen in its own window.",
     inputSchema: {
-      bot: z.string().describe("The exact bot ID shown on the card."),
+      bot: z.string().describe("The bot's name or identifier as the user said it, e.g. 'Pepper'."),
     },
+    annotations: { readOnlyHint: true },
   },
   async (args: { bot: string }) =>
-    handle("grokbot_open_screen", async () => {
-      // The card sends the bot's id; resolveMembers matches ids first, then names.
-      const [bot] = await resolveMembers([args.bot.trim()]);
-      const command = await openBotComputer(bot.id);
-      return result({ opened: true, bot: bot.name, command });
+    handle("grokbot_open_computer_window", async () => {
+      const bot = await resolveAgent(args.bot.trim());
+      const probe = await agentScreen(bot.id);
+      if (!probe.live || !probe.wsUrl) {
+        return result({
+          opened: false,
+          bot: bot.name,
+          live: false,
+          message: `${bot.name}'s computer is not running right now.`,
+        });
+      }
+
+      await openComputerWindow({ botId: bot.id, botName: bot.name, wsUrl: probe.wsUrl });
+      return result({
+        opened: true,
+        bot: bot.name,
+        live: true,
+        viewOnly: true,
+        message: `Opened ${bot.name}'s computer in a view-only window.`,
+      });
     }),
 );
 
