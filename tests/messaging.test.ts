@@ -48,7 +48,7 @@ mock.module("../client.ts", () => ({
     group.name = name;
   },
 }));
-await import("../server.ts");
+await import("../server.src.ts");
 const call = async (name: string, args: any) => {
   try {
     const response = await handlers.get(name)!(args);
@@ -218,6 +218,25 @@ test("card send to a group sends once and returns the group receipt", async () =
   expect(r.group).toBe("g");
   expect(r.receipt.html).toContain('<title>Sent to group</title>');
   expect(cardData(r).args.group).toBe("g");
+});
+test("sent receipts carry a follow-up bar that sends through the confirm-less card tool", async () => {
+  const one = (await call("grokbot_send", { bot: "Pepper", message: "First" })).receipt.html;
+  const many = (await call("grokbot_group", { group: "g", message: "First" })).receipt.html;
+  expect(one).toContain("invoke('grokbot_card_send',{bot:B.id,message:v})");
+  expect(many).toContain("invoke('grokbot_card_send',{group:G.id,message:v})");
+  for (const html of [one, many]) {
+    expect(html).toContain('id="mmsg"');
+    expect(html).toContain("offset-path");
+    // Card iframes are sandboxed without allow-forms: a <form> submit never fires.
+    expect(html).not.toContain("<form");
+    // The receipt shows no bot replies, so it must not poll (polling mutes the reply pill).
+    expect(html).not.toContain("grokbot_reply_check");
+  }
+});
+test("a follow-up from the group receipt sends once and leaves members and name alone", async () => {
+  const r = await call("grokbot_card_send", { group: "g", message: "One more thing" });
+  expect(writes).toEqual([["send", "g", "One more thing"]]);
+  expect(r.sent).toBe(true);
 });
 test("failed sends never produce a sent receipt", async () => {
   rejectSend = true;

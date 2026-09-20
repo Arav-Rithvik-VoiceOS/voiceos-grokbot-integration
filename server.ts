@@ -20388,12 +20388,17 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 .bubble b{font-weight:650}
 .sys{align-self:center;color:var(--ink-3);font-size:11.5px;display:flex;align-items:center;gap:5px;padding:2px 0}
 .msgs{display:flex;flex-direction:column;gap:6px;padding:4px 14px 8px;overflow-y:auto}
-.compose{display:flex;align-items:center;gap:8px;margin:4px 12px 12px;background:var(--fill-1);border:1px solid var(--line);border-radius:22px;padding:5px 5px 5px 6px}
-.compose input{background:none;border:0;padding:6px 4px;flex:1;min-width:0}
-.compose .plus{width:30px;height:30px;border-radius:50%;background:var(--fill-2);color:var(--ink-2);font-size:18px;line-height:30px;text-align:center;flex:none}
-.compose .send{width:30px;height:30px;border-radius:50%;background:var(--ink-1);color:#000;flex:none;display:grid;place-items:center;transition:transform .12s,opacity .15s}
-.compose .send:active{transform:scale(.92)}
-.compose .send[disabled]{opacity:.35}
+.msgs{max-height:150px}
+.mbar{display:flex;align-items:center;gap:6px;margin:0 12px 12px;height:36px;padding:3px 3px 3px 14px;background:var(--fill-1);border:1px solid var(--line);border-radius:18px;transition:border-color .15s,background .15s}
+.mbar[hidden]{display:none}
+.mbar:focus-within{border-color:rgba(255,138,0,.6);background:var(--fill-2)}
+.mbar input{flex:1;min-width:0;width:auto;background:none;border:0;padding:0;border-radius:0;font-size:13px;height:100%}
+.mbar input:focus{background:none;border:0}
+.mbar .go{width:28px;height:28px;border-radius:50%;background:var(--ink-1);color:#000;flex:none;display:grid;place-items:center;transition:transform .12s,opacity .15s}
+.mbar .go:active{transform:scale(.92)}
+.mbar .go[disabled]{opacity:.35;pointer-events:none}
+.toast{position:fixed;top:8px;left:50%;z-index:40;transform:translate(-50%,-14px);opacity:0;pointer-events:none;height:26px;padding:0 12px;border-radius:13px;background:rgba(20,20,22,.88);backdrop-filter:blur(10px);color:#fff;font-size:12px;font-weight:600;line-height:26px;box-shadow:0 6px 18px -6px rgba(0,0,0,.6),inset 0 0 0 1px var(--bad);transition:opacity .2s,transform .25s;white-space:nowrap}
+.toast.show{opacity:1;transform:translate(-50%,0)}
 .row{display:flex;align-items:center;gap:11px;padding:8px 15px;transition:background .12s;width:100%;text-align:left;border-radius:14px}
 .row:hover{background:var(--fill-1)}
 .row:active{background:var(--fill-2)}
@@ -20417,10 +20422,27 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 @keyframes seg{0%{opacity:0}9%{opacity:var(--o)}82%{opacity:var(--o)}100%{opacity:0}}
 .who.go .eye{animation:eyeout 1.4s both}
 @keyframes eyeout{0%,3%{opacity:1}10%,62%{opacity:0}74%,100%{opacity:1}}
-.ok{width:22px;height:22px;border-radius:50%;background:var(--good);display:grid;place-items:center;flex:none;animation:pop .4s cubic-bezier(.2,1.4,.4,1) both}@keyframes pop{from{transform:scale(.4);opacity:0}}.ok svg{width:12px;height:12px}</style>
+.ok{width:22px;height:22px;border-radius:50%;background:var(--good);display:grid;place-items:center;flex:none;animation:pop .4s cubic-bezier(.2,1.4,.4,1) both}@keyframes pop{from{transform:scale(.4);opacity:0}}.ok svg{width:12px;height:12px}
+/* Follow-up send: the message rides a CSS motion path (offset-path) from the bar into the orbs. */
+.fly{position:fixed;left:0;top:0;z-index:30;pointer-events:none;offset-path:var(--path);offset-rotate:0deg;offset-anchor:50% 50%;will-change:offset-distance}
+.fly.probe{offset-path:none;visibility:hidden;height:32px;padding:0 12px;font-size:13px;white-space:nowrap}
+.fly.lead{width:var(--w);height:32px;padding:0 12px;border-radius:16px;background:var(--fill-3);backdrop-filter:blur(8px);font-size:13px;line-height:32px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:fly var(--dur) cubic-bezier(.55,0,.3,1) both}
+@keyframes fly{0%{offset-distance:0%;opacity:0;transform:scale(.9)}8%{opacity:1;transform:scale(1.05)}22%{width:var(--w);height:32px;padding:0 12px;color:var(--ink-1);background:var(--fill-3);box-shadow:0 0 0 0 transparent;transform:scale(1)}46%{width:14px;height:14px;padding:0;color:transparent;background:var(--c);box-shadow:0 0 16px 3px var(--c)}92%{opacity:1}100%{offset-distance:100%;width:7px;height:7px;padding:0;color:transparent;background:#fff;box-shadow:0 0 22px 6px var(--c);opacity:0}}
+.fly.ghost{width:var(--s);height:var(--s);border-radius:50%;background:var(--col);box-shadow:0 0 8px var(--col);animation:ghost var(--dur) cubic-bezier(.55,0,.3,1) var(--d) both}
+@keyframes ghost{0%{offset-distance:0%;opacity:0}40%{opacity:0}52%{opacity:var(--o)}100%{offset-distance:100%;opacity:0;transform:scale(.3)}}
+.who .wave{position:absolute;inset:0;border-radius:50%;border:2px solid var(--c);opacity:0;pointer-events:none}
+.who.gulp .wave{animation:wave .7s cubic-bezier(.2,.7,.3,1) both}.who.gulp .wave.w2{animation-delay:.13s}
+@keyframes wave{0%{opacity:.9;transform:scale(.7)}100%{opacity:0;transform:scale(2.1)}}
+.who.gulp .av{animation:gulp .55s cubic-bezier(.3,1.5,.5,1)}
+@keyframes gulp{0%{transform:scale(1)}25%{transform:scale(1.32,1.22);filter:brightness(1.5)}55%{transform:scale(.88,1.08)}100%{transform:scale(1)}}
+.caret{display:inline-block;width:1.5px;height:12px;margin-left:2px;background:var(--ink-2);vertical-align:-2px;opacity:0}
+.caret.on{opacity:1;animation:caret .8s steps(1) infinite}@keyframes caret{50%{opacity:0}}
+</style>
 <div class="hd"><span class="mark"><i></i>Grok Bot</span><span class="grow"></span></div>
 <div style="display:flex;align-items:center;gap:12px;padding:2px 15px 10px"><span class="stack" id="stack"></span><div class="grow"><div class="t1" id="title">Sent</div><div class="t3" id="sub"></div></div></div>
 <div class="msgs" id="msgs" style="padding-bottom:14px"></div>
+<div class="mbar" id="mbar" hidden><input id="mmsg" placeholder="Add a message" autocomplete="off" aria-label="Send another message"><button class="go" id="mgo" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>
+<div class="toast" id="toast"></div>
 
 <script>
 const DEMO={data:{"bots":[{"id":"pepper","name":"Pepper","label":"EA","color":"#FF6700","shape":"blob","status":"working","task":"Order in Chunk 3: submit 1.5 → 1.7 if open → Zinn Ch 4","time":"now"},{"id":"friday","name":"F.R.I.D.A.Y.","label":"School","color":"#00C972","shape":"hex","status":"thinking","task":"Verifying what actually submitted last night","time":"2m"},{"id":"jerome","name":"Jerome","label":"BISV Hacks","color":"#FF263C","shape":"blob","status":"idle","task":"Got both links. Saved. No further action.","time":"Yesterday"},{"id":"titus","name":"Titus","label":"Research","color":"#1084FE","shape":"squircle","status":"waiting","task":"Needs you: which venue for the lit review talk?","time":"Tue"}],"groups":[{"id":"g1","name":"Homework crew","members":["pepper","friday"],"last":"Pepper: Bio Lab is cleared — moving to 1.7.","time":"6:01 AM"}],"thread":[{"from":"me","text":"what's up?","t":"Today 6:01 AM"},{"from":"bot","html":"Morning. Before school: Stats paper due <b>7:30</b>, CSA 1.5 screenshot submit due <b>8:20</b>. Checking if Bio Lab / 1.7 cleared overnight."},{"sys":"Messaged","bot":"friday"},{"from":"bot","html":"<b>Right now</b><br>• Stats CH4 #15,17,21,23,25 — paper, due <b>7:30</b><br>• CSA 1.5 — screenshot + Schoology submit by <b>8:20</b><br>• CSA 1.7 — still overdue if you skipped it<br><br>Friday’s verifying what actually submitted last night."}],"me":"Arav"},args:{group:'g1',message:'Both of you: 1.7 first, then Zinn. Friday, confirm what actually submitted.',time:'6:04 AM'}};
@@ -20430,7 +20452,8 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const EYES='<span class="eyes"><i class="eye l"></i><i class="eye r"></i></span>';
 const av=(b,cls='')=>'<span class="av '+(b.shape||'blob')+' '+cls+'" data-state="'+esc(b.status||'idle')+'" style="--c:'+esc(b.color)+'">'+EYES+'</span>';
 let inited=false;
-addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
+let CAN_INVOKE=false;const SOLO=parent===window; /* SOLO = opened in a browser tab (preview): sends are simulated */
+addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;if(e.source===parent&&m.capabilities)CAN_INVOKE=!!m.capabilities.invokeTool;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
 setTimeout(()=>{if(!inited)boot(DEMO.data,DEMO.args,'dark')},350);
 function boot(data,args,mode){document.documentElement.dataset.theme=mode;render(data||{},args||{});hydrate(args||{});report();new ResizeObserver(report).observe(document.body);}
 function getVal(el){return 'value' in el&&el.tagName!=='BUTTON'?el.value:(el.dataset.value??'')}
@@ -20482,24 +20505,84 @@ const botById=(d,id)=>(d.bots||[]).find(b=>b.id===id)||{name:id,color:'#888',sha
 const statusText=b=>({working:'Working',thinking:'Thinking',waiting:'Needs you',blocked:'Blocked',done:'Done',idle:'Idle'}[b.status]||'Idle');
 const dotCls=b=>({working:'on',thinking:'on',waiting:'warn',blocked:'bad'}[b.status]||'');
 function thread(d,botId){return (d.thread||[]).map(m=>{if(m.sys){const b=botById(d,m.bot);return '<div class="sys">'+esc(m.sys)+' '+av(b,'tiny')+' '+esc(b.name)+'</div>'}return (m.t?'<div class="sys">'+esc(m.t)+'</div>':'')+'<div class="bubble '+m.from+' fade-in">'+(m.html||esc(m.text))+'</div>'}).join('')}
-function composer(name,ph){return '<form class="compose" id="compose"><span class="plus">+</span><input id="msg" placeholder="'+esc(ph||('Message '+name))+'" autocomplete="off"><button class="send" type="submit" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form>'}
-function wireComposer(root,onSend){const f=$('#compose',root),i=$('#msg',f),b=$('.send',f);i.addEventListener('input',()=>b.disabled=!i.value.trim());f.addEventListener('submit',e=>{e.preventDefault();const v=i.value.trim();if(!v)return;i.value='';b.disabled=true;onSend(v)})}
-function appendMe(list,text){const el=document.createElement('div');el.className='bubble me fade-in';el.textContent=text;list.appendChild(el);const s=document.createElement('div');s.className='sys';s.textContent='Delivered via VoiceOS';list.appendChild(s);list.scrollTop=list.scrollHeight;typing(list)}
-function typing(list){const t=document.createElement('div');t.className='bubble bot fade-in';t.innerHTML='<span class="ty"><i></i><i></i><i></i></span>';list.appendChild(t);list.scrollTop=list.scrollHeight;setTimeout(()=>t.remove(),2600)}
-
 function mix(A,B,t){const h=x=>[1,3,5].map(i=>parseInt(x.slice(i,i+2),16));const p=h(A),q=h(B);return 'rgb('+p.map((v,i)=>Math.round(v+(q[i]-v)*t)).join(',')+')'}
 /* Group modes: args.group (id into data.groups[]) or args.members (bot ids) + args.groupName. */
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const ramp=t=>t<.5?mix('#ff5fd2','#8f7cff',t*2):mix('#8f7cff','#7cf5c8',(t-.5)*2);
 const namesOf=n=>n.length<=2?n.join(' and '):n.slice(0,-1).join(', ')+' and '+n[n.length-1];
-const ringHtml=()=>'<span class="ring">'+Array.from({length:18},(_,i)=>{const t=i/17,w=(7.5-5*t).toFixed(1),o=(1-t*.9).toFixed(2),col=t<.5?mix('#ff5fd2','#8f7cff',t*2):mix('#8f7cff','#7cf5c8',(t-.5)*2);return '<i class="seg" style="--a:'+(-i*7)+'deg;--w:'+w+'px;--o:'+o+';--col:'+col+'"></i>'}).join('')+'</span>';
+const ringHtml=()=>'<span class="ring">'+Array.from({length:18},(_,i)=>{const t=i/17,w=(7.5-5*t).toFixed(1),o=(1-t*.9).toFixed(2);return '<i class="seg" style="--a:'+(-i*7)+'deg;--w:'+w+'px;--o:'+o+';--col:'+ramp(t)+'"></i>'}).join('')+'</span><i class="wave"></i><i class="wave w2"></i>';
+let G=null,LABEL='',sentN=1,phraseI=0,cometT,_k=0;
+const setTitle=()=>{$('#title').textContent=sentN>1?'Sent '+sentN+' messages to '+LABEL:'Sent to '+LABEL};
+function orbit(){const whos=$$('.who'),W=whos[_k%whos.length];_k++;clearTimeout(cometT);if(!W||!W.querySelector('.av[data-state=working]'))return;W.style.setProperty('--tilt',(Math.random()*50-25).toFixed(0)+'deg');W.style.setProperty('--roll',(Math.random()*70-35).toFixed(0)+'deg');whos.forEach(w=>w.classList.remove('go'));void W.offsetWidth;W.classList.add('go');Motion.react(W.querySelector('.av'));cometT=setTimeout(orbit,3200+Math.random()*1800)}
 function render(d,a){const g=a.group?(d.groups||[]).find(x=>x.id===a.group):null;const ids=g?g.members:(a.members||[]);const bots=ids.map(id=>botById(d,id));const gname=(a.groupName??(g&&g.name))||'';const names=bots.map(b=>b.name);
- $('#title').textContent='Sent to '+(gname||namesOf(names));
- $('#sub').innerHTML='<span class="shim">'+esc(gname?names.length+' Bots are on it':(names.length===1?names[0]+' is':'Both are')+' on it')+'</span>';
- $('#stack').innerHTML=bots.map(b=>'<span class="who" data-bot="'+esc(b.id)+'">'+av({...b,status:'idle'})+ringHtml()+'</span>').join('');
- const whos=$$('.who');let k=0;
- const orbit=()=>{const W=whos[k%whos.length];k++;if(!W||!W.querySelector('.av[data-state=working]'))return;W.style.setProperty('--tilt',(Math.random()*50-25).toFixed(0)+'deg');W.style.setProperty('--roll',(Math.random()*70-35).toFixed(0)+'deg');whos.forEach(w=>w.classList.remove('go'));void W.offsetWidth;W.classList.add('go');Motion.react(W.querySelector('.av'));setTimeout(orbit,3200+Math.random()*1800)};
- setTimeout(orbit,1600);
- whos.forEach((W,i)=>setTimeout(()=>{const av=W.querySelector('.av');Motion.react(av);setTimeout(()=>Motion.set(av,'working'),350)},700+i*160));
- $('#msgs').innerHTML='<div class="bubble me fade-in">'+esc(a.message)+'</div>'}
+ G=a.group?{id:a.group}:null;LABEL=gname||namesOf(names);sentN=1;phraseI=0;setTitle();
+ $('#sub').innerHTML='<span class="shim" id="st">'+esc(gname?names.length+' Bots are on it':(names.length===1?names[0]+' is':'Both are')+' on it')+'</span><i class="caret" id="caret"></i>';
+ $('#stack').innerHTML=bots.map(b=>'<span class="who" data-bot="'+esc(b.id)+'" style="--c:'+esc(b.color)+'">'+av({...b,status:'idle'})+ringHtml()+'</span>').join('');
+ clearTimeout(cometT);cometT=setTimeout(orbit,1600);
+ $$('.who').forEach((W,i)=>setTimeout(()=>{const av=W.querySelector('.av');Motion.react(av);setTimeout(()=>Motion.set(av,'working'),350)},700+i*160));
+ $('#msgs').innerHTML='<div class="bubble me fade-in">'+esc(a.message)+'</div>';
+ $('#mbar').hidden=!(G&&(CAN_INVOKE||SOLO));$('#mmsg').placeholder='Add a message for '+LABEL;wireBar()}
+
+/* Card→host tool bridge (voiceos:invokeTool → toolResult). grokbot_card_send has no host confirmation; its receipt card is ignored so this card stays put. */
+const TERMINAL={completed:1,cancelled:1,failed:1,unknown:1};
+const _pending=new Map();let _rq=0;
+addEventListener('message',e=>{if(e.source!==parent)return;const m=e.data;if(!m||m.type!=='voiceos:toolResult')return;const p=_pending.get(m.requestId);if(!p||!TERMINAL[m.status])return;_pending.delete(m.requestId);if(m.status==='completed')p.resolve(m.result||{});else p.reject({status:m.status,error:m.error||'That didn’t go through.'})});
+function invoke(name,args){return new Promise((resolve,reject)=>{const requestId='r'+(++_rq)+'_'+Date.now();_pending.set(requestId,{resolve,reject});parent.postMessage({type:'voiceos:invokeTool',name,args,requestId},'*');setTimeout(()=>{if(_pending.delete(requestId))reject({status:'unknown',error:'No response — check the app before trying again.'})},130000)})}
+let _toastT;
+function toast(text){const t=$('#toast');t.textContent=text;t.classList.add('show');clearTimeout(_toastT);_toastT=setTimeout(()=>t.classList.remove('show'),3200)}
+
+/* Status line: backspace to the shared prefix (the bot's name), then type the new line. */
+const PHRASES=['They got your request','They are thinking it over','They are working on it','They are on it','They added it to the list'];
+let _ty=0;
+function retype(text){const el=$('#st'),c=$('#caret'),gen=++_ty;if(reduce){el.textContent=text;return}
+ const tgt=[...text];let cur=[...el.textContent];c.classList.add('on');
+ const step=()=>{if(gen!==_ty)return;
+  if(!cur.every((ch,i)=>tgt[i]===ch)){cur.pop();el.textContent=cur.join('');setTimeout(step,16)}
+  else if(cur.length<tgt.length){cur.push(tgt[cur.length]);el.textContent=cur.join('');setTimeout(step,26+Math.random()*34)}
+  else setTimeout(()=>{if(gen===_ty)c.classList.remove('on')},900)};
+ step()}
+
+/* The message leaves the bar as a bubble, condenses into a glowing pellet with a comet trail, and
+   rides a cubic Bézier motion path into the stack; each orb gulps in turn. Optimistic: it flies
+   while the send is in flight; rec.failed (set by a failed send) stops the landing. */
+const DUR=950;
+function launch(text,rec){const S=$('#stack'),whos=$$('.who');
+ const land=()=>{if(rec.failed||rec.landed)return;rec.landed=true;
+  const m=$('#msgs'),el=document.createElement('div');el.className='bubble me fade-in';el.textContent=text;m.appendChild(el);rec.el=el;m.scrollTop=m.scrollHeight;
+  sentN++;setTitle();
+  whos.forEach((W,i)=>setTimeout(()=>{Motion.set(W.querySelector('.av'),'working');W.classList.remove('gulp');void W.offsetWidth;W.classList.add('gulp');setTimeout(()=>W.classList.remove('gulp'),850)},i*90));
+  setTimeout(orbit,420+whos.length*90);
+  retype(PHRASES[phraseI++%PHRASES.length])};
+ if(reduce||!whos.length){land();return}
+ const s=$('#mmsg').getBoundingClientRect(),o=S.getBoundingClientRect();
+ const lead=document.createElement('div');lead.className='fly probe';lead.textContent=text;document.body.appendChild(lead);
+ const w=Math.min(lead.offsetWidth,s.width),sx=s.left+w/2,sy=s.top+s.height/2,ex=o.left+o.width/2,ey=o.top+o.height/2,reach=Math.min(innerWidth-24,Math.max(sx,ex)+150);
+ const path="path('M "+sx+' '+sy+' C '+reach+' '+(sy-20)+', '+reach+' '+(ey+40)+', '+ex+' '+ey+"')";
+ const c=getComputedStyle(whos[0]).getPropertyValue('--c')||'#FF8A00';
+ const set=el=>{el.style.setProperty('--path',path);el.style.setProperty('--dur',DUR+'ms');el.style.setProperty('--c',c)};
+ set(lead);lead.style.setProperty('--w',w+'px');lead.className='fly lead';
+ const ghosts=Array.from({length:6},(_,i)=>{const g=document.createElement('i');g.className='fly ghost';set(g);g.style.setProperty('--s',(9-i)+'px');g.style.setProperty('--o',(.8-i*.12).toFixed(2));g.style.setProperty('--d',(38*(i+1))+'ms');g.style.setProperty('--col',ramp(i/5));document.body.appendChild(g);return g});
+ whos.forEach(W=>{const a=W.querySelector('.av');if(a._m){a._m.eyes.style.transition='transform 300ms cubic-bezier(.3,.7,.2,1)';a._m.eyes.style.transform='translate(12%,12%)'}});
+ lead.addEventListener('animationend',land,{once:true});setTimeout(land,DUR+80);
+ setTimeout(()=>{lead.remove();ghosts.forEach(g=>g.remove())},DUR+420)}
+
+/* The host caps a card at 64 tool requests. */
+const BUDGET=60;let _used=0,_wired=false;
+function wireBar(){if(_wired)return;_wired=true;const inp=$('#mmsg'),go=$('#mgo');
+ const sync=()=>{go.disabled=!inp.value.trim()};
+ const send=()=>{const v=inp.value.trim();if(!v||!G)return;
+  if(_used>=BUDGET){toast('Open Grok Bot to keep chatting');return}
+  _used++;inp.value='';sync();inp.focus();
+  const rec={};launch(v,rec);
+  (SOLO?new Promise(r=>setTimeout(r,500)):invoke('grokbot_card_send',{group:G.id,message:v})).catch(err=>{
+   rec.failed=true;if(rec.el){rec.el.remove();sentN--;setTitle()}
+   if(!inp.value){inp.value=v;sync()}
+   toast((err&&err.error)||'Couldn’t send');retype('That one didn’t send');
+   $$('.who .av').forEach(a=>{Motion.set(a,'blocked');setTimeout(()=>Motion.set(a,'working'),2400)})})};
+ inp.addEventListener('input',sync);
+ /* No form element: card iframes are sandboxed without allow-forms, so a submit never fires. */
+ inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();send()}});
+ go.addEventListener('click',send)}
 
 </script>
 `, sent: `<!doctype html>
@@ -20559,12 +20642,17 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 .bubble b{font-weight:650}
 .sys{align-self:center;color:var(--ink-3);font-size:11.5px;display:flex;align-items:center;gap:5px;padding:2px 0}
 .msgs{display:flex;flex-direction:column;gap:6px;padding:4px 14px 8px;overflow-y:auto}
-.compose{display:flex;align-items:center;gap:8px;margin:4px 12px 12px;background:var(--fill-1);border:1px solid var(--line);border-radius:22px;padding:5px 5px 5px 6px}
-.compose input{background:none;border:0;padding:6px 4px;flex:1;min-width:0}
-.compose .plus{width:30px;height:30px;border-radius:50%;background:var(--fill-2);color:var(--ink-2);font-size:18px;line-height:30px;text-align:center;flex:none}
-.compose .send{width:30px;height:30px;border-radius:50%;background:var(--ink-1);color:#000;flex:none;display:grid;place-items:center;transition:transform .12s,opacity .15s}
-.compose .send:active{transform:scale(.92)}
-.compose .send[disabled]{opacity:.35}
+.msgs{max-height:150px}
+.mbar{display:flex;align-items:center;gap:6px;margin:0 12px 12px;height:36px;padding:3px 3px 3px 14px;background:var(--fill-1);border:1px solid var(--line);border-radius:18px;transition:border-color .15s,background .15s}
+.mbar[hidden]{display:none}
+.mbar:focus-within{border-color:rgba(255,138,0,.6);background:var(--fill-2)}
+.mbar input{flex:1;min-width:0;width:auto;background:none;border:0;padding:0;border-radius:0;font-size:13px;height:100%}
+.mbar input:focus{background:none;border:0}
+.mbar .go{width:28px;height:28px;border-radius:50%;background:var(--ink-1);color:#000;flex:none;display:grid;place-items:center;transition:transform .12s,opacity .15s}
+.mbar .go:active{transform:scale(.92)}
+.mbar .go[disabled]{opacity:.35;pointer-events:none}
+.toast{position:fixed;top:8px;left:50%;z-index:40;transform:translate(-50%,-14px);opacity:0;pointer-events:none;height:26px;padding:0 12px;border-radius:13px;background:rgba(20,20,22,.88);backdrop-filter:blur(10px);color:#fff;font-size:12px;font-weight:600;line-height:26px;box-shadow:0 6px 18px -6px rgba(0,0,0,.6),inset 0 0 0 1px var(--bad);transition:opacity .2s,transform .25s;white-space:nowrap}
+.toast.show{opacity:1;transform:translate(-50%,0)}
 .row{display:flex;align-items:center;gap:11px;padding:8px 15px;transition:background .12s;width:100%;text-align:left;border-radius:14px}
 .row:hover{background:var(--fill-1)}
 .row:active{background:var(--fill-2)}
@@ -20587,10 +20675,27 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 @keyframes seg{0%{opacity:0}9%{opacity:var(--o)}82%{opacity:var(--o)}100%{opacity:0}}
 #who.go .eye{animation:eyeout 1.4s both}
 @keyframes eyeout{0%,3%{opacity:1}10%,62%{opacity:0}74%,100%{opacity:1}}
-.ok{width:22px;height:22px;border-radius:50%;background:var(--good);display:grid;place-items:center;flex:none;animation:pop .4s cubic-bezier(.2,1.4,.4,1) both}@keyframes pop{from{transform:scale(.4);opacity:0}}.ok svg{width:12px;height:12px}</style>
+.ok{width:22px;height:22px;border-radius:50%;background:var(--good);display:grid;place-items:center;flex:none;animation:pop .4s cubic-bezier(.2,1.4,.4,1) both}@keyframes pop{from{transform:scale(.4);opacity:0}}.ok svg{width:12px;height:12px}
+/* Follow-up send: the message rides a CSS motion path (offset-path) from the bar into the orb. */
+.fly{position:fixed;left:0;top:0;z-index:30;pointer-events:none;offset-path:var(--path);offset-rotate:0deg;offset-anchor:50% 50%;will-change:offset-distance}
+.fly.probe{offset-path:none;visibility:hidden;height:32px;padding:0 12px;font-size:13px;white-space:nowrap}
+.fly.lead{width:var(--w);height:32px;padding:0 12px;border-radius:16px;background:var(--fill-3);backdrop-filter:blur(8px);font-size:13px;line-height:32px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:fly var(--dur) cubic-bezier(.55,0,.3,1) both}
+@keyframes fly{0%{offset-distance:0%;opacity:0;transform:scale(.9)}8%{opacity:1;transform:scale(1.05)}22%{width:var(--w);height:32px;padding:0 12px;color:var(--ink-1);background:var(--fill-3);box-shadow:0 0 0 0 transparent;transform:scale(1)}46%{width:14px;height:14px;padding:0;color:transparent;background:var(--c);box-shadow:0 0 16px 3px var(--c)}92%{opacity:1}100%{offset-distance:100%;width:7px;height:7px;padding:0;color:transparent;background:#fff;box-shadow:0 0 22px 6px var(--c);opacity:0}}
+.fly.ghost{width:var(--s);height:var(--s);border-radius:50%;background:var(--col);box-shadow:0 0 8px var(--col);animation:ghost var(--dur) cubic-bezier(.55,0,.3,1) var(--d) both}
+@keyframes ghost{0%{offset-distance:0%;opacity:0}40%{opacity:0}52%{opacity:var(--o)}100%{offset-distance:100%;opacity:0;transform:scale(.3)}}
+#who .wave{position:absolute;inset:0;border-radius:50%;border:2px solid var(--c);opacity:0;pointer-events:none}
+#who.gulp .wave{animation:wave .7s cubic-bezier(.2,.7,.3,1) both}#who.gulp .wave.w2{animation-delay:.13s}
+@keyframes wave{0%{opacity:.9;transform:scale(.7)}100%{opacity:0;transform:scale(2.1)}}
+#who.gulp .av{animation:gulp .55s cubic-bezier(.3,1.5,.5,1)}
+@keyframes gulp{0%{transform:scale(1)}25%{transform:scale(1.32,1.22);filter:brightness(1.5)}55%{transform:scale(.88,1.08)}100%{transform:scale(1)}}
+.caret{display:inline-block;width:1.5px;height:12px;margin-left:2px;background:var(--ink-2);vertical-align:-2px;opacity:0}
+.caret.on{opacity:1;animation:caret .8s steps(1) infinite}@keyframes caret{50%{opacity:0}}
+</style>
 <div class="hd"><span class="mark"><i></i>Grok Bot</span><span class="grow"></span></div>
 <div style="display:flex;align-items:center;gap:10px;padding:2px 15px 10px"><span id="who"></span><div class="grow"><div class="t1" id="title">Sent</div><div class="t3" id="sub"></div></div></div>
 <div class="msgs" id="msgs" style="padding-bottom:14px"></div>
+<div class="mbar" id="mbar" hidden><input id="mmsg" placeholder="Add a message" autocomplete="off" aria-label="Send another message"><button class="go" id="mgo" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>
+<div class="toast" id="toast"></div>
 
 <script>
 const DEMO={data:{"bots":[{"id":"pepper","name":"Pepper","label":"EA","color":"#FF6700","shape":"blob","status":"working","task":"Order in Chunk 3: submit 1.5 → 1.7 if open → Zinn Ch 4","time":"now"},{"id":"friday","name":"F.R.I.D.A.Y.","label":"School","color":"#00C972","shape":"hex","status":"thinking","task":"Verifying what actually submitted last night","time":"2m"},{"id":"jerome","name":"Jerome","label":"BISV Hacks","color":"#FF263C","shape":"blob","status":"idle","task":"Got both links. Saved. No further action.","time":"Yesterday"},{"id":"titus","name":"Titus","label":"Research","color":"#1084FE","shape":"squircle","status":"waiting","task":"Needs you: which venue for the lit review talk?","time":"Tue"}],"groups":[{"id":"g1","name":"Homework crew","members":["pepper","friday"],"last":"Pepper: Bio Lab is cleared — moving to 1.7.","time":"6:01 AM"}],"thread":[{"from":"me","text":"what's up?","t":"Today 6:01 AM"},{"from":"bot","html":"Morning. Before school: Stats paper due <b>7:30</b>, CSA 1.5 screenshot submit due <b>8:20</b>. Checking if Bio Lab / 1.7 cleared overnight."},{"sys":"Messaged","bot":"friday"},{"from":"bot","html":"<b>Right now</b><br>• Stats CH4 #15,17,21,23,25 — paper, due <b>7:30</b><br>• CSA 1.5 — screenshot + Schoology submit by <b>8:20</b><br>• CSA 1.7 — still overdue if you skipped it<br><br>Friday’s verifying what actually submitted last night."}],"me":"Arav"},args:{bot:'pepper',message:'Skip Bio Lab for now — CSA 1.7 first, then Zinn. Ping me when 1.7 is submitted.',time:'6:04 AM'}};
@@ -20600,7 +20705,8 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const EYES='<span class="eyes"><i class="eye l"></i><i class="eye r"></i></span>';
 const av=(b,cls='')=>'<span class="av '+(b.shape||'blob')+' '+cls+'" data-state="'+esc(b.status||'idle')+'" style="--c:'+esc(b.color)+'">'+EYES+'</span>';
 let inited=false;
-addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
+let CAN_INVOKE=false;const SOLO=parent===window; /* SOLO = opened in a browser tab (preview): sends are simulated */
+addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;if(e.source===parent&&m.capabilities)CAN_INVOKE=!!m.capabilities.invokeTool;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
 setTimeout(()=>{if(!inited)boot(DEMO.data,DEMO.args,'dark')},350);
 function boot(data,args,mode){document.documentElement.dataset.theme=mode;render(data||{},args||{});hydrate(args||{});report();new ResizeObserver(report).observe(document.body);}
 function getVal(el){return 'value' in el&&el.tagName!=='BUTTON'?el.value:(el.dataset.value??'')}
@@ -20652,14 +20758,77 @@ const botById=(d,id)=>(d.bots||[]).find(b=>b.id===id)||{name:id,color:'#888',sha
 const statusText=b=>({working:'Working',thinking:'Thinking',waiting:'Needs you',blocked:'Blocked',done:'Done',idle:'Idle'}[b.status]||'Idle');
 const dotCls=b=>({working:'on',thinking:'on',waiting:'warn',blocked:'bad'}[b.status]||'');
 function thread(d,botId){return (d.thread||[]).map(m=>{if(m.sys){const b=botById(d,m.bot);return '<div class="sys">'+esc(m.sys)+' '+av(b,'tiny')+' '+esc(b.name)+'</div>'}return (m.t?'<div class="sys">'+esc(m.t)+'</div>':'')+'<div class="bubble '+m.from+' fade-in">'+(m.html||esc(m.text))+'</div>'}).join('')}
-function composer(name,ph){return '<form class="compose" id="compose"><span class="plus">+</span><input id="msg" placeholder="'+esc(ph||('Message '+name))+'" autocomplete="off"><button class="send" type="submit" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form>'}
-function wireComposer(root,onSend){const f=$('#compose',root),i=$('#msg',f),b=$('.send',f);i.addEventListener('input',()=>b.disabled=!i.value.trim());f.addEventListener('submit',e=>{e.preventDefault();const v=i.value.trim();if(!v)return;i.value='';b.disabled=true;onSend(v)})}
-function appendMe(list,text){const el=document.createElement('div');el.className='bubble me fade-in';el.textContent=text;list.appendChild(el);const s=document.createElement('div');s.className='sys';s.textContent='Delivered via VoiceOS';list.appendChild(s);list.scrollTop=list.scrollHeight;typing(list)}
-function typing(list){const t=document.createElement('div');t.className='bubble bot fade-in';t.innerHTML='<span class="ty"><i></i><i></i><i></i></span>';list.appendChild(t);list.scrollTop=list.scrollHeight;setTimeout(()=>t.remove(),2600)}
-
 function mix(A,B,t){const h=x=>[1,3,5].map(i=>parseInt(x.slice(i,i+2),16));const p=h(A),q=h(B);return 'rgb('+p.map((v,i)=>Math.round(v+(q[i]-v)*t)).join(',')+')'}
-function render(d,a){const b=botById(d,a.bot||'pepper');$('#title').textContent='Sent to '+b.name;$('#sub').innerHTML='<span class="shim">'+esc(b.name)+' is working</span>';$('#who').innerHTML=av({...b,status:'idle'})+'<span class="ring">'+Array.from({length:18},(_,i)=>{const t=i/17,w=(7.5-5*t).toFixed(1),o=(1-t*.9).toFixed(2),col=t<.5?mix('#ff5fd2','#8f7cff',t*2):mix('#8f7cff','#7cf5c8',(t-.5)*2);return '<i class="seg" style="--a:'+(-i*7)+'deg;--w:'+w+'px;--o:'+o+';--col:'+col+'"></i>'}).join('')+'</span>';
- const W=$('#who');let cometT;const orbit=()=>{if(!W.querySelector('.av[data-state=working]'))return;W.style.setProperty('--tilt',(Math.random()*50-25).toFixed(0)+'deg');W.style.setProperty('--roll',(Math.random()*70-35).toFixed(0)+'deg');W.classList.remove('go');void W.offsetWidth;W.classList.add('go');Motion.react(W.querySelector('.av'));cometT=setTimeout(orbit,4800+Math.random()*2400)};setTimeout(orbit,1600);setTimeout(()=>{const a=$('#who .av');Motion.react(a);setTimeout(()=>Motion.set(a,'working'),350)},700);const m=$('#msgs');m.innerHTML='<div class="bubble me fade-in">'+esc(a.message)+'</div>'}
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const ramp=t=>t<.5?mix('#ff5fd2','#8f7cff',t*2):mix('#8f7cff','#7cf5c8',(t-.5)*2);
+let B=null,sentN=1,phraseI=0,cometT;
+const setTitle=()=>{$('#title').textContent=sentN>1?'Sent '+sentN+' messages to '+B.name:'Sent to '+B.name};
+function orbit(force){const W=$('#who');clearTimeout(cometT);if(!force&&!W.querySelector('.av[data-state=working]'))return;W.style.setProperty('--tilt',(Math.random()*50-25).toFixed(0)+'deg');W.style.setProperty('--roll',(Math.random()*70-35).toFixed(0)+'deg');W.classList.remove('go');void W.offsetWidth;W.classList.add('go');Motion.react(W.querySelector('.av'));cometT=setTimeout(orbit,4800+Math.random()*2400)}
+function render(d,a){B=botById(d,a.bot||'pepper');sentN=1;phraseI=0;setTitle();$('#sub').innerHTML='<span class="shim" id="st">'+esc(B.name)+' is working</span><i class="caret" id="caret"></i>';
+ $('#who').style.setProperty('--c',B.color);$('#who').innerHTML=av({...B,status:'idle'})+'<span class="ring">'+Array.from({length:18},(_,i)=>{const t=i/17,w=(7.5-5*t).toFixed(1),o=(1-t*.9).toFixed(2);return '<i class="seg" style="--a:'+(-i*7)+'deg;--w:'+w+'px;--o:'+o+';--col:'+ramp(t)+'"></i>'}).join('')+'</span><i class="wave"></i><i class="wave w2"></i>';
+ clearTimeout(cometT);cometT=setTimeout(orbit,1600);setTimeout(()=>{const a=$('#who .av');Motion.react(a);setTimeout(()=>Motion.set(a,'working'),350)},700);
+ $('#msgs').innerHTML='<div class="bubble me fade-in">'+esc(a.message)+'</div>';
+ $('#mbar').hidden=!(CAN_INVOKE||SOLO);$('#mmsg').placeholder='Add a message for '+B.name;wireBar()}
+
+/* Card→host tool bridge (voiceos:invokeTool → toolResult). grokbot_card_send has no host confirmation; its receipt card is ignored so this card stays put. */
+const TERMINAL={completed:1,cancelled:1,failed:1,unknown:1};
+const _pending=new Map();let _rq=0;
+addEventListener('message',e=>{if(e.source!==parent)return;const m=e.data;if(!m||m.type!=='voiceos:toolResult')return;const p=_pending.get(m.requestId);if(!p||!TERMINAL[m.status])return;_pending.delete(m.requestId);if(m.status==='completed')p.resolve(m.result||{});else p.reject({status:m.status,error:m.error||'That didn’t go through.'})});
+function invoke(name,args){return new Promise((resolve,reject)=>{const requestId='r'+(++_rq)+'_'+Date.now();_pending.set(requestId,{resolve,reject});parent.postMessage({type:'voiceos:invokeTool',name,args,requestId},'*');setTimeout(()=>{if(_pending.delete(requestId))reject({status:'unknown',error:'No response — check the app before trying again.'})},130000)})}
+let _toastT;
+function toast(text){const t=$('#toast');t.textContent=text;t.classList.add('show');clearTimeout(_toastT);_toastT=setTimeout(()=>t.classList.remove('show'),3200)}
+
+/* Status line: backspace to the shared prefix (the bot's name), then type the new line. */
+const PHRASES=n=>[n+' got your request',n+' is thinking',n+' is working on it',n+' is on it',n+' added it to the list'];
+let _ty=0;
+function retype(text){const el=$('#st'),c=$('#caret'),gen=++_ty;if(reduce){el.textContent=text;return}
+ const tgt=[...text];let cur=[...el.textContent];c.classList.add('on');
+ const step=()=>{if(gen!==_ty)return;
+  if(!cur.every((ch,i)=>tgt[i]===ch)){cur.pop();el.textContent=cur.join('');setTimeout(step,16)}
+  else if(cur.length<tgt.length){cur.push(tgt[cur.length]);el.textContent=cur.join('');setTimeout(step,26+Math.random()*34)}
+  else setTimeout(()=>{if(gen===_ty)c.classList.remove('on')},900)};
+ step()}
+
+/* The message leaves the bar as a bubble, condenses into a glowing pellet with a comet trail, and
+   rides a cubic Bézier motion path into the orb. Optimistic: it flies while the send is in flight;
+   rec.failed (set by a failed send) stops the landing. */
+const DUR=950;
+function launch(text,rec){const W=$('#who'),a=$('.av',W);
+ const land=()=>{if(rec.failed||rec.landed)return;rec.landed=true;
+  const m=$('#msgs'),el=document.createElement('div');el.className='bubble me fade-in';el.textContent=text;m.appendChild(el);rec.el=el;m.scrollTop=m.scrollHeight;
+  sentN++;setTitle();Motion.set(a,'working');
+  W.classList.remove('gulp');void W.offsetWidth;W.classList.add('gulp');setTimeout(()=>W.classList.remove('gulp'),850);
+  setTimeout(()=>orbit(true),420);
+  const P=PHRASES(B.name);retype(P[phraseI++%P.length])};
+ if(reduce){land();return}
+ const s=$('#mmsg').getBoundingClientRect(),o=W.getBoundingClientRect();
+ const lead=document.createElement('div');lead.className='fly probe';lead.textContent=text;document.body.appendChild(lead);
+ const w=Math.min(lead.offsetWidth,s.width),sx=s.left+w/2,sy=s.top+s.height/2,ex=o.left+o.width/2,ey=o.top+o.height/2,reach=Math.min(innerWidth-24,Math.max(sx,ex)+150);
+ const path="path('M "+sx+' '+sy+' C '+reach+' '+(sy-20)+', '+reach+' '+(ey+40)+', '+ex+' '+ey+"')";
+ const set=el=>{el.style.setProperty('--path',path);el.style.setProperty('--dur',DUR+'ms');el.style.setProperty('--c',B.color)};
+ set(lead);lead.style.setProperty('--w',w+'px');lead.className='fly lead';
+ const ghosts=Array.from({length:6},(_,i)=>{const g=document.createElement('i');g.className='fly ghost';set(g);g.style.setProperty('--s',(9-i)+'px');g.style.setProperty('--o',(.8-i*.12).toFixed(2));g.style.setProperty('--d',(38*(i+1))+'ms');g.style.setProperty('--col',ramp(i/5));document.body.appendChild(g);return g});
+ if(a._m){a._m.eyes.style.transition='transform 300ms cubic-bezier(.3,.7,.2,1)';a._m.eyes.style.transform='translate(12%,12%)'}
+ lead.addEventListener('animationend',land,{once:true});setTimeout(land,DUR+80);
+ setTimeout(()=>{lead.remove();ghosts.forEach(g=>g.remove())},DUR+420)}
+
+/* The host caps a card at 64 tool requests. */
+const BUDGET=60;let _used=0,_wired=false;
+function wireBar(){if(_wired)return;_wired=true;const inp=$('#mmsg'),go=$('#mgo');
+ const sync=()=>{go.disabled=!inp.value.trim()};
+ const send=()=>{const v=inp.value.trim();if(!v||!B)return;
+  if(_used>=BUDGET){toast('Open Grok Bot to keep chatting');return}
+  _used++;inp.value='';sync();inp.focus();
+  const rec={};launch(v,rec);
+  (SOLO?new Promise(r=>setTimeout(r,500)):invoke('grokbot_card_send',{bot:B.id,message:v})).catch(err=>{
+   rec.failed=true;if(rec.el){rec.el.remove();sentN--;setTitle()}
+   if(!inp.value){inp.value=v;sync()}
+   toast((err&&err.error)||'Couldn’t send');retype('That one didn’t send');
+   const a=$('#who .av');Motion.set(a,'blocked');setTimeout(()=>Motion.set(a,'working'),2400)})};
+ inp.addEventListener('input',sync);
+ /* No form element: card iframes are sandboxed without allow-forms, so a submit never fires. */
+ inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();send()}});
+ go.addEventListener('click',send)}
 
 </script>
 `, create: `<!doctype html>
