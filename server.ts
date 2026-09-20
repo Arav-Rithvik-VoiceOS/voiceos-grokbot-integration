@@ -21828,6 +21828,7 @@ function screenCard(bot, stream) {
 var PREPARE_DESCRIPTION = "Check the live Grok Bot roster before drafting any message. Use FIRST whenever the user asks to tell, ask, message, or send a task to a bot or group. Pass recipient names as the user said them. This read-only lookup does not send or request confirmation. On success call nextTool with the returned args, including confirmationContext. On failure tell the user the recipient could not be found yet and STOP; do not call a send tool, guess another bot, create a bot, or retry automatically.";
 var SEND_DESCRIPTION = "Send a message to one verified Grok Bot after the user reviews its thread confirmation. Use only AFTER grokbot_prepare_message succeeds for this request, copying its returned args including bot ID and confirmationContext. Never call for an unverified name or failed lookup. The confirmation appears before this handler runs. Leave via unset on voice calls.";
 var GROUP_DESCRIPTION = "Send to a verified Grok Bot group after the user reviews its thread confirmation. Use only AFTER grokbot_prepare_message succeeds for this request, copying its returned args including resolved group/member IDs and confirmationContext. Never call after a missing or ambiguous recipient lookup. The user can edit the draft, group name and members. Leave via unset on voice calls.";
+var THREAD_DESCRIPTION = "Read what one Grok Bot teammate said, found, or did. Use for ANY question about a bot's messages or results: what it said, summarize its work, answer a question from it, or draft something from it. Returns the message text in `thread`; read it and do what the user asked in your own words. Set show only when the user asks to see or open the conversation.";
 var CARD_SEND_DESCRIPTION = "Internal — called only by the Grok Bot card's message box, never by voice. Do not call this tool; for a spoken request use grokbot_prepare_message then grokbot_send, which shows the user a confirmation first.";
 var CONTEXT_DESCRIPTION = "Internal: copy confirmationContext unchanged from the successful grokbot_prepare_message result. Contains the live roster for the confirmation; never compose it yourself.";
 function resolveMessageRecipient(value, agents) {
@@ -21857,6 +21858,44 @@ function resolveMessageGroup(args, agents) {
     existing = matches[0];
   }
   return { existing, memberIds, bots, sameSet };
+}
+var THREAD_CHAR_BUDGET = 12000;
+function threadForModel(bot, entries, budget = THREAD_CHAR_BUDGET) {
+  const lines = [];
+  for (const e of entries) {
+    let text = "";
+    let from = bot.name;
+    if (e.kind === "send-message") {
+      const m = e.message;
+      text = typeof m === "string" ? m : String(m?.content ?? "");
+      from = e.author?.name ?? bot.name;
+    } else if (e.kind === "message") {
+      text = String(e.content ?? "");
+      const isUser = String(e.role ?? "").toLowerCase() === "user";
+      from = isUser ? e.fromAgent?.name ?? "user" : e.fromAgent?.name ?? bot.name;
+    } else {
+      continue;
+    }
+    text = text.trim();
+    if (!text)
+      continue;
+    lines.push({ from, text, ...e.timestampMs ? { at: new Date(e.timestampMs).toISOString() } : {} });
+  }
+  const thread = [];
+  let left = budget;
+  let truncated = false;
+  for (let i = lines.length - 1;i >= 0; i--) {
+    const line = lines[i];
+    if (line.text.length > left) {
+      truncated = true;
+      if (left >= 200)
+        thread.unshift({ ...line, text: line.text.slice(0, left - 1) + "…" });
+      break;
+    }
+    thread.unshift(line);
+    left -= line.text.length;
+  }
+  return { thread, truncated };
 }
 
 // server.src.ts
@@ -22081,10 +22120,11 @@ server.registerTool("grokbot_show", {
 }));
 server.registerTool("grokbot_thread", {
   title: "Read a bot's messages",
-  description: "Read the latest messages from one Grok Bot teammate. Use when the user asks what a bot said, to catch up on a bot, or to read its recent replies.",
+  description: THREAD_DESCRIPTION,
   inputSchema: {
     bot: exports_external.string().describe("The bot's name as the user said it."),
-    limit: exports_external.number().int().min(1).max(20).optional().describe("How many recent messages; omit for a short default.")
+    limit: exports_external.number().int().min(1).max(20).optional().describe("How many recent messages; omit for a short default."),
+    show: exports_external.boolean().optional().describe("True only when the user asks to see or open the conversation. Omit to just read it.")
   },
   annotations: { readOnlyHint: true }
 }, async (args) => handle("grokbot_thread", async () => {
@@ -22092,11 +22132,14 @@ server.registerTool("grokbot_thread", {
   const bot = await resolveAgent(args.bot.trim(), agents);
   const tail = await transcriptTail(bot.id, args.limit ?? 20);
   const entries = tail.entries ?? [];
+  const { thread, truncated } = threadForModel(bot, entries);
   return result({
     bot: bot.name,
-    messages: entries.length,
-    message: entries.length ? `Latest from ${bot.name}.` : `No recent messages from ${bot.name}.`
-  }, threadCard(bot, entries, "", agents));
+    messages: thread.length,
+    thread,
+    truncated,
+    message: thread.length ? `Latest from ${bot.name}.` : `No recent messages from ${bot.name}.`
+  }, args.show ? threadCard(bot, entries, "", agents) : undefined);
 }));
 server.registerTool("grokbot_prepare_message", {
   title: "Check message recipients",

@@ -11,6 +11,8 @@ const bots: actual.Agent[] = [
 ];
 let agents: actual.Agent[], writes: any[], rejectSend: boolean;
 let publishCreated = true;
+const EARLIER: actual.TranscriptEntry[] = [{ kind: "message", role: "user", content: "Earlier message", id: "old" }];
+let tail: actual.TranscriptEntry[] = EARLIER;
 mock.module("@modelcontextprotocol/sdk/server/mcp.js", () => ({ McpServer: class {
   server = { request: async () => ({ notificationId: "test" }) };
   registerTool(name: string, _schema: any, handler: any) { handlers.set(name, handler); }
@@ -28,7 +30,7 @@ mock.module("../client.ts", () => ({
     return bot;
   },
   resolveAgent: async (name: string, list = agents) => resolveReal(name, list),
-  transcriptTail: async () => ({ entries: [{ kind: "message", role: "user", content: "Earlier message", id: "old" }] }),
+  transcriptTail: async () => ({ entries: tail }),
   sendPrompt: async (id: string, message: string) => {
     writes.push(["send", id, message]);
     if (rejectSend) throw new actual.IntegrationError("upstream", "Send failed");
@@ -48,7 +50,8 @@ mock.module("../client.ts", () => ({
     group.name = name;
   },
 }));
-await import("../server.ts");
+// server.ts is the published bundle (client.ts inlined), so mocks never reach it.
+await import("../server.src.ts");
 const call = async (name: string, args: any) => {
   try {
     const response = await handlers.get(name)!(args);
@@ -63,6 +66,7 @@ beforeEach(() => {
   agents = [...bots.map(a => ({ ...a })), { id: "g", name: "Homework crew", isGroup: true, memberIds: ["p", "f"] }];
   writes = []; rejectSend = false;
   publishCreated = true;
+  tail = EARLIER;
 });
 
 test("unknown recipients fail lookup without opening a message card", async () => {
@@ -257,6 +261,35 @@ test("script-like text and template-token text remain message data", async () =>
   const scripts = [...r._voiceos_glance.blocks[0].html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
   expect(scripts).toHaveLength(1);
   expect(() => new Function(scripts[0][1])).not.toThrow();
+});
+test("reading a thread gives the model the message text and no card by default", async () => {
+  tail = [
+    { kind: "message", role: "user", content: "What is my homework?", id: "1", timestampMs: 1_000 },
+    { kind: "tool-call", content: "noise", id: "2" },
+    { kind: "send-message", message: { type: "text", content: "Math: page 42, due Friday." }, id: "3", timestampMs: 2_000 },
+    { kind: "message", role: "user", fromAgent: { id: "f", name: "Friday" }, content: "I can help too.", id: "4" },
+  ];
+  const r = await call("grokbot_thread", { bot: "Pepper" });
+  expect(r._voiceos_glance).toBeUndefined();
+  expect(r.thread).toEqual([
+    { from: "user", text: "What is my homework?", at: new Date(1_000).toISOString() },
+    { from: "Pepper", text: "Math: page 42, due Friday.", at: new Date(2_000).toISOString() },
+    { from: "Friday", text: "I can help too." },
+  ]);
+  expect(r.truncated).toBe(false);
+});
+test("reading a thread shows the card only when the user asks to see it", async () => {
+  const r = await call("grokbot_thread", { bot: "Pepper", show: true });
+  expect(cardData(r).args.bot).toBeDefined();
+  expect(r.thread).toEqual([{ from: "user", text: "Earlier message" }]);
+});
+test("a long thread keeps the newest messages inside the size limit", async () => {
+  tail = Array.from({ length: 6 }, (_, i) => ({ kind: "send-message", message: { content: `${i}:` + "x".repeat(4998) }, id: String(i) }));
+  const r = await call("grokbot_thread", { bot: "Pepper" });
+  expect(r.truncated).toBe(true);
+  expect(r.thread.map((m: any) => m.text).join("").length).toBeLessThanOrEqual(12000);
+  expect(r.thread.at(-1).text.startsWith("5:")).toBe(true);
+  expect(r.thread[0].text.startsWith("0:")).toBe(false);
 });
 test("manifest advertises exactly the registered server tools", async () => {
   const manifest = await Bun.file(new URL("../voiceos.integration.json", import.meta.url)).json();

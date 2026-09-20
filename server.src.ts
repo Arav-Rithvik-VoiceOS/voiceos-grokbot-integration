@@ -39,7 +39,7 @@ import {
 import { recordCardPoll, cardCovers } from "./cardWatch.ts";
 import { connectCard, screenCard, showCard, threadCard, sentCard, sentGroupCard, toBot, toGroup, toThread, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
-import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, resolveMessageGroup, type MessageArgs } from "./messaging.ts";
+import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 
 const server = new McpServer({ name: TOOLKIT, version: "1.0.0" });
 
@@ -391,27 +391,32 @@ server.registerTool(
   "grokbot_thread",
   {
     title: "Read a bot's messages",
-    description:
-      "Read the latest messages from one Grok Bot teammate. Use when the user asks what a bot said, to catch up on a bot, or to read its recent replies.",
+    description: THREAD_DESCRIPTION,
     inputSchema: {
       bot: z.string().describe("The bot's name as the user said it."),
       limit: z.number().int().min(1).max(20).optional().describe("How many recent messages; omit for a short default."),
+      show: z.boolean().optional().describe("True only when the user asks to see or open the conversation. Omit to just read it."),
     },
     annotations: { readOnlyHint: true },
   },
-  async (args: { bot: string; limit?: number }) =>
+  async (args: { bot: string; limit?: number; show?: boolean }) =>
     handle("grokbot_thread", async () => {
       const agents = await listAgents();
       const bot = await resolveAgent(args.bot.trim(), agents);
       const tail = await transcriptTail(bot.id, args.limit ?? 20);
       const entries = tail.entries ?? [];
+      const { thread, truncated } = threadForModel(bot, entries);
+      // No card unless asked: a glance on a read step parks the confirmation of
+      // a send that follows it ("summarize what Pepper said and tell Friday").
       return result(
         {
           bot: bot.name,
-          messages: entries.length,
-          message: entries.length ? `Latest from ${bot.name}.` : `No recent messages from ${bot.name}.`,
+          messages: thread.length,
+          thread,
+          truncated,
+          message: thread.length ? `Latest from ${bot.name}.` : `No recent messages from ${bot.name}.`,
         },
-        threadCard(bot, entries, "", agents),
+        args.show ? threadCard(bot, entries, "", agents) : undefined,
       );
     }),
 );
