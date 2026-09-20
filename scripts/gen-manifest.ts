@@ -1,8 +1,7 @@
 /** Freeze the package thread into the send tools BEFORE execution. */
 import { readFileSync, writeFileSync } from "node:fs";
 
-import { renderCard, toBot, toGroup, toThread, GROK_COLOR_IDS, GROK_SHAPE_IDS } from "../cards.ts";
-import { listAgents, transcriptTail } from "../client.ts";
+import { renderCard, GROK_COLOR_IDS, GROK_SHAPE_IDS } from "../cards.ts";
 import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, THREAD_DESCRIPTION } from "../messaging.ts";
 
 const root = new URL("..", import.meta.url);
@@ -19,24 +18,14 @@ const confirmation = (name: string, height: number, confirmLabel: string) => ({
   root: { type: "widget", html: widget(name), height, confirmLabel },
 });
 
-// Confirmation iframes cannot call tools. Freeze only real roster/history data;
-// voice arguments and edits arrive through the host's voiceos:init bridge.
-const agents = await listAgents();
-const histories = await Promise.allSettled(agents.map(async agent =>
-  [agent.id, toThread((await transcriptTail(agent.id, 6)).entries ?? [])] as const));
-const threads = Object.fromEntries(histories.flatMap(r => r.status === "fulfilled" ? [r.value] : []));
-const snapshot = { confirmation: true, bots: agents.filter(a => !a.isGroup).map(toBot),
-  groups: agents.filter(a => a.isGroup).map(toGroup), threads, me: "" };
+// The manifest is a SHARED file (VoiceOS Share, the public repo), so it must
+// never hold the builder's roster or chat history. The confirmation starts
+// empty; grokbot_prepare_message passes the user's own live roster through the
+// `confirmationContext` arg, and confirmation-adapter.js renders from that.
+const snapshot = { confirmation: true, bots: [], groups: [], threads: {}, me: "" };
 function threadConfirmation(tool: string) {
-  const data = structuredClone({ ...snapshot, tool });
-  let html = renderCard("thread", { data });
-  // Keep the full roster; discard oldest history first to meet the host cap.
-  while (html.length > 60_000) {
-    const longest = Object.values(data.threads).sort((a, b) => JSON.stringify(b).length - JSON.stringify(a).length)[0];
-    if (!longest?.length) throw new Error(`${tool}: confirmation exceeds 60,000 chars`);
-    longest.shift();
-    html = renderCard("thread", { data });
-  }
+  const html = renderCard("thread", { data: { ...snapshot, tool } });
+  if (html.length > 60_000) throw new Error(`${tool}: confirmation exceeds 60,000 chars`);
   return { schemaVersion: 1, root: { type: "widget", html, height: 360, label: "Grok Bot thread", confirmLabel: "↑" } };
 }
 
@@ -50,7 +39,7 @@ const manifest = {
   // Bump on any manifest change (tools/schema/permissions). NOTE: a plain restart
   // does NOT re-sync the cache even on a bump — push the new manifest into
   // config.json's installedIntegrations[].manifest (see the cache-push step).
-  version: "1.0.22",
+  version: "1.0.23",
   name: "Grok Bot",
   summary: "Talk to your Grok Bot AI teammates by voice.",
   description:
