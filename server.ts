@@ -19943,14 +19943,6 @@ async function resolveMembers(tokens) {
     return byId ? Promise.resolve(byId) : resolveAgent(t, list);
   }));
 }
-function openBotComputer(agentId) {
-  const url = `grokbot://app/v1/sidebar?agent=${encodeURIComponent(agentId)}&tab=computer`;
-  const command = `/usr/bin/open "${url}"`;
-  log("screen click →", command);
-  return new Promise((resolve, reject) => {
-    execFile("/usr/bin/open", [url], (error2) => error2 ? reject(error2) : resolve(command));
-  });
-}
 function openGrokBotApp() {
   try {
     execFile("/usr/bin/open", ["-a", "Grok Bot"], () => {});
@@ -21064,7 +21056,7 @@ html[data-theme=light] .screen{background:linear-gradient(180deg,#f2f2f5,#c9c9cf
 .screen::after{content:"";position:absolute;inset:5px;border-radius:11px;pointer-events:none;z-index:2;background:linear-gradient(115deg,rgba(255,255,255,.09) 0%,rgba(255,255,255,.03) 28%,transparent 42%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),inset 0 0 40px rgba(0,0,0,.25)}
 .open{position:absolute;inset:5px;border-radius:11px;z-index:3;display:grid;place-items:center;background:rgba(0,0,0,.45);opacity:0;transition:opacity .18s;pointer-events:none}
 .open span{display:flex;align-items:center;gap:8px;height:40px;padding:0 18px 0 14px;border-radius:20px;background:rgba(22,22,24,.82);backdrop-filter:blur(10px);color:#fff;font-size:17px;font-weight:600;letter-spacing:-.01em}
-.screen.can:hover .open{opacity:1}.screen:has(.ctl:hover) .open{opacity:0}
+.screen:hover .open{opacity:1}.screen:has(.ctl:hover) .open{opacity:0}
 .screen canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .feed{position:absolute;inset:5px;border-radius:11px;overflow:hidden;background:#0a0a0b;transition:opacity .4s}
 .feed.stale{opacity:.5}
@@ -21074,7 +21066,6 @@ html[data-theme=light] .screen{background:linear-gradient(180deg,#f2f2f5,#c9c9cf
 .cap .grow{flex:1;min-width:0}
 .cap .who{font-size:14px;font-weight:650;letter-spacing:-.01em;display:flex;align-items:center;gap:7px;white-space:nowrap;overflow:hidden}
 .cap .who .chip{background:rgba(255,255,255,.18);color:#fff}
-.cap .what.cmd{white-space:normal;word-break:break-all;font:10.5px/1.3 ui-monospace,Menlo,monospace}
 .cap .what{font-size:12px;color:rgba(255,255,255,.75);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 .cap .av{width:26px;height:26px;outline:2px solid rgba(255,255,255,.25)}
 #brand{position:absolute;top:14px;right:14px;z-index:4;height:20px;padding:0 5px;border-radius:10px;background:rgba(0,0,0,.5);backdrop-filter:blur(8px);gap:0}
@@ -21122,7 +21113,7 @@ html[data-theme=light] .screen{background:linear-gradient(180deg,#f2f2f5,#c9c9cf
 .sp{display:inline-block;width:9px;height:9px;border:1.5px solid var(--ink-3);border-right-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
-<div class="screen" id="screen" role="button" aria-label="Open in Grok Bot">
+<div class="screen" id="screen" role="button" aria-label="Open full screen">
   <div class="feed" id="feed"><canvas id="cv" width="800" height="500"></canvas></div>
   <div class="open"><span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg>Open</span></div>
   <span class="mark" id="brand"><i></i></span>
@@ -21143,7 +21134,7 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const EYES='<span class="eyes"><i class="eye l"></i><i class="eye r"></i></span>';
 const av=(b,cls='')=>'<span class="av '+(b.shape||'blob')+' '+cls+'" data-state="'+esc(b.status||'idle')+'" style="--c:'+esc(b.color)+'">'+EYES+'</span>';
 let inited=false,CAN_INVOKE=false;
-addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;if(e.source===parent&&m.capabilities)$('#screen').classList.toggle('can',CAN_INVOKE=!!m.capabilities.invokeTool);boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
+addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;if(e.source===parent&&m.capabilities)CAN_INVOKE=!!m.capabilities.invokeTool;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
 setTimeout(()=>{if(!inited)boot(DEMO.data,DEMO.args,'dark')},350);
 /* Card→host tool bridge (voiceos:invokeTool → toolResult). The message bar's grokbot_card_send has no host confirmation; its result's receipt card is ignored so this card stays put. */
 const TERMINAL={completed:1,cancelled:1,failed:1,unknown:1};
@@ -21274,20 +21265,12 @@ const Feed=(()=>{
  return{pause,connect}
 })();
 
-let D,B,paused=false,isLive=false,openReq='';
-/* Print the command the click ran. The host answers invokeTool with voiceos:toolResult; interim
-   statuses (confirmation_required…) are skipped, and the MCP-shaped result is unpacked. */
-addEventListener('message',e=>{const m=e.data;if(e.source!==parent||!m||m.type!=='voiceos:toolResult'||m.requestId!==openReq)return;
- if(!['completed','failed','cancelled','unknown'].includes(m.status))return;
- let o={};try{const r=m.result||{};o=r.structuredContent||JSON.parse(r.content[0].text)}catch(_){}
- const w=$('#what');w.style.display='';w.classList.add('cmd');w.textContent=m.status==='completed'&&o.command?'$ '+o.command:'Open failed: '+(o.error||m.error||m.status)});
+let D,B,paused=false,isLive=false;
 function render(d,a){D=d;B=botById(d,a.bot||'pepper');
  $('#capav').innerHTML=av({...B,status:'working'},'');$('#mmsg').placeholder='Message '+B.name;$('#screen').style.setProperty('--glow',B.color+'80');
  $('#who').innerHTML=esc(B.name)+'’s screen'+(B.label?' <span class="chip">'+esc(B.label)+'</span>':'');
  $('#pause').onclick=e=>{e.stopPropagation();paused=!paused;Feed.pause(paused);$('#live').classList.toggle('paused',paused);$('#live').lastChild.textContent=paused?'PAUSED':'LIVE';$('#pause').textContent=paused?'Resume':'Pause'};
  $('#stop').onclick=e=>{e.stopPropagation();Feed.pause(true);$('#live').classList.add('paused');$('#live').lastChild.textContent='STOPPED';$('#what').textContent='Stopped by you';Motion.set($('#capav .av'),'blocked');$('#stop').disabled=true;$('#pause').disabled=true};
- /* openUrl is https-only, so the server opens the grokbot:// link (see cards.ts screenCard). */
- $('#screen').onclick=()=>{if(CAN_INVOKE)parent.postMessage({type:'voiceos:invokeTool',name:'grokbot_open_screen',args:{bot:B.id},requestId:openReq='o'+Date.now()},'*')};
  if(a.stream){goLive(a)}else{goIdle()}
 }
 /* Real feed: the bot's own desktop over its websockify socket. No demo cursor, no scripted steps.
@@ -22284,17 +22267,6 @@ server.registerTool("view_bot_desktop_live", {
     live,
     message: live ? working ? `Live view of ${bot.name}'s screen.` : `${bot.name}'s desktop is up but ${bot.name} is idle right now.` : `${bot.name}'s computer is not running right now.`
   }, screenCard(bot, live ? { wsUrl: probe.wsUrl, viewerUrl: probe.viewerUrl } : undefined));
-}));
-server.registerTool("grokbot_open_screen", {
-  title: "Open a bot's computer in Grok Bot",
-  description: "Internal — invoked by the screen card when the user clicks the live screen. Opens the Grok Bot app on that bot's Computer tab so the user can control it there. Do not call from voice; use view_bot_desktop_live to show a bot's screen.",
-  inputSchema: {
-    bot: exports_external.string().describe("The exact bot ID shown on the card.")
-  }
-}, async (args) => handle("grokbot_open_screen", async () => {
-  const [bot] = await resolveMembers([args.bot.trim()]);
-  const command = await openBotComputer(bot.id);
-  return result({ opened: true, bot: bot.name, command });
 }));
 server.registerTool("grokbot_reply_check", {
   title: "Check a bot's latest reply",
