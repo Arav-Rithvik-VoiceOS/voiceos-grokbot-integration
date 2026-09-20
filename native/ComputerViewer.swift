@@ -8,6 +8,8 @@ private struct ViewerCommand: Decodable {
     let botName: String
     let wsUrl: String
     let html: String
+    let botColor: String?
+    let botShape: String?
 }
 
 private struct ViewerAck: Encodable {
@@ -90,7 +92,12 @@ private final class ViewerController: NSObject, NSWindowDelegate, WKNavigationDe
         activeBotId = command.botId
         pendingRequestId = command.requestId
 
-        let config: [String: String] = ["wsUrl": command.wsUrl, "botName": command.botName]
+        let config: [String: String] = [
+            "wsUrl": command.wsUrl,
+            "botName": command.botName,
+            "botColor": command.botColor ?? "",
+            "botShape": command.botShape ?? "",
+        ]
         guard
             let configData = try? JSONSerialization.data(withJSONObject: config),
             !command.html.isEmpty

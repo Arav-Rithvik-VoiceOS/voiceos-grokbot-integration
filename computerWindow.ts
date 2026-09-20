@@ -50,9 +50,15 @@ export function validateDesktopWebSocketUrl(raw: string): string {
 }
 
 /**
- * Inline the existing view-only noVNC bundle without eval, blob imports, or a
- * remote asset fetch. The CSP receives only the validated socket origin: its
- * bearer-token query is deliberately never written into the document.
+ * Inflate the gzip+base64 noVNC client on the host and inject its source into
+ * the viewer's single inline module. The bundle uses top-level await, so it must
+ * run as a module — and computer.html keeps the boot code in that SAME module so
+ * it runs only after the await settles, without a blob: URL import (WKWebView
+ * blocks importing a blob: module in an opaque-origin, baseURL-nil document — the
+ * bug that left the window on "The viewer could not start"). The bundle's
+ * `export default` becomes a module-scoped `VoiceOSRFB`. The CSP carries only the
+ * validated socket origin; the bearer-token query is never written into the
+ * document, and the page never fetches anything from the pod.
  */
 export function buildViewerDocument(
   template: string,
@@ -70,17 +76,17 @@ export function buildViewerDocument(
     throw new Error("The view-only desktop viewer is unavailable.");
   }
 
-  const exported = rfbSource.replace(
+  const moduleSource = rfbSource.replace(
     /export\{([A-Za-z_$][\w$]*) as default\};?\s*$/,
-    "window.VoiceOSRFB=$1;",
+    "var VoiceOSRFB=$1;",
   );
-  if (exported === rfbSource) {
+  if (moduleSource === rfbSource) {
     throw new Error("The view-only desktop viewer is unavailable.");
   }
 
-  // An HTML parser must never interpret bytes from the JavaScript bundle as a
-  // closing script tag. This changes only string-literal spelling in JS.
-  const htmlSafeSource = exported.replace(/<\/script/gi, "<\\/script");
+  // An HTML parser must never read bundle bytes as a closing script tag. This
+  // only respells string literals inside the JS.
+  const htmlSafeSource = moduleSource.replace(/<\/script/gi, "<\\/script");
   const html = template
     .replaceAll("__VOICEOS_CSP_CONNECT__", socketOrigin)
     .replaceAll("__VOICEOS_NONCE__", nonce)
@@ -245,6 +251,8 @@ export async function openComputerWindow(input: {
   botId: string;
   botName: string;
   wsUrl: string;
+  botColor?: string;
+  botShape?: string;
 }): Promise<{ reused: boolean }> {
   const wsUrl = validateDesktopWebSocketUrl(input.wsUrl);
   const template = WIDGETS.computer;
@@ -264,6 +272,10 @@ export async function openComputerWindow(input: {
       requestId,
       botId: input.botId,
       botName: input.botName,
+      // Cosmetic only: a hex like "#FF6700" and a known shape id. Kept simple so
+      // the native host can pass them straight into the viewer's orb config.
+      botColor: /^#[0-9a-fA-F]{6}$/.test(input.botColor ?? "") ? input.botColor : "",
+      botShape: /^[a-z]{1,16}$/.test(input.botShape ?? "") ? input.botShape : "",
       wsUrl,
       html,
     });

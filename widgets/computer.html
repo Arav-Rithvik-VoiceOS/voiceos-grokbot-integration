@@ -27,7 +27,7 @@
       min-width: 0;
       pointer-events: none;
     }
-    .identity, .mode {
+    .live, .mode {
       display: inline-flex;
       align-items: center;
       min-height: 30px;
@@ -37,19 +37,21 @@
       backdrop-filter: blur(18px) saturate(130%);
       -webkit-backdrop-filter: blur(18px) saturate(130%);
     }
-    .identity {
-      min-width: 0;
-      max-width: min(52vw, 520px);
-      gap: 9px;
-      padding: 0 12px;
-      border-radius: 10px;
+    .live {
+      gap: 7px;
+      padding: 0 12px 0 11px;
+      border-radius: 999px;
+      color: rgba(255, 255, 255, .82);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      white-space: nowrap;
     }
-    .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: #ffb340; }
-    .identity[data-state="connected"] .dot { background: #45d37e; }
-    .identity[data-state="disconnected"] .dot,
-    .identity[data-state="error"] .dot { background: #ff6464; }
-    #bot { overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-    #state { color: rgba(255, 255, 255, .58); font-size: 12px; white-space: nowrap; }
+    .live .rec { width: 6px; height: 6px; flex: none; border-radius: 50%; background: rgba(255, 255, 255, .42); }
+    .live[data-state="connected"] .rec { background: #45d37e; animation: rec 1.2s ease-in-out infinite; }
+    .live[data-state="error"] .rec { background: #ff6464; }
+    @keyframes rec { 50% { opacity: .35; } }
     .spacer { flex: 1; }
     .mode {
       flex: none;
@@ -92,38 +94,41 @@
   <main aria-label="View-only remote computer">
     <div id="viewport"></div>
     <div class="chrome">
-      <div class="identity" id="identity" data-state="connecting">
-        <span class="dot" aria-hidden="true"></span>
-        <span id="bot">Bot computer</span>
-        <span id="state" role="status" aria-live="polite">Connecting</span>
+      <div class="live" id="live" data-state="connecting" role="status" aria-live="polite">
+        <i class="rec" aria-hidden="true"></i>
+        <span id="livetext">Connecting</span>
       </div>
       <span class="spacer"></span>
       <div class="mode"><span class="eye" aria-hidden="true"></span>View only</div>
     </div>
     <div id="message" role="status" aria-live="polite">Connecting to the computer…</div>
   </main>
-  <script nonce="__VOICEOS_NONCE__">
+  <script type="module" nonce="__VOICEOS_NONCE__">
     console.debug = console.info = console.warn = console.error = () => {};
+    // The noVNC client bundle, gzip-inflated on the host and injected here. It
+    // uses top-level await, so it MUST run as a module; keeping the boot code in
+    // this SAME module means it runs only after that await settles — with no
+    // blob: URL import, which WKWebView blocks for an opaque-origin (baseURL nil)
+    // document. The injected bundle ends by defining VoiceOSRFB in this scope.
     __VOICEOS_RFB_SOURCE__
-  </script>
-  <script nonce="__VOICEOS_NONCE__">
+
     (() => {
       "use strict";
       const config = window.__VOICEOS_CONFIG__;
       delete window.__VOICEOS_CONFIG__;
       const viewport = document.getElementById("viewport");
-      const identity = document.getElementById("identity");
-      const bot = document.getElementById("bot");
-      const state = document.getElementById("state");
+      const live = document.getElementById("live");
+      const liveText = document.getElementById("livetext");
       const message = document.getElementById("message");
       let rfb = null;
       let retryTimer = 0;
       let retries = 0;
       let clearing = false;
 
+      const botName = config && typeof config.botName === "string" ? config.botName : "";
       const setState = (kind, label, detail = "") => {
-        identity.dataset.state = kind;
-        state.textContent = label;
+        live.dataset.state = kind;
+        liveText.textContent = (botName ? botName + " " : "") + label;
         message.textContent = detail;
         message.hidden = !detail;
       };
@@ -142,17 +147,16 @@
       addEventListener("pagehide", clearCredential, { once: true });
       addEventListener("contextmenu", event => event.preventDefault());
 
-      if (!config || typeof config.wsUrl !== "string" || typeof config.botName !== "string" || !window.VoiceOSRFB) {
+      if (!config || typeof config.wsUrl !== "string" || typeof config.botName !== "string" || typeof VoiceOSRFB !== "function") {
         setState("error", "Unavailable", "The viewer could not start. Close this window and try again.");
         return;
       }
-      bot.textContent = `${config.botName}’s computer`;
 
       const connect = () => {
         if (clearing || !config.wsUrl) return;
         setState("connecting", retries ? "Reconnecting" : "Connecting", retries ? "The stream dropped. Reconnecting…" : "Connecting to the computer…");
         try {
-          const current = rfb = new window.VoiceOSRFB(viewport, config.wsUrl, { shared: true });
+          const current = rfb = new VoiceOSRFB(viewport, config.wsUrl, { shared: true });
           current.viewOnly = true;
           current.scaleViewport = true;
           current.resizeSession = false;
@@ -160,29 +164,29 @@
           current.addEventListener("connect", () => {
             if (current !== rfb) return;
             retries = 0;
-            setState("connected", "Connected");
+            setState("connected", "Live");
           });
           current.addEventListener("disconnect", () => {
             if (current !== rfb || clearing) return;
             rfb = null;
             retries += 1;
             if (retries <= 5) {
-              setState("disconnected", "Disconnected", "The stream dropped. Reconnecting…");
+              setState("disconnected", "Reconnecting", "The stream dropped. Reconnecting…");
               retryTimer = setTimeout(connect, Math.min(6000, retries * 1200));
             } else {
-              setState("error", "Disconnected", "This session ended. Close the window and reopen it for a fresh connection.");
+              setState("error", "Idle", "This session ended. Close the window and reopen it for a fresh connection.");
             }
           });
           current.addEventListener("credentialsrequired", () => {
             clearCredential();
-            setState("error", "Unavailable", "This session ended. Close the window and reopen it for a fresh connection.");
+            setState("error", "Idle", "This session ended. Close the window and reopen it for a fresh connection.");
           });
           current.addEventListener("securityfailure", () => {
             clearCredential();
-            setState("error", "Unavailable", "The secure viewer could not connect. Close the window and try again.");
+            setState("error", "Idle", "The secure viewer could not connect. Close the window and try again.");
           });
         } catch {
-          setState("error", "Unavailable", "The viewer could not start. Close this window and try again.");
+          setState("error", "Idle", "The viewer could not start. Close this window and try again.");
         }
       };
 

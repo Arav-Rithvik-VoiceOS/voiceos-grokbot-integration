@@ -41,7 +41,7 @@ test("desktop websocket validation rejects non-TLS, private, credentialed, and m
 test("the self-contained viewer document allowlists only the validated socket origin and excludes its credential", () => {
   const template = [
     `<meta http-equiv="Content-Security-Policy" content="connect-src __VOICEOS_CSP_CONNECT__; script-src 'nonce-__VOICEOS_NONCE__'">`,
-    `<script nonce="__VOICEOS_NONCE__">__VOICEOS_RFB_SOURCE__</script>`,
+    `<script type="module" nonce="__VOICEOS_NONCE__">__VOICEOS_RFB_SOURCE__</script>`,
   ].join("\n");
   const bundle = gzipSync("class f{};export{f as default};").toString("base64");
   const wsUrl = "wss://pod-7.cursorvm.com/websockify?token=5&network_token=top-secret";
@@ -50,13 +50,16 @@ test("the self-contained viewer document allowlists only the validated socket or
 
   expect(html).toContain("connect-src wss://pod-7.cursorvm.com");
   expect(html).toContain('nonce="fixed-nonce"');
-  expect(html).toContain("window.VoiceOSRFB=f");
+  // The client is inflated on the host and exposed in the module's own scope,
+  // so the boot code in the same module can construct it after the bundle's
+  // top-level await settles — no blob: import (which WKWebView blocks).
+  expect(html).toContain("var VoiceOSRFB=f");
   expect(html).not.toContain("top-secret");
   expect(html).not.toMatch(/__VOICEOS_[A-Z_]+__/);
 });
 
 test("viewer bundling preserves JavaScript replacement tokens without recreating HTML placeholders", () => {
-  const template = `<script nonce="__VOICEOS_NONCE__">__VOICEOS_RFB_SOURCE__</script>`;
+  const template = `<script type="module" nonce="__VOICEOS_NONCE__">__VOICEOS_RFB_SOURCE__</script>`;
   const bundle = gzipSync(`const replacementToken="$&";class f{};export{f as default};`).toString("base64");
   const html = computerWindow.buildViewerDocument(
     template,
@@ -65,6 +68,7 @@ test("viewer bundling preserves JavaScript replacement tokens without recreating
     "fixed-nonce",
   );
   expect(html).toContain('replacementToken="$&"');
+  expect(html).toContain("var VoiceOSRFB=f");
   expect(html).not.toContain("__VOICEOS_RFB_SOURCE__");
 });
 
