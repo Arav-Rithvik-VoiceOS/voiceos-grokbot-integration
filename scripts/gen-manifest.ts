@@ -46,7 +46,7 @@ const manifest = {
   // Bump on any manifest change (tools/schema/permissions). NOTE: a plain restart
   // does NOT re-sync the cache even on a bump — push the new manifest into
   // config.json's installedIntegrations[].manifest (see the cache-push step).
-  version: "1.0.19",
+  version: "1.0.20",
   name: "Grok Bot",
   summary: "Talk to your Grok Bot AI teammates by voice.",
   description:
@@ -106,6 +106,23 @@ const manifest = {
           since: { type: "number", description: "Epoch milliseconds: only replies at or after this time count." },
         },
         required: ["bot", "since"],
+      },
+    },
+    {
+      // A sent receipt calls this once on load to re-list the follow-ups sent
+      // from its message bar (the host reloads the static card when the notch
+      // reopens). uiCallable, read-only, no confirmation.
+      name: "grokbot_sent_recent",
+      title: "List the user's latest messages to a bot",
+      uiCallable: true,
+      description:
+        "Internal — called once by a sent receipt card when it loads, to re-list the follow-up messages the user sent from that card. Do not call from voice.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          bot: { type: "string", description: "The exact bot or group ID shown on the card." },
+        },
+        required: ["bot"],
       },
     },
     {

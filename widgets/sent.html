@@ -56,8 +56,8 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 .sys{align-self:center;color:var(--ink-3);font-size:11.5px;display:flex;align-items:center;gap:5px;padding:2px 0}
 .msgs{display:flex;flex-direction:column;gap:6px;padding:4px 14px 8px;overflow-y:auto}
 .msgs{max-height:150px}
-.mbar{display:flex;align-items:center;gap:6px;margin:0 12px 12px;height:36px;padding:3px 3px 3px 14px;background:var(--fill-1);border:1px solid var(--line);border-radius:18px;transition:border-color .15s,background .15s}
-.mbar[hidden]{display:none}
+.mwrap{padding:0 12px 16px}.mwrap[hidden]{display:none}
+.mbar{display:flex;align-items:center;gap:6px;height:36px;padding:3px 3px 3px 14px;background:var(--fill-1);border:1px solid var(--line);border-radius:18px;transition:border-color .15s,background .15s}
 .mbar:focus-within{border-color:rgba(255,138,0,.6);background:var(--fill-2)}
 .mbar input{flex:1;min-width:0;width:auto;background:none;border:0;padding:0;border-radius:0;font-size:13px;height:100%}
 .mbar input:focus{background:none;border:0}
@@ -107,7 +107,7 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 <div class="hd"><span class="mark"><i></i>Grok Bot</span><span class="grow"></span></div>
 <div style="display:flex;align-items:center;gap:10px;padding:2px 15px 10px"><span id="who"></span><div class="grow"><div class="t1" id="title">Sent</div><div class="t3" id="sub"></div></div></div>
 <div class="msgs" id="msgs" style="padding-bottom:14px"></div>
-<div class="mbar" id="mbar" hidden><input id="mmsg" placeholder="Add a message" autocomplete="off" aria-label="Send another message"><button class="go" id="mgo" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>
+<div class="mwrap" id="mbar" hidden><div class="mbar"><input id="mmsg" placeholder="Add a message" autocomplete="off" aria-label="Send another message"><button class="go" id="mgo" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div></div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -120,7 +120,14 @@ const av=(b,cls='')=>'<span class="av '+(b.shape||'blob')+' '+cls+'" data-state=
 let inited=false;
 let CAN_INVOKE=false;const SOLO=parent===window; /* SOLO = opened in a browser tab (preview): sends are simulated */
 /* cards.ts appends messaging-adapter.js, whose capture listener swallows voiceos:init — it reports the host's invokeTool capability here instead. */
-function setInvoke(on){CAN_INVOKE=!!on;const m=$('#mbar');if(m)m.hidden=!(B&&(CAN_INVOKE||SOLO))}
+function setInvoke(on){CAN_INVOKE=!!on;const m=$('#mbar');if(m)m.hidden=!(B&&(CAN_INVOKE||SOLO));restore()}
+/* The host reloads this static card when the notch reopens, and gives glance cards no saved state. Ask the server once for the user's latest messages and re-list the ones after this card's own. A receipt a card just wrote in place (invoke meta) has nothing to restore. */
+let _restored=false,FIRST='';
+function unpack(r){if(r&&r.structuredContent)return r.structuredContent;const t=r&&r.content&&r.content.find(b=>b.type==='text');return t&&typeof t.text==='string'?JSON.parse(t.text):(r||{})}
+function restore(){if(_restored||!CAN_INVOKE||!B||document.querySelector('meta[name="voiceos-receipt-invoke"]'))return;_restored=true;_used++;
+ invoke('grokbot_sent_recent',{bot:B.id}).then(r=>{const all=unpack(r).messages||[],at=all.lastIndexOf(FIRST.trim());if(at<0||sentN>1)return;
+  const m=$('#msgs');all.slice(at+1).forEach(t=>{const el=document.createElement('div');el.className='bubble me';el.textContent=t;m.appendChild(el);sentN++});
+  if(sentN>1){setTitle();m.scrollTop=m.scrollHeight}}).catch(()=>{})}
 addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;if(e.source===parent&&m.capabilities)CAN_INVOKE=!!m.capabilities.invokeTool;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
 setTimeout(()=>{if(!inited)boot(DEMO.data,DEMO.args,'dark')},350);
 function boot(data,args,mode){document.documentElement.dataset.theme=mode;render(data||{},args||{});hydrate(args||{});report();new ResizeObserver(report).observe(document.body);}
@@ -182,7 +189,7 @@ function orbit(force){const W=$('#who');clearTimeout(cometT);if(!force&&!W.query
 function render(d,a){B=botById(d,a.bot||'pepper');sentN=1;phraseI=0;setTitle();$('#sub').innerHTML='<span class="shim" id="st">'+esc(B.name)+' is working</span><i class="caret" id="caret"></i>';
  $('#who').style.setProperty('--c',B.color);$('#who').innerHTML=av({...B,status:'idle'})+'<span class="ring">'+Array.from({length:18},(_,i)=>{const t=i/17,w=(7.5-5*t).toFixed(1),o=(1-t*.9).toFixed(2);return '<i class="seg" style="--a:'+(-i*7)+'deg;--w:'+w+'px;--o:'+o+';--col:'+ramp(t)+'"></i>'}).join('')+'</span><i class="wave"></i><i class="wave w2"></i>';
  clearTimeout(cometT);cometT=setTimeout(orbit,1600);setTimeout(()=>{const a=$('#who .av');Motion.react(a);setTimeout(()=>Motion.set(a,'working'),350)},700);
- $('#msgs').innerHTML='<div class="bubble me fade-in">'+esc(a.message)+'</div>';
+ FIRST=String(a.message||'');$('#msgs').innerHTML='<div class="bubble me fade-in">'+esc(a.message)+'</div>';
  $('#mbar').hidden=!(CAN_INVOKE||SOLO);$('#mmsg').placeholder='Add a message for '+B.name;wireBar()}
 
 /* Card→host tool bridge (voiceos:invokeTool → toolResult). grokbot_card_send has no host confirmation; its receipt card is ignored so this card stays put. */

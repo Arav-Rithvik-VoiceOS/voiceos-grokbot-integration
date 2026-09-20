@@ -784,6 +784,37 @@ server.registerTool(
     }),
 );
 
+// ── CARD: grokbot_sent_recent — the sent receipts restore their follow-ups ────
+// A receipt is static HTML: when the notch closes and reopens, the host reloads
+// it and every follow-up the user sent from its message bar is gone from the
+// card. On load the receipt asks for the user's latest messages in this
+// conversation and re-lists the ones after its own. Read-only, plain JSON (no
+// glance). It does NOT record a card poll: receipts show no replies, so the
+// reply pill must keep firing.
+server.registerTool(
+  "grokbot_sent_recent",
+  {
+    title: "List the user's latest messages to a bot",
+    description:
+      "Internal — called once by a sent receipt card when it loads, to re-list the follow-up messages the user sent from that card. Do not call from voice.",
+    inputSchema: {
+      bot: z.string().describe("The exact bot or group ID shown on the card."),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async (args: { bot: string }) =>
+    handle("grokbot_sent_recent", async () => {
+      const target = resolveMessageRecipient(args.bot, await listAgents());
+      const { entries } = await transcriptTail(target.id, 30);
+      const messages = (entries ?? [])
+        .filter((e) => e.role === "user")
+        .map((e) => entryText(e).trim())
+        .filter(Boolean)
+        .slice(-12);
+      return result({ bot: target.name, messages });
+    }),
+);
+
 await server.connect(new StdioServerTransport());
 log("server started, awaiting MCP requests on stdio");
 

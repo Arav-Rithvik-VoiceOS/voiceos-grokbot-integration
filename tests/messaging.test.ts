@@ -313,6 +313,19 @@ test("the adapter hands the host's invokeTool capability to the receipt's follow
   expect(html).toContain("function setInvoke(on)");
   expect(html).toContain("setInvoke(canInvoke)");
 });
+test("a reloaded receipt can re-list the user's messages: plain JSON, no glance, no writes", async () => {
+  const r = await call("grokbot_sent_recent", { bot: "p" });
+  expect(r.messages).toEqual(["Earlier message"]);
+  expect(r._voiceos_glance).toBeUndefined();
+  expect((await call("grokbot_sent_recent", { bot: "g" })).bot).toBe("Homework crew");
+  expect(writes).toEqual([]);
+  const manifest = await Bun.file(new URL("../voiceos.integration.json", import.meta.url)).json();
+  const tool = manifest.tools.find((t: any) => t.name === "grokbot_sent_recent");
+  expect(tool.uiCallable).toBe(true);
+  expect(tool.confirmation).toBeUndefined();
+  const html = (await call("grokbot_send", { bot: "Pepper", message: "First" })).receipt.html;
+  expect(html).toContain("invoke('grokbot_sent_recent',{bot:B.id})");
+});
 test("a follow-up from the group receipt sends once and leaves members and name alone", async () => {
   const r = await call("grokbot_card_send", { group: "g", message: "One more thing" });
   expect(writes).toEqual([["send", "g", "One more thing"]]);
