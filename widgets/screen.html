@@ -15,12 +15,6 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 input,textarea{font:inherit;color:var(--ink-1);background:var(--fill-1);border:1px solid var(--line);border-radius:12px;padding:9px 12px;width:100%;outline:none;resize:none;transition:border-color .15s,background .15s}
 input:focus,textarea:focus{border-color:rgba(255,138,0,.6);background:var(--fill-2)}
 input::placeholder,textarea::placeholder{color:var(--ink-3)}
-.hd{display:flex;align-items:center;gap:10px;padding:13px 15px 9px}
-.hd .grow{flex:1;min-width:0}
-.t1{font-size:15px;font-weight:650;letter-spacing:-.012em;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.t2{font-size:13.5px;font-weight:600;letter-spacing:-.005em}
-.t3{font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.num{font-variant-numeric:tabular-nums}
 .mark{display:flex;align-items:center;gap:6px;color:var(--ink-2);font-size:11.5px;font-weight:600;letter-spacing:.01em}
 .mark i{width:16px;height:16px;border-radius:5px;background:var(--ink-1);position:relative;display:inline-block}
 .mark i::before,.mark i::after{content:"";position:absolute;top:5px;width:2px;height:5px;border-radius:2px;background:var(--eye);transform:rotate(12deg)}
@@ -44,36 +38,11 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 @keyframes shake{0%,10%,100%{transform:translateX(0)}2%{transform:translateX(-6%)}4%{transform:translateX(6%)}6%{transform:translateX(-4%)}8%{transform:translateX(3%)}}
 @keyframes hop{0%{transform:translateY(0)}40%{transform:translateY(-18%) scale(1.06,.94)}70%{transform:translateY(0) scale(.97,1.04)}100%{transform:none}}
 @keyframes squash{0%{transform:scale(1)}40%{transform:scale(1.14,.86)}100%{transform:scale(1)}}
-.dot.warn{background:var(--accent)}.dot.bad{background:var(--bad)}
 .av.small{width:24px;height:24px}.av.tiny{width:18px;height:18px}
 .chip{display:inline-flex;align-items:center;font-size:11px;font-weight:500;color:var(--ink-2);background:var(--fill-2);border-radius:6px;padding:1px 6px;line-height:16px;white-space:nowrap}
-.dot{width:7px;height:7px;border-radius:50%;background:var(--ink-3);flex:none}
-.dot.on{background:var(--good);box-shadow:0 0 0 0 rgba(52,201,110,.6);animation:pulse 1.8s ease-out infinite}
-@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(52,201,110,.55)}100%{box-shadow:0 0 0 6px rgba(52,201,110,0)}}
-.lbl{font-size:11px;font-weight:600;color:var(--ink-2);letter-spacing:.02em;text-transform:uppercase;margin:0 0 5px 2px}
-.confirm-pad{height:48px}
-.foot{display:flex;align-items:center;gap:6px;padding:0 15px;height:56px;color:var(--ink-3);font-size:11.5px;padding-right:160px}
-.bubble{max-width:82%;padding:8px 12px;border-radius:16px;font-size:13.5px;line-height:1.38;word-wrap:break-word}
-.bubble.bot{background:var(--fill-2);border-bottom-left-radius:6px;align-self:flex-start}
-.bubble.me{background:var(--fill-3);border-bottom-right-radius:6px;align-self:flex-end}
-.bubble b{font-weight:650}
-.sys{align-self:center;color:var(--ink-3);font-size:11.5px;display:flex;align-items:center;gap:5px;padding:2px 0}
-.msgs{display:flex;flex-direction:column;gap:6px;padding:4px 14px 8px;overflow-y:auto}
-.compose{display:flex;align-items:center;gap:8px;margin:4px 12px 12px;background:var(--fill-1);border:1px solid var(--line);border-radius:22px;padding:5px 5px 5px 6px}
-.compose input{background:none;border:0;padding:6px 4px;flex:1;min-width:0}
-.compose .plus{width:30px;height:30px;border-radius:50%;background:var(--fill-2);color:var(--ink-2);font-size:18px;line-height:30px;text-align:center;flex:none}
-.compose .send{width:30px;height:30px;border-radius:50%;background:var(--ink-1);color:#000;flex:none;display:grid;place-items:center;transition:transform .12s,opacity .15s}
-.compose .send:active{transform:scale(.92)}
-.compose .send[disabled]{opacity:.35}
-.row{display:flex;align-items:center;gap:11px;padding:8px 15px;transition:background .12s;width:100%;text-align:left;border-radius:14px}
-.row:hover{background:var(--fill-1)}
-.row:active{background:var(--fill-2)}
 
-.fade-in{animation:in .28s cubic-bezier(.2,.8,.2,1) both}
-@keyframes in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
-<style>.ty{display:inline-flex;gap:3px;padding:3px 0}.ty i{width:6px;height:6px;border-radius:50%;background:var(--ink-3);animation:ty 1s infinite}.ty i:nth-child(2){animation-delay:.15s}.ty i:nth-child(3){animation-delay:.3s}@keyframes ty{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}</style>
 
 <style>
 /* Caption inside the frame (avatar · "Name's screen" · tag), brand mark top-right; the header row is gone so the frame can be wider. */
@@ -111,7 +80,19 @@ html[data-theme=light] .screen{background:linear-gradient(180deg,#f2f2f5,#c9c9cf
 .live .rec{width:5px;height:5px;border-radius:50%;background:var(--bad);animation:rec 1.2s ease-in-out infinite}
 @keyframes rec{50%{opacity:.35}}
 .live.paused .rec{background:rgba(255,255,255,.4);animation:none}
-.hear{display:flex;align-items:center;gap:10px;margin:12px 16px 14px;color:var(--ink-2);font-size:12.5px}
+.mbar{display:flex;align-items:center;gap:6px;margin:10px 6px 12px;height:36px;padding:3px 3px 3px 14px;background:var(--fill-1);border:1px solid var(--line);border-radius:18px;transition:border-color .15s,background .15s}
+.mbar:focus-within{border-color:rgba(255,138,0,.6);background:var(--fill-2)}
+.mbar input{flex:1;min-width:0;width:auto;background:none;border:0;padding:0;border-radius:0;font-size:13px;height:100%}
+.mbar input:focus{background:none;border:0}
+.mbar .go{width:28px;height:28px;border-radius:50%;background:var(--ink-1);color:#000;flex:none;display:grid;place-items:center;transition:transform .12s,opacity .15s}
+html[data-theme=light] .mbar .go{color:#fff}
+.mbar .go:active{transform:scale(.92)}
+.mbar .go[disabled]{opacity:.35;pointer-events:none}
+.toast{position:fixed;top:8px;left:50%;z-index:20;transform:translate(-50%,-14px);opacity:0;pointer-events:none;display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 12px 0 9px;border-radius:13px;background:rgba(20,20,22,.88);backdrop-filter:blur(10px);color:#fff;font-size:12px;font-weight:600;box-shadow:0 6px 18px -6px rgba(0,0,0,.6),inset 0 0 0 1px rgba(255,255,255,.1);transition:opacity .2s,transform .25s cubic-bezier(.2,.8,.2,1);white-space:nowrap}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.toast i{width:14px;height:14px;border-radius:50%;background:var(--good);display:grid;place-items:center;flex:none}
+.toast i::after{content:"";width:6px;height:3px;border-left:1.6px solid #000;border-bottom:1.6px solid #000;transform:translateY(-1px) rotate(-45deg)}
+.toast.err i{background:var(--bad)}.toast.err i::after{width:2px;height:6px;border:0;background:#000;transform:none;border-radius:1px}
 .hear .wv{display:flex;gap:2px;align-items:center;height:14px;flex:none}
 .hear .wv i{display:block;width:3px;height:14px;border-radius:2px;background:var(--accent);animation:wave 1s ease-in-out infinite}
 .hear .wv i:nth-child(2){animation-delay:.15s}.hear .wv i:nth-child(3){animation-delay:.3s}.hear .wv i:nth-child(4){animation-delay:.45s}
@@ -130,7 +111,8 @@ html[data-theme=light] .screen{background:linear-gradient(180deg,#f2f2f5,#c9c9cf
   <div class="cur" id="cur" style="left:44%;top:42%"><span class="ring"></span><svg viewBox="0 0 14 20"><path d="M1 1l12 9-5 1 3 6-2.5 1.2L5.6 12 1 15z" fill="#fff" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/></svg></div>
   <div class="live" id="live"><i class="rec"></i>LIVE</div>
 </div>
-<div class="hear"><span class="wv"><i></i><i></i><i></i><i></i></span><span>Say “take over” to open on your Mac</span></div>
+<div class="mbar"><input id="mmsg" placeholder="Message" autocomplete="off" aria-label="Message this bot"><button class="go" id="mgo" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>
+<div class="toast" id="toast" role="status" aria-live="polite"><i></i><span id="toastx">Message sent</span></div>
 <script>
 const DEMO=__VOICEOS_DEMO__;
 /* gzip+base64 noVNC RFB client, injected by cards.ts only when there is a live stream (empty otherwise). */
@@ -143,6 +125,26 @@ const av=(b,cls='')=>'<span class="av '+(b.shape||'blob')+' '+cls+'" data-state=
 let inited=false,CAN_INVOKE=false;
 addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;if(e.source===parent&&m.capabilities)CAN_INVOKE=!!m.capabilities.invokeTool;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
 setTimeout(()=>{if(!inited)boot(DEMO.data,DEMO.args,'dark')},350);
+/* Card→host tool bridge (voiceos:invokeTool → terminal voiceos:toolResult); see show.html.
+   The message bar calls grokbot_card_send, which has no host confirmation: the typed text +
+   send click is the approval. The result's receipt card is ignored on purpose — this card
+   stays on screen and shows a small "Message sent" toast so the user can keep sending. */
+const TERMINAL={completed:1,cancelled:1,failed:1,unknown:1};
+const _pending=new Map();let _rq=0;
+addEventListener('message',e=>{if(e.source!==parent)return;const m=e.data;if(!m||m.type!=='voiceos:toolResult')return;const p=_pending.get(m.requestId);if(!p||!TERMINAL[m.status])return;_pending.delete(m.requestId);if(m.status==='completed')p.resolve(m.result||{});else p.reject({status:m.status,error:m.error||'That didn’t go through.'})});
+function invoke(name,args){return new Promise((resolve,reject)=>{const requestId='r'+(++_rq)+'_'+Date.now();_pending.set(requestId,{resolve,reject});parent.postMessage({type:'voiceos:invokeTool',name,args,requestId},'*');setTimeout(()=>{if(_pending.delete(requestId))reject({status:'unknown',error:'No response — check the app before trying again.'})},130000)})}
+let _toastT;
+function toast(text,err){const t=$('#toast');$('#toastx').textContent=text;t.classList.toggle('err',!!err);t.classList.add('show');clearTimeout(_toastT);_toastT=setTimeout(()=>t.classList.remove('show'),err?3200:2000)}
+function wireMessageBar(){const inp=$('#mmsg'),go=$('#mgo');
+ const sync=()=>{go.disabled=!inp.value.trim()};
+ const send=()=>{const v=inp.value.trim();if(!v||!B)return;
+  if(!CAN_INVOKE){toast('Sending isn’t available here',true);return}
+  inp.value='';sync();inp.focus();
+  invoke('grokbot_card_send',{bot:B.id,message:v}).then(()=>toast('Message sent')).catch(err=>{inp.value=v;sync();toast((err&&err.error)||'Couldn’t send',true)})};
+ inp.addEventListener('input',sync);
+ inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();send()}});
+ go.addEventListener('click',send)}
+wireMessageBar();
 function boot(data,args,mode){document.documentElement.dataset.theme=mode;render(data||{},args||{});hydrate(args||{});report();new ResizeObserver(report).observe(document.body);}
 function getVal(el){return 'value' in el&&el.tagName!=='BUTTON'?el.value:(el.dataset.value??'')}
 function setVal(el,v){if('value' in el&&el.tagName!=='BUTTON')el.value=v??'';else{el.dataset.value=v;el.dispatchEvent(new CustomEvent('hydrate',{detail:v}))}}
@@ -241,7 +243,7 @@ addEventListener('message',e=>{const m=e.data;if(e.source!==parent||!m||m.type!=
  let o={};try{const r=m.result||{};o=r.structuredContent||JSON.parse(r.content[0].text)}catch(_){}
  const w=$('#what');w.style.display='';w.classList.add('cmd');w.textContent=m.status==='completed'&&o.command?'$ '+o.command:'Open failed: '+(o.error||m.error||m.status)});
 function render(d,a){D=d;B=botById(d,a.bot||'pepper');
- $('#capav').innerHTML=av({...B,status:'working'},'');$('#screen').style.setProperty('--glow',B.color+'80');
+ $('#capav').innerHTML=av({...B,status:'working'},'');$('#mmsg').placeholder='Message '+B.name;$('#screen').style.setProperty('--glow',B.color+'80');
  $('#who').innerHTML=esc(B.name)+'’s screen'+(B.label?' <span class="chip">'+esc(B.label)+'</span>':'');
  $('#pause').onclick=e=>{e.stopPropagation();paused=!paused;Feed.pause(paused);$('#live').classList.toggle('paused',paused);$('#live').lastChild.textContent=paused?'PAUSED':'LIVE';$('#pause').textContent=paused?'Resume':'Pause'};
  $('#stop').onclick=e=>{e.stopPropagation();Feed.pause(true);$('#live').classList.add('paused');$('#live').lastChild.textContent='STOPPED';$('#what').textContent='Stopped by you';Motion.set($('#capav .av'),'blocked');$('#stop').disabled=true;$('#pause').disabled=true};
