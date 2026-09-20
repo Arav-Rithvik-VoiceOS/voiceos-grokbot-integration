@@ -21241,27 +21241,6 @@ function goIdle(){isLive=false;Feed.pause(true);
     }
     #message[hidden] { display: block; opacity: 0; }
     @media (prefers-reduced-motion: reduce) { #message { transition: none; } }
-
-    /* Bot orb (bottom-left) + Motion engine, ported from the notch screen card. */
-    .orb { position: fixed; left: 20px; bottom: 20px; z-index: 6; width: 54px; height: 54px; pointer-events: none; filter: drop-shadow(0 10px 26px rgba(0, 0, 0, .5)); }
-    .av { position: relative; display: block; width: 100%; height: 100%; background: var(--c, #FF6700); transform-origin: 50% 60%; }
-    .av .eyes { position: absolute; inset: 0; will-change: transform; }
-    .av .eye { position: absolute; top: 31%; width: 11%; height: 27%; background: #161616; border-radius: 99px; transform: rotate(12deg); transition: transform .13s ease, height .28s cubic-bezier(.3, .9, .3, 1), top .28s, width .28s, border-radius .28s; }
-    .av .eye.l { left: 38%; } .av .eye.r { left: 56%; }
-    .av.blink .eye { transform: rotate(12deg) scaleY(.1); }
-    .av[data-state="working"] { animation: bob 1.1s ease-in-out infinite; } .av[data-state="working"] .eye { height: 21%; top: 34%; }
-    .av[data-state="thinking"] { animation: tilt 3.2s ease-in-out infinite; } .av[data-state="thinking"] .eye.r { height: 17%; top: 37%; }
-    .av[data-state="waiting"] { animation: rock 2.6s ease-in-out infinite; } .av[data-state="waiting"] .eye { height: 32%; top: 28%; width: 13%; }
-    .av[data-state="blocked"] { animation: shake 3.2s ease-in-out infinite; } .av[data-state="blocked"] .eye { height: 8%; top: 41%; transform: rotate(0); }
-    .av.wedge .eyes { top: 18%; } .av.teardrop .eyes { top: 14%; }
-    .av.ack { animation: squash .38s cubic-bezier(.3, 1.5, .5, 1); }
-    @keyframes bob { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-4%) rotate(-3deg); } }
-    @keyframes tilt { 0%, 100% { transform: rotate(-5deg); } 50% { transform: rotate(-8deg) translateY(-2%); } }
-    @keyframes rock { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg); } }
-    @keyframes shake { 0%, 10%, 100% { transform: translateX(0); } 2% { transform: translateX(-6%); } 4% { transform: translateX(6%); } 6% { transform: translateX(-4%); } 8% { transform: translateX(3%); } }
-    @keyframes squash { 0% { transform: scale(1); } 40% { transform: scale(1.14, .86); } 100% { transform: scale(1); } }
-    .av.blob{clip-path:polygon(100.0% 50.0%,99.6% 56.5%,98.3% 62.9%,96.2% 69.1%,93.3% 75.0%,89.7% 80.4%,85.4% 85.3%,80.4% 89.6%,75.0% 93.3%,69.1% 96.2%,62.9% 98.3%,56.5% 99.5%,50.0% 100.0%,43.5% 99.5%,37.1% 98.3%,30.9% 96.2%,25.0% 93.3%,19.6% 89.6%,14.6% 85.3%,10.3% 80.4%,6.7% 75.0%,3.8% 69.1%,1.7% 62.9%,0.4% 56.5%,0.0% 50.0%,0.4% 43.5%,1.7% 37.0%,3.8% 30.8%,6.7% 25.0%,10.3% 19.5%,14.6% 14.6%,19.6% 10.3%,25.0% 6.7%,30.9% 3.8%,37.1% 1.7%,43.5% 0.4%,50.0% 0.0%,56.5% 0.4%,62.9% 1.7%,69.1% 3.8%,75.0% 6.7%,80.4% 10.3%,85.4% 14.6%,89.7% 19.5%,93.3% 25.0%,96.2% 30.8%,98.3% 37.0%,99.6% 43.5%)}.av.pebble{clip-path:polygon(99.8% 50.4%,99.9% 56.7%,99.2% 62.9%,97.6% 68.9%,95.2% 74.6%,91.8% 79.9%,87.6% 84.5%,82.7% 88.4%,77.3% 91.5%,71.5% 93.6%,65.3% 94.9%,59.1% 95.4%,52.9% 95.1%,46.7% 94.2%,40.6% 92.8%,34.7% 90.9%,28.9% 88.6%,23.3% 85.8%,18.0% 82.5%,13.1% 78.6%,8.8% 74.1%,5.2% 69.0%,2.5% 63.4%,0.7% 57.4%,0.0% 51.2%,0.4% 45.0%,1.9% 38.9%,4.3% 33.1%,7.6% 27.8%,11.5% 23.0%,16.0% 18.7%,21.0% 14.9%,26.4% 11.7%,32.0% 9.0%,37.9% 6.9%,44.0% 5.5%,50.2% 4.7%,56.4% 4.7%,62.6% 5.6%,68.6% 7.3%,74.3% 9.8%,79.6% 13.1%,84.3% 17.2%,88.5% 21.8%,92.1% 26.9%,95.0% 32.4%,97.3% 38.2%,98.9% 44.2%)}.av.squircle{clip-path:polygon(100.0% 50.0%,100.0% 57.3%,99.9% 64.7%,99.6% 72.0%,98.7% 79.3%,96.5% 86.3%,92.4% 92.4%,86.3% 96.5%,79.3% 98.7%,72.0% 99.6%,64.7% 99.9%,57.4% 100.0%,50.0% 100.0%,42.7% 100.0%,35.3% 99.9%,28.0% 99.6%,20.7% 98.7%,13.7% 96.5%,7.6% 92.4%,3.5% 86.3%,1.3% 79.3%,0.4% 72.0%,0.1% 64.7%,0.0% 57.4%,0.0% 50.0%,0.0% 42.7%,0.1% 35.3%,0.4% 28.0%,1.3% 20.7%,3.5% 13.7%,7.6% 7.6%,13.7% 3.5%,20.7% 1.3%,28.0% 0.4%,35.3% 0.1%,42.7% 0.0%,50.0% 0.0%,57.3% 0.0%,64.7% 0.1%,72.0% 0.4%,79.3% 1.3%,86.3% 3.5%,92.4% 7.6%,96.5% 13.7%,98.7% 20.7%,99.6% 28.0%,99.9% 35.3%,100.0% 42.7%)}.av.tablet{clip-path:polygon(32.5% 17.6%,38.2% 17.6%,43.9% 17.6%,49.6% 17.6%,55.3% 17.6%,61.0% 17.6%,66.7% 17.6%,72.4% 18.0%,77.9% 19.3%,83.1% 21.6%,87.8% 24.8%,91.9% 28.7%,95.3% 33.3%,97.8% 38.5%,99.3% 43.9%,99.9% 49.6%,99.5% 55.3%,98.0% 60.8%,95.7% 66.0%,92.5% 70.6%,88.5% 74.7%,83.8% 78.0%,78.7% 80.4%,73.2% 81.9%,67.5% 82.4%,61.8% 82.4%,56.1% 82.4%,50.4% 82.4%,44.7% 82.4%,39.0% 82.4%,33.3% 82.4%,27.6% 82.0%,22.1% 80.7%,16.9% 78.4%,12.2% 75.2%,8.1% 71.3%,4.7% 66.7%,2.2% 61.5%,0.7% 56.1%,0.1% 50.4%,0.5% 44.7%,2.0% 39.2%,4.3% 34.0%,7.5% 29.4%,11.5% 25.3%,16.2% 22.0%,21.3% 19.6%,26.8% 18.1%)}.av.wedge{clip-path:polygon(33.8% 18.4%,37.2% 13.1%,41.4% 8.3%,46.7% 4.9%,53.0% 4.8%,58.4% 8.1%,62.6% 12.8%,66.0% 18.1%,69.2% 23.6%,72.4% 29.1%,75.6% 34.6%,78.7% 40.1%,81.9% 45.6%,85.1% 51.1%,88.2% 56.6%,91.4% 62.1%,94.6% 67.6%,97.5% 73.2%,99.5% 79.2%,99.8% 85.5%,96.7% 90.9%,91.2% 94.0%,85.0% 95.3%,78.7% 95.6%,72.4% 95.6%,66.0% 95.6%,59.7% 95.6%,53.3% 95.6%,47.0% 95.6%,40.6% 95.6%,34.3% 95.6%,28.0% 95.6%,21.6% 95.6%,15.3% 95.3%,9.1% 94.1%,3.5% 91.1%,0.3% 85.8%,0.4% 79.5%,2.4% 73.5%,5.3% 67.8%,8.4% 62.3%,11.6% 56.9%,14.8% 51.4%,18.0% 45.9%,21.1% 40.4%,24.3% 34.9%,27.5% 29.4%,30.6% 23.9%)}.av.hex{clip-path:polygon(95.3% 67.0%,94.2% 73.2%,90.6% 78.3%,85.4% 81.9%,79.9% 85.0%,74.4% 88.2%,68.9% 91.4%,63.4% 94.5%,57.9% 97.7%,52.0% 99.8%,45.8% 99.3%,40.1% 96.6%,34.6% 93.4%,29.1% 90.2%,23.6% 87.1%,18.2% 83.9%,12.7% 80.7%,7.9% 76.7%,5.2% 71.0%,4.7% 64.7%,4.7% 58.4%,4.7% 52.0%,4.7% 45.7%,4.7% 39.4%,4.7% 33.0%,5.8% 26.8%,9.4% 21.7%,14.6% 18.1%,20.1% 15.0%,25.6% 11.8%,31.1% 8.6%,36.6% 5.5%,42.1% 2.3%,48.0% 0.2%,54.2% 0.7%,59.9% 3.4%,65.4% 6.6%,70.9% 9.8%,76.4% 12.9%,81.8% 16.1%,87.3% 19.3%,92.1% 23.3%,94.8% 29.0%,95.3% 35.3%,95.3% 41.6%,95.3% 48.0%,95.3% 54.3%,95.3% 60.6%)}.av.cloud{clip-path:polygon(97.8% 50.0%,100.1% 55.8%,100.7% 62.0%,99.8% 68.1%,97.3% 73.8%,93.3% 78.6%,88.3% 82.2%,82.5% 84.4%,76.3% 85.0%,70.2% 84.1%,65.1% 87.4%,59.6% 90.2%,53.6% 91.8%,47.4% 91.9%,41.3% 90.6%,35.7% 87.9%,30.5% 84.6%,24.4% 85.8%,18.2% 85.4%,12.3% 83.5%,7.1% 80.1%,2.9% 75.6%,-0.0% 70.1%,-1.5% 64.0%,-1.4% 57.8%,0.3% 51.9%,3.4% 46.5%,7.8% 42.1%,12.4% 38.3%,12.8% 32.1%,14.6% 26.2%,17.6% 20.8%,21.9% 16.2%,27.0% 12.8%,32.8% 10.6%,39.0% 9.7%,45.2% 10.3%,51.1% 12.3%,56.3% 15.6%,62.1% 15.4%,68.3% 15.1%,74.4% 16.3%,79.9% 19.1%,84.5% 23.2%,87.9% 28.4%,89.9% 34.3%,90.2% 40.5%,94.2% 45.0%)}.av.teardrop{clip-path:polygon(54.9% 6.2%,50.5% 3.2%,45.7% 5.5%,42.2% 9.8%,38.7% 14.1%,35.3% 18.3%,31.8% 22.6%,28.3% 26.9%,24.9% 31.2%,21.4% 35.5%,18.0% 39.9%,15.3% 44.7%,13.3% 49.8%,12.0% 55.2%,11.5% 60.7%,11.8% 66.2%,12.9% 71.6%,14.7% 76.8%,17.3% 81.7%,20.5% 86.1%,24.3% 90.1%,28.7% 93.5%,33.5% 96.2%,38.6% 98.2%,44.0% 99.4%,49.5% 99.9%,55.0% 99.6%,60.4% 98.5%,65.6% 96.6%,70.5% 94.0%,74.9% 90.7%,78.9% 86.9%,82.2% 82.5%,84.9% 77.7%,86.9% 72.5%,88.1% 67.2%,88.5% 61.7%,88.2% 56.2%,87.0% 50.8%,85.1% 45.6%,82.5% 40.7%,79.2% 36.3%,75.8% 32.0%,72.3% 27.7%,68.8% 23.4%,65.4% 19.1%,61.9% 14.8%,58.4% 10.5%)}
-    @media (prefers-reduced-motion: reduce) { .av, .av .eye { animation: none !important; transition: none !important; } }
   </style>
 </head>
 <body>
@@ -21275,7 +21254,6 @@ function goIdle(){isLive=false;Feed.pause(true);
       <span class="spacer"></span>
       <div class="mode"><span class="eye" aria-hidden="true"></span>View only</div>
     </div>
-    <div class="orb" id="orb" aria-hidden="true"></div>
     <div id="message" role="status" aria-live="polite">Connecting to the computer…</div>
   </main>
   <script type="module" nonce="__VOICEOS_NONCE__">
@@ -21287,51 +21265,6 @@ function goIdle(){isLive=false;Feed.pause(true);
     // document. The injected bundle ends by defining VoiceOSRFB in this scope.
     __VOICEOS_RFB_SOURCE__
 
-    const EYES = '<span class="eyes"><i class="eye l"></i><i class="eye r"></i></span>';
-    const AV_SHAPES = new Set(["blob", "pebble", "squircle", "tablet", "wedge", "hex", "cloud", "teardrop"]);
-    // The colour is applied with element.style (allowed by CSP) rather than an
-    // inline style="" attribute, which style-src 'nonce-…' blocks.
-    const buildOrb = (orbEl, color, shape) => {
-      const s = AV_SHAPES.has(shape) ? shape : "blob";
-      orbEl.innerHTML = '<span class="av ' + s + '" data-state="idle">' + EYES + '</span>';
-      orbEl.firstChild.style.setProperty("--c", /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#FF6700");
-    };
-
-    // Motion — the avatar liveness engine ported from the notch screen card:
-    // wandering gaze, blinks, cursor-follow, and per-state behaviour.
-    const Motion = (() => {
-      const R = (a, b) => a + Math.random() * (b - a);
-      const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-      let pointer = null, ptrAt = 0;
-      addEventListener("pointermove", e => { pointer = { x: e.clientX, y: e.clientY }; ptrAt = performance.now(); });
-      document.documentElement.addEventListener("pointerleave", () => pointer = null);
-      const live = new Set();
-      const st = m => m.el.dataset.state || "idle";
-      const later = (m, fn, ms) => { const t = setTimeout(() => { m.timers.delete(t); fn(); }, ms); m.timers.add(t); };
-      const clear = m => { m.timers.forEach(clearTimeout); m.timers.clear(); };
-      const gaze = (m, x, y, dur) => { if (pointer) return; m.eyes.style.transition = "transform " + dur + "ms cubic-bezier(.3,.7,.2,1)"; m.eyes.style.transform = "translate(" + x + "%," + y + "%)"; };
-      const blink = (m, dbl) => { if (reduce) return; m.el.classList.add("blink"); later(m, () => { m.el.classList.remove("blink"); if (dbl) later(m, () => blink(m), 170); }, 120); };
-      function schedule(m) {
-        clear(m); const s = st(m);
-        const bl = () => { blink(m, Math.random() < .2); later(m, bl, R(s === "working" ? 1600 : 2600, s === "working" ? 3200 : 5800)); }; later(m, bl, R(300, 2400));
-        const gz = () => {
-          if (s === "idle") { gaze(m, R(-14, 14), R(-8, 8), R(500, 900)); later(m, () => gaze(m, 0, 0, 800), R(900, 2400)); }
-          else if (s === "working") { gaze(m, R(-16, -8), R(4, 10), 130); later(m, () => gaze(m, R(8, 16), R(4, 10), 130), R(220, 420)); }
-          else if (s === "blocked") { gaze(m, 0, 12, 500); }
-          else gaze(m, 0, 0, 300);
-          later(m, gz, s === "working" ? R(600, 1200) : s === "idle" ? R(2400, 6000) : R(1600, 3200));
-        };
-        gz();
-      }
-      const mount = el => { if (el._m || !el.querySelector(".eyes")) return; const m = el._m = { el, eyes: el.querySelector(".eyes"), timers: new Set() }; live.add(m); schedule(m); };
-      const scan = () => { document.querySelectorAll(".av").forEach(mount); live.forEach(m => { if (!m.el.isConnected) { clear(m); live.delete(m); delete m.el._m; } }); };
-      const tick = () => { if (pointer && !reduce) { if (performance.now() - ptrAt > 4000) pointer = null; else live.forEach(m => { if (!m.el.isConnected) return; const r = m.el.getBoundingClientRect(); const dx = pointer.x - (r.left + r.width / 2), dy = pointer.y - (r.top + r.height / 2); const d = Math.hypot(dx, dy) || 1, k = Math.min(1, d / 140); m.eyes.style.transition = "transform 200ms cubic-bezier(.2,.8,.2,1)"; m.eyes.style.transform = "translate(" + (dx / d * 16 * k).toFixed(1) + "%," + (dy / d * 10 * k).toFixed(1) + "%)"; }); } requestAnimationFrame(tick); };
-      requestAnimationFrame(tick);
-      new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
-      const set = (el, s) => { if (!el) return; el.dataset.state = s; if (el._m) schedule(el._m); };
-      return { scan, set };
-    })();
-
     (() => {
       "use strict";
       const config = window.__VOICEOS_CONFIG__;
@@ -21339,21 +21272,18 @@ function goIdle(){isLive=false;Feed.pause(true);
       const viewport = document.getElementById("viewport");
       const live = document.getElementById("live");
       const liveText = document.getElementById("livetext");
-      const orbEl = document.getElementById("orb");
       const message = document.getElementById("message");
       let rfb = null;
       let retryTimer = 0;
       let retries = 0;
       let clearing = false;
 
-      const orbState = kind => kind === "connected" ? "working" : kind === "error" ? "blocked" : "idle";
+      const botName = config && typeof config.botName === "string" ? config.botName : "";
       const setState = (kind, label, detail = "") => {
         live.dataset.state = kind;
-        liveText.textContent = label;
+        liveText.textContent = (botName ? botName + " " : "") + label;
         message.textContent = detail;
         message.hidden = !detail;
-        const av = orbEl.querySelector(".av");
-        if (av) Motion.set(av, orbState(kind));
       };
 
       const clearCredential = () => {
@@ -21374,8 +21304,6 @@ function goIdle(){isLive=false;Feed.pause(true);
         setState("error", "Unavailable", "The viewer could not start. Close this window and try again.");
         return;
       }
-      buildOrb(orbEl, config.botColor, config.botShape);
-      Motion.scan();
 
       const connect = () => {
         if (clearing || !config.wsUrl) return;
