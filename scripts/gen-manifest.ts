@@ -50,7 +50,7 @@ const manifest = {
   // Bump on any manifest change (tools/schema/permissions). NOTE: a plain restart
   // does NOT re-sync the cache even on a bump — push the new manifest into
   // config.json's installedIntegrations[].manifest (see the cache-push step).
-  version: "1.0.21",
+  version: "1.0.22",
   name: "Grok Bot",
   summary: "Talk to your Grok Bot AI teammates by voice.",
   description:
@@ -82,11 +82,12 @@ const manifest = {
     {
       name: "grokbot_open_computer_window",
       title: "Open a bot's computer window",
-      // Voice routes here directly, and the live screen card invokes the same
-      // hardened path when its user clicks Open.
+      // Card-only: the live screen card invokes this hardened path when the user
+      // TAPS the screen. There is no voice route — opening the big window is a
+      // deliberate click, never a spoken command.
       uiCallable: true,
       description:
-        "Open a Grok Bot teammate's live computer in a larger, chromeless, view-only window. Use when the user asks to see a bot's screen bigger, enlarge a bot's computer, or open the screen in its own window.",
+        "Internal — invoked by the live screen card when the user taps it, to open that bot's computer in a larger window. Do not call from voice.",
       inputSchema: {
         type: "object",
         properties: {
@@ -290,14 +291,6 @@ const manifest = {
       utterances: { en: ["Show me {bot}'s screen", "What's {bot} working on", "Watch {bot}"] },
       slots: { bot: BOT_SLOT },
       response: { en: "Here is {bot}'s screen." },
-    },
-    {
-      name: "open_window",
-      tool: "grokbot_open_computer_window",
-      description: "Open ONE named bot's computer in its own larger window: bigger, enlarged, full size, or a separate window. Not the small live view in the notch.",
-      utterances: { en: ["Open {bot}'s computer", "Make {bot}'s screen bigger", "Open {bot}'s screen in a window"] },
-      slots: { bot: BOT_SLOT },
-      response: { en: "Opening {bot}'s computer." },
     },
     {
       name: "open_chat",

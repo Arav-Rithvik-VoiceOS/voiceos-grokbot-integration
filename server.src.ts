@@ -713,13 +713,14 @@ const screenTool = server.registerTool(
     }),
 );
 
-// ── READ: grokbot_open_computer_window (larger native view-only screen) ──────
-const windowTool = server.registerTool(
+// ── CARD: grokbot_open_computer_window (larger native view-only screen) ──────
+// Card-only: opened when the user TAPS the live screen card; no voice intent.
+server.registerTool(
   "grokbot_open_computer_window",
   {
     title: "Open a bot's computer window",
     description:
-      "Open a Grok Bot teammate's live computer in a larger, chromeless, view-only window. Use when the user asks to see a bot's screen bigger, enlarge a bot's computer, or open the screen in its own window.",
+      "Internal — invoked by the live screen card when the user taps it, to open that bot's computer in a larger window. Do not call from voice.",
     inputSchema: {
       bot: z.string().describe("The bot's name or identifier as the user said it, e.g. 'Pepper'."),
     },
@@ -832,7 +833,7 @@ server.registerTool(
 // names only. Handlers still resolve the bot again: this list can be stale.
 const INTENT_SLOT_VALUES_META_KEY = "voiceos/intent-slot-values";
 const INTENT_REFRESH_NOTIFICATION_METHOD = "notifications/voiceos/refresh_intent_values";
-const BOT_SLOT_TOOLS = [showTool, threadTool, screenTool, windowTool];
+const BOT_SLOT_TOOLS = [showTool, threadTool, screenTool];
 let _publishedBots = "";
 
 function publishBotChoices(agents: Agent[]): void {

@@ -22949,9 +22949,9 @@ var screenTool = server.registerTool("view_bot_desktop_live", {
     message: live ? working ? `Live view of ${bot.name}'s screen.` : `${bot.name}'s desktop is up but ${bot.name} is idle right now.` : `${bot.name}'s computer is not running right now.`
   }, screenCard(bot, live ? { wsUrl: probe.wsUrl, viewerUrl: probe.viewerUrl } : undefined));
 }));
-var windowTool = server.registerTool("grokbot_open_computer_window", {
+server.registerTool("grokbot_open_computer_window", {
   title: "Open a bot's computer window",
-  description: "Open a Grok Bot teammate's live computer in a larger, chromeless, view-only window. Use when the user asks to see a bot's screen bigger, enlarge a bot's computer, or open the screen in its own window.",
+  description: "Internal — invoked by the live screen card when the user taps it, to open that bot's computer in a larger window. Do not call from voice.",
   inputSchema: {
     bot: exports_external.string().describe("The bot's name or identifier as the user said it, e.g. 'Pepper'.")
   },
@@ -23020,7 +23020,7 @@ server.registerTool("grokbot_sent_recent", {
 }));
 var INTENT_SLOT_VALUES_META_KEY = "voiceos/intent-slot-values";
 var INTENT_REFRESH_NOTIFICATION_METHOD = "notifications/voiceos/refresh_intent_values";
-var BOT_SLOT_TOOLS = [showTool, threadTool, screenTool, windowTool];
+var BOT_SLOT_TOOLS = [showTool, threadTool, screenTool];
 var _publishedBots = "";
 function publishBotChoices(agents) {
   const names = [...new Set(agents.filter((a) => !a.isGroup).map((a) => a.name.trim()))].filter((n) => n && n.length <= 200).slice(0, 30);
