@@ -723,6 +723,40 @@ server.registerTool(
     }),
 );
 
+// ── CARD: grokbot_reply_check — the screen card's message bar polls this ──────
+// After a send the card asks, every few seconds, whether the bot has answered
+// yet (card requests are capped at 64 per card, so the card polls only for a
+// bounded window). Read-only, plain JSON (no glance): the card renders it.
+// `since` is epoch ms — only replies at or after it count, so an older message
+// is never mistaken for the answer.
+server.registerTool(
+  "grokbot_reply_check",
+  {
+    title: "Check a bot's latest reply",
+    description:
+      "Internal — polled by the screen card's message bar after the user sends a message, to show the bot's reply on the card. Do not call from voice.",
+    inputSchema: {
+      bot: z.string().describe("The exact bot ID shown on the card."),
+      since: z.number().describe("Epoch milliseconds: only replies at or after this time count."),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async (args: { bot: string; since: number }) =>
+    handle("grokbot_reply_check", async () => {
+      const [bot] = await resolveMembers([args.bot.trim()]);
+      const me = (await listAgents()).find((a) => a.id === bot.id);
+      const { entries } = await transcriptTail(bot.id, 12);
+      const replies = (entries ?? []).filter((e) => isBotReply(e) && (e.timestampMs ?? 0) >= args.since && entryText(e).trim());
+      const last = replies[replies.length - 1];
+      return result({
+        bot: bot.name,
+        busy: isBusy(me),
+        awaiting: Boolean(me?.awaitingUserResponse),
+        reply: last ? { id: last.id, text: summarize(entryText(last), 600) } : null,
+      });
+    }),
+);
+
 await server.connect(new StdioServerTransport());
 log("server started, awaiting MCP requests on stdio");
 

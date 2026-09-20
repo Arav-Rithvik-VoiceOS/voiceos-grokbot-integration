@@ -93,6 +93,23 @@ const manifest = {
       },
     },
     {
+      // The screen card's message bar polls this after a send to show the bot's
+      // reply. uiCallable, read-only, no confirmation.
+      name: "grokbot_reply_check",
+      title: "Check a bot's latest reply",
+      uiCallable: true,
+      description:
+        "Internal — polled by the screen card's message bar after the user sends a message, to show the bot's reply on the card. Do not call from voice.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          bot: { type: "string", description: "The exact bot ID shown on the card." },
+          since: { type: "number", description: "Epoch milliseconds: only replies at or after this time count." },
+        },
+        required: ["bot", "since"],
+      },
+    },
+    {
       name: "grokbot_show",
       title: "Show bots",
       description:
