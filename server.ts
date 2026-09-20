@@ -19959,6 +19959,26 @@ function openGrokBotApp() {
   }
 }
 
+// cardWatch.ts
+var CARD_FRESH_MS = 8000;
+var views = new Map;
+function recordCardPoll(botId, o, now = Date.now()) {
+  const v = views.get(botId) ?? { at: now, live: true, shown: new Set };
+  v.at = now;
+  if (o.replyId)
+    v.shown.add(o.replyId);
+  v.live = !(o.replyId && !o.busy);
+  views.set(botId, v);
+}
+function cardCovers(botId, replyId, now = Date.now()) {
+  const v = views.get(botId);
+  if (!v)
+    return false;
+  if (replyId && v.shown.has(replyId))
+    return true;
+  return v.live && now - v.at < CARD_FRESH_MS;
+}
+
 // assets.generated.ts
 var WIDGETS = { connect: `<!doctype html>
 <meta charset="utf-8" />
@@ -21910,6 +21930,11 @@ function watchThreadThenNotify(bot, seen, ourText) {
         const replies = fresh.filter(isBotReply);
         if (replies.length) {
           sawActivity = true;
+          if (cardCovers(bot.id, replies[replies.length - 1].id)) {
+            if (!busy)
+              return;
+            continue;
+          }
           const summary = summarize(entryText(replies[replies.length - 1]));
           const msg = me?.awaitingUserResponse ? `${bot.name} needs an answer: ${summary}` : `${bot.name}: ${summary}`;
           await triggerReminder(msg, { speak: true });
@@ -22285,6 +22310,7 @@ server.registerTool("grokbot_reply_check", {
   const { entries } = await transcriptTail(bot.id, 12);
   const replies = (entries ?? []).filter((e) => isBotReply(e) && (e.timestampMs ?? 0) >= args.since && entryText(e).trim());
   const last = replies[replies.length - 1];
+  recordCardPoll(bot.id, { replyId: last?.id, busy: isBusy(me) });
   return result({
     bot: bot.name,
     busy: isBusy(me),

@@ -36,6 +36,7 @@ import {
   type TranscriptEntry,
   agentScreen,
 } from "./client.ts";
+import { recordCardPoll, cardCovers } from "./cardWatch.ts";
 import { connectCard, screenCard, showCard, threadCard, sentCard, sentGroupCard, toBot, toGroup, toThread, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
 import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, resolveMessageGroup, type MessageArgs } from "./messaging.ts";
@@ -155,6 +156,12 @@ function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, o
         // ping only the newest so one turn can't fire a stack of pills at once.
         if (replies.length) {
           sawActivity = true;
+          // The screen card is on screen and shows this reply itself (its message
+          // bar polls grokbot_reply_check), so a pill would only repeat it.
+          if (cardCovers(bot.id, replies[replies.length - 1].id)) {
+            if (!busy) return;
+            continue;
+          }
           const summary = summarize(entryText(replies[replies.length - 1]));
           const msg = me?.awaitingUserResponse
             ? `${bot.name} needs an answer: ${summary}`
@@ -748,6 +755,7 @@ server.registerTool(
       const { entries } = await transcriptTail(bot.id, 12);
       const replies = (entries ?? []).filter((e) => isBotReply(e) && (e.timestampMs ?? 0) >= args.since && entryText(e).trim());
       const last = replies[replies.length - 1];
+      recordCardPoll(bot.id, { replyId: last?.id, busy: isBusy(me) });
       return result({
         bot: bot.name,
         busy: isBusy(me),
