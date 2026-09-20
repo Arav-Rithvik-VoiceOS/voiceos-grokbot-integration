@@ -22684,7 +22684,7 @@ function statusWord(a) {
     return "working";
   return "idle";
 }
-server.registerTool("grokbot_show", {
+var showTool = server.registerTool("grokbot_show", {
   title: "Show bots",
   description: "Show the user's Grok Bot AI teammates, or one bot's live progress. Use when the user asks to see their bots, what bots they have, or what a specific bot is doing right now.",
   inputSchema: {
@@ -22693,6 +22693,7 @@ server.registerTool("grokbot_show", {
   annotations: { readOnlyHint: true }
 }, async (args) => handle("grokbot_show", async () => {
   const agents = await listAgents();
+  publishBotChoices(agents);
   const roster = agents.filter((a) => !a.isGroup);
   const tails = await Promise.all(roster.map(async (b) => {
     try {
@@ -22715,7 +22716,7 @@ server.registerTool("grokbot_show", {
     message: bots.length === 0 ? "You don't have any Grok bots yet." : `You have ${bots.length} bot${bots.length === 1 ? "" : "s"}.`
   }, card);
 }));
-server.registerTool("grokbot_thread", {
+var threadTool = server.registerTool("grokbot_thread", {
   title: "Read a bot's messages",
   description: THREAD_DESCRIPTION,
   inputSchema: {
@@ -22861,6 +22862,7 @@ server.registerTool("grokbot_create", {
     avatarShape: normalizeShapeId(args.shape)
   });
   const agents = await listAgents();
+  publishBotChoices(agents);
   const readyToMessage = !!created?.id && agents.some((a) => a.id === created.id);
   return result({
     created: true,
@@ -22906,7 +22908,7 @@ server.registerTool("grokbot_group", {
     via: exports_external.enum(["card"]).optional().describe("Internal — leave unset on voice calls. Card-origin metadata only; VoiceOS approval is required before execution.")
   }
 }, async (args) => handle("grokbot_group", () => performGroupSend(args)));
-server.registerTool("view_bot_desktop_live", {
+var screenTool = server.registerTool("view_bot_desktop_live", {
   title: "View a bot's live screen",
   description: `Show a live view of a Grok Bot teammate's computer while it works. Use when the user asks to see a bot's screen, watch what a bot is doing, or what a bot is working on right now — e.g. "show me Pepper's screen", "what's Jerome working on".`,
   inputSchema: {
@@ -22925,7 +22927,7 @@ server.registerTool("view_bot_desktop_live", {
     message: live ? working ? `Live view of ${bot.name}'s screen.` : `${bot.name}'s desktop is up but ${bot.name} is idle right now.` : `${bot.name}'s computer is not running right now.`
   }, screenCard(bot, live ? { wsUrl: probe.wsUrl, viewerUrl: probe.viewerUrl } : undefined));
 }));
-server.registerTool("grokbot_open_computer_window", {
+var windowTool = server.registerTool("grokbot_open_computer_window", {
   title: "Open a bot's computer window",
   description: "Open a Grok Bot teammate's live computer in a larger, chromeless, view-only window. Use when the user asks to see a bot's screen bigger, enlarge a bot's computer, or open the screen in its own window.",
   inputSchema: {
@@ -22987,6 +22989,31 @@ server.registerTool("grokbot_sent_recent", {
   const messages = (entries ?? []).filter((e) => e.role === "user").map((e) => entryText(e).trim()).filter(Boolean).slice(-12);
   return result({ bot: target.name, messages });
 }));
+var INTENT_SLOT_VALUES_META_KEY = "voiceos/intent-slot-values";
+var INTENT_REFRESH_NOTIFICATION_METHOD = "notifications/voiceos/refresh_intent_values";
+var BOT_SLOT_TOOLS = [showTool, threadTool, screenTool, windowTool];
+var _publishedBots = "";
+function publishBotChoices(agents) {
+  const names = [...new Set(agents.filter((a) => !a.isGroup).map((a) => a.name.trim()))].filter((n) => n && n.length <= 200).slice(0, 30);
+  const key = JSON.stringify(names);
+  if (key === _publishedBots)
+    return;
+  _publishedBots = key;
+  const meta = names.length ? { [INTENT_SLOT_VALUES_META_KEY]: { bot: names } } : undefined;
+  for (const tool of BOT_SLOT_TOOLS)
+    tool._meta = meta;
+  server.sendToolListChanged();
+  log(`intent choices: published ${names.length} bot name(s)`);
+}
+async function refreshBotChoices() {
+  try {
+    publishBotChoices(await listAgents());
+  } catch (error2) {
+    log("intent choices: refresh failed:", error2);
+  }
+}
+server.server.setNotificationHandler(exports_external.object({ method: exports_external.literal(INTENT_REFRESH_NOTIFICATION_METHOD) }).passthrough(), async () => void refreshBotChoices());
 await server.connect(new StdioServerTransport);
+refreshBotChoices();
 log("server started, awaiting MCP requests on stdio");
 startAutomationWatch();

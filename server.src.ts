@@ -333,7 +333,7 @@ function statusWord(a: Agent): string {
 }
 
 // ── READ: grokbot_show ───────────────────────────────────────────────────────
-server.registerTool(
+const showTool = server.registerTool(
   "grokbot_show",
   {
     title: "Show bots",
@@ -350,6 +350,7 @@ server.registerTool(
   async (args: { bot?: string }) =>
     handle("grokbot_show", async () => {
       const agents = await listAgents();
+      publishBotChoices(agents); // free refresh: the roster is already in hand
       // Recent messages per bot, so the in-card chat pane opens populated when a
       // bot is tapped. Fetched in parallel; a per-bot failure just leaves that
       // pane empty (best-effort), never fails the roster.
@@ -387,7 +388,7 @@ server.registerTool(
 );
 
 // ── READ: grokbot_thread ─────────────────────────────────────────────────────
-server.registerTool(
+const threadTool = server.registerTool(
   "grokbot_thread",
   {
     title: "Read a bot's messages",
@@ -618,6 +619,7 @@ server.registerTool(
       });
       // Show the refreshed roster with the new bot in it.
       const agents = await listAgents();
+      publishBotChoices(agents); // the new bot becomes a fast-intent choice
       const readyToMessage = !!created?.id && agents.some(a => a.id === created.id);
       return result({ created: true, name, botId: created?.id, readyToMessage,
         message: readyToMessage ? `Created ${name}. Check the live recipient before messaging it.`
@@ -672,7 +674,7 @@ server.registerTool(
 );
 
 // ── READ: view_bot_desktop_live (live screen of the bot's computer) ──────────
-server.registerTool(
+const screenTool = server.registerTool(
   "view_bot_desktop_live",
   {
     title: "View a bot's live screen",
@@ -712,7 +714,7 @@ server.registerTool(
 );
 
 // ── READ: grokbot_open_computer_window (larger native view-only screen) ──────
-server.registerTool(
+const windowTool = server.registerTool(
   "grokbot_open_computer_window",
   {
     title: "Open a bot's computer window",
@@ -815,7 +817,47 @@ server.registerTool(
     }),
 );
 
+// ── Fast intents: live choices for the `bot` slot ────────────────────────────
+// The manifest's intents declare `bot` as an enum with valuesFrom:"tool", so
+// the host reads the allowed names from each tool's tools/list `_meta`. No list
+// (Grok Bot closed, no bots) makes those intents ineligible and the normal
+// agent answers instead — never a guess. Names go to the selector provider, so
+// names only. Handlers still resolve the bot again: this list can be stale.
+const INTENT_SLOT_VALUES_META_KEY = "voiceos/intent-slot-values";
+const INTENT_REFRESH_NOTIFICATION_METHOD = "notifications/voiceos/refresh_intent_values";
+const BOT_SLOT_TOOLS = [showTool, threadTool, screenTool, windowTool];
+let _publishedBots = "";
+
+function publishBotChoices(agents: Agent[]): void {
+  const names = [...new Set(agents.filter((a) => !a.isGroup).map((a) => a.name.trim()))]
+    .filter((n) => n && n.length <= 200)
+    .slice(0, 30);
+  const key = JSON.stringify(names);
+  if (key === _publishedBots) return;
+  _publishedBots = key;
+  const meta = names.length ? { [INTENT_SLOT_VALUES_META_KEY]: { bot: names } } : undefined;
+  // Set _meta directly, then notify once — update() would notify per tool.
+  for (const tool of BOT_SLOT_TOOLS) tool._meta = meta;
+  server.sendToolListChanged();
+  log(`intent choices: published ${names.length} bot name(s)`);
+}
+
+async function refreshBotChoices(): Promise<void> {
+  try {
+    publishBotChoices(await listAgents());
+  } catch (error) {
+    log("intent choices: refresh failed:", error);
+  }
+}
+
+// The host sends this when Agent recording starts. Read-only, fire-and-forget.
+server.server.setNotificationHandler(
+  z.object({ method: z.literal(INTENT_REFRESH_NOTIFICATION_METHOD) }).passthrough(),
+  async () => void refreshBotChoices(),
+);
+
 await server.connect(new StdioServerTransport());
+void refreshBotChoices();
 log("server started, awaiting MCP requests on stdio");
 
 // Background: ping when a scheduled task (automation) finishes. Fire-and-forget;

@@ -16,8 +16,9 @@ let tail: actual.TranscriptEntry[] = EARLIER;
 let desktopProbe: Awaited<ReturnType<typeof actual.agentScreen>>;
 let computerWindows: Array<{ botId: string; botName: string; wsUrl: string }>;
 mock.module("@modelcontextprotocol/sdk/server/mcp.js", () => ({ McpServer: class {
-  server = { request: async () => ({ notificationId: "test" }) };
-  registerTool(name: string, _schema: any, handler: any) { handlers.set(name, handler); }
+  server = { request: async () => ({ notificationId: "test" }), setNotificationHandler() {} };
+  registerTool(name: string, _schema: any, handler: any) { handlers.set(name, handler); return {}; }
+  sendToolListChanged() {}
   async connect() {}
 } }));
 mock.module("../client.ts", () => ({

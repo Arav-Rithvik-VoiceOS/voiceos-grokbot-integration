@@ -40,13 +40,17 @@ function threadConfirmation(tool: string) {
   return { schemaVersion: 1, root: { type: "widget", html, height: 360, label: "Grok Bot thread", confirmLabel: "↑" } };
 }
 
+// The `bot` slot's choices are the LIVE roster: server.ts publishes the names in
+// each tool's tools/list _meta under "voiceos/intent-slot-values".
+const BOT_SLOT = { type: "enum", valuesFrom: "tool", required: true };
+
 const manifest = {
   schemaVersion: 1,
   id: "com.arav.grokbot",
   // Bump on any manifest change (tools/schema/permissions). NOTE: a plain restart
   // does NOT re-sync the cache even on a bump — push the new manifest into
   // config.json's installedIntegrations[].manifest (see the cache-push step).
-  version: "1.0.20",
+  version: "1.0.21",
   name: "Grok Bot",
   summary: "Talk to your Grok Bot AI teammates by voice.",
   description:
@@ -259,6 +263,62 @@ const manifest = {
       },
     },
   ],
+  // Fast intents: short, one-action commands skip the full agent turn. Each maps
+  // to an existing tool above — same handler, same card. Messaging has no intent
+  // on purpose: an intent runs ONE tool, so it would skip grokbot_prepare_message
+  // and the send confirmation would fall back to the frozen roster.
+  intents: [
+    {
+      name: "show_bots",
+      tool: "grokbot_show",
+      description: "Show the list of all the user's Grok bots. No bot is named. Not for one bot's screen, messages, or sending a message.",
+      utterances: { en: ["Show my bots", "What bots do I have", "Show my Grok bots"] },
+      response: { en: "Here are your bots." },
+    },
+    {
+      name: "bot_status",
+      tool: "grokbot_show",
+      description: "Show the status or progress of ONE named bot. Not its live screen or computer, not its messages, not sending it a message.",
+      utterances: { en: ["Show {bot}'s progress", "How is {bot} doing", "What's {bot}'s status"] },
+      slots: { bot: BOT_SLOT },
+      response: { en: "Here is {bot}." },
+    },
+    {
+      name: "view_screen",
+      tool: "view_bot_desktop_live",
+      description: "Show the live screen of ONE named bot in the notch: see its screen, watch it, or what it is working on. Not a bigger or separate window, not its messages.",
+      utterances: { en: ["Show me {bot}'s screen", "What's {bot} working on", "Watch {bot}"] },
+      slots: { bot: BOT_SLOT },
+      response: { en: "Here is {bot}'s screen." },
+    },
+    {
+      name: "open_window",
+      tool: "grokbot_open_computer_window",
+      description: "Open ONE named bot's computer in its own larger window: bigger, enlarged, full size, or a separate window. Not the small live view in the notch.",
+      utterances: { en: ["Open {bot}'s computer", "Make {bot}'s screen bigger", "Open {bot}'s screen in a window"] },
+      slots: { bot: BOT_SLOT },
+      response: { en: "Opening {bot}'s computer." },
+    },
+    {
+      name: "open_chat",
+      tool: "grokbot_thread",
+      description: "Open or show the conversation with ONE named bot. Only for seeing or opening the chat. Not for questions about what the bot said, summaries, or sending a message.",
+      utterances: { en: ["Open my chat with {bot}", "Show {bot}'s messages", "Open {bot}'s conversation"] },
+      slots: { bot: BOT_SLOT },
+      fixedArgs: { show: true },
+      response: { en: "Here is your chat with {bot}." },
+    },
+    {
+      name: "create_bot",
+      tool: "grokbot_create",
+      description: "Create a new Grok bot when the user gives BOTH a name and what the bot should do. Not when either is missing.",
+      utterances: { en: ["Create a bot named {name} that {description}", "Make a new bot called {name} to {description}"] },
+      slots: { name: { type: "string", required: true }, description: { type: "string", required: true } },
+      response: { en: "Creating {name}." },
+    },
+  ],
+  // Speech-recognition hints for Agent voice commands (static; host keeps ~10).
+  asr: { vocabulary: ["Grok Bot", "Grok"] },
 };
 
 writeFileSync(new URL("voiceos.integration.json", root), JSON.stringify(manifest, null, 2) + "\n");
