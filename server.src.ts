@@ -725,7 +725,9 @@ server.registerTool(
   },
   async (args: { bot: string }) =>
     handle("grokbot_open_computer_window", async () => {
-      const bot = await resolveAgent(args.bot.trim());
+      // Voice supplies a spoken name; the screen card supplies its exact id.
+      // resolveMembers preserves strict name matching while accepting that id.
+      const [bot] = await resolveMembers([args.bot.trim()]);
       const probe = await agentScreen(bot.id);
       if (!probe.live || !probe.wsUrl) {
         return result({

@@ -367,9 +367,10 @@ export function connectCard(account?: { name?: string; email?: string }) {
  * websockify WebSocket; the card opens it with its own bundled noVNC client
  * (RFB_B64). `stream.viewerUrl` is the pod's vnc.html, kept for reference
  * only (it is unusable in a browser: its assets 404 without the token header).
- * Each bot has its own cloud computer, so every
- * bot's "screen" is its own persistent desktop. With no stream the card shows
- * its idle state and ships without the viewer bundle.
+ * Clicking a live screen invokes the same hardened, view-only native window
+ * used by `grokbot_open_computer_window`. Each bot has its own cloud computer,
+ * so every bot's "screen" is its own persistent desktop. With no stream the
+ * card shows its idle state and ships without the viewer bundle.
  *
  * If the live card would ever exceed the host's byte cap (viewer grew, widget
  * grew), degrade to the idle card instead of a card the host rejects.
