@@ -27,6 +27,9 @@ addEventListener('message', event => {
   inited = true;
   boot(m.data && Object.keys(m.data).length ? m.data : DEMO.data,
     { ...DEMO.args, ...m.args }, themeMode);
+  // This listener swallows voiceos:init, so hand the capability to the sent
+  // cards' follow-up bar (boot above is a no-op once the baked payload booted).
+  if (typeof setInvoke === 'function') setInvoke(canInvoke);
 }, true);
 
 function sendStatus(message, bad = false) {
@@ -66,7 +69,7 @@ function finishSend(status, result, error) {
       // Host toolResult deliberately strips _voiceos_glance. The server also
       // returns this receipt as data so the calling widget can show 1D / 1K.
       const html = receipt.html.replace('<meta charset="utf-8" />',
-        '<meta charset="utf-8" /><meta name="voiceos-receipt-theme" content="' + themeMode + '">');
+        '<meta charset="utf-8" /><meta name="voiceos-receipt-theme" content="' + themeMode + '"><meta name="voiceos-receipt-invoke" content="1">');
       document.open(); document.write(html); document.close();
       return;
     } catch (cause) { error = cause.message; status = 'failed'; }
@@ -140,4 +143,8 @@ const savedTheme = document.querySelector('meta[name="voiceos-receipt-theme"]')?
 if (savedTheme) themeMode = savedTheme;
 // The package's fallback is useful for standalone files; production boots from
 // the injected payload immediately so the card cannot flash sample content.
+// A receipt written in place by a card gets no second voiceos:init. The card
+// that wrote it could invoke tools (it just sent), so the receipt can too.
+if (document.querySelector('meta[name="voiceos-receipt-invoke"]')) canInvoke = true;
 boot(DEMO.data, DEMO.args, themeMode);
+if (typeof setInvoke === 'function') setInvoke(canInvoke);

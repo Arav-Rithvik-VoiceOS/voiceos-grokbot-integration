@@ -19970,7 +19970,7 @@ function sendBubble(list,text){const b=document.createElement('div');b.className
 function unpackResult(result){if(result&&result.isError)throw new Error('The send failed.');if(result&&result.structuredContent)return result.structuredContent;const t=result&&result.content&&result.content.find(b=>b.type==='text');return t&&typeof t.text==='string'?JSON.parse(t.text):result}
 function swapTo(receipt){
  const mode=document.documentElement.dataset.theme||'dark';
- const html=receipt.html.replace('<meta charset="utf-8" />','<meta charset="utf-8" /><meta name="voiceos-receipt-theme" content="'+mode+'">');
+ const html=receipt.html.replace('<meta charset="utf-8" />','<meta charset="utf-8" /><meta name="voiceos-receipt-theme" content="'+mode+'"><meta name="voiceos-receipt-invoke" content="1">');
  document.open();document.write(html);document.close();
 }
 
@@ -20119,6 +20119,8 @@ const EYES='<span class="eyes"><i class="eye l"></i><i class="eye r"></i></span>
 const av=(b,cls='')=>'<span class="av '+(b.shape||'blob')+' '+cls+'" data-state="'+esc(b.status||'idle')+'" style="--c:'+esc(b.color)+'">'+EYES+'</span>';
 let inited=false;
 let CAN_INVOKE=false;const SOLO=parent===window; /* SOLO = opened in a browser tab (preview): sends are simulated */
+/* cards.ts appends messaging-adapter.js, whose capture listener swallows voiceos:init — it reports the host's invokeTool capability here instead. */
+function setInvoke(on){CAN_INVOKE=!!on;const m=$('#mbar');if(m)m.hidden=!(G&&(CAN_INVOKE||SOLO))}
 addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;if(e.source===parent&&m.capabilities)CAN_INVOKE=!!m.capabilities.invokeTool;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
 setTimeout(()=>{if(!inited)boot(DEMO.data,DEMO.args,'dark')},350);
 function boot(data,args,mode){document.documentElement.dataset.theme=mode;render(data||{},args||{});hydrate(args||{});report();new ResizeObserver(report).observe(document.body);}
@@ -20372,6 +20374,8 @@ const EYES='<span class="eyes"><i class="eye l"></i><i class="eye r"></i></span>
 const av=(b,cls='')=>'<span class="av '+(b.shape||'blob')+' '+cls+'" data-state="'+esc(b.status||'idle')+'" style="--c:'+esc(b.color)+'">'+EYES+'</span>';
 let inited=false;
 let CAN_INVOKE=false;const SOLO=parent===window; /* SOLO = opened in a browser tab (preview): sends are simulated */
+/* cards.ts appends messaging-adapter.js, whose capture listener swallows voiceos:init — it reports the host's invokeTool capability here instead. */
+function setInvoke(on){CAN_INVOKE=!!on;const m=$('#mbar');if(m)m.hidden=!(B&&(CAN_INVOKE||SOLO))}
 addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;if(e.source===parent&&m.capabilities)CAN_INVOKE=!!m.capabilities.invokeTool;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
 setTimeout(()=>{if(!inited)boot(DEMO.data,DEMO.args,'dark')},350);
 function boot(data,args,mode){document.documentElement.dataset.theme=mode;render(data||{},args||{});hydrate(args||{});report();new ResizeObserver(report).observe(document.body);}
@@ -21356,6 +21360,9 @@ addEventListener('message', event => {
   inited = true;
   boot(m.data && Object.keys(m.data).length ? m.data : DEMO.data,
     { ...DEMO.args, ...m.args }, themeMode);
+  // This listener swallows voiceos:init, so hand the capability to the sent
+  // cards' follow-up bar (boot above is a no-op once the baked payload booted).
+  if (typeof setInvoke === 'function') setInvoke(canInvoke);
 }, true);
 
 function sendStatus(message, bad = false) {
@@ -21395,7 +21402,7 @@ function finishSend(status, result, error) {
       // Host toolResult deliberately strips _voiceos_glance. The server also
       // returns this receipt as data so the calling widget can show 1D / 1K.
       const html = receipt.html.replace('<meta charset="utf-8" />',
-        '<meta charset="utf-8" /><meta name="voiceos-receipt-theme" content="' + themeMode + '">');
+        '<meta charset="utf-8" /><meta name="voiceos-receipt-theme" content="' + themeMode + '"><meta name="voiceos-receipt-invoke" content="1">');
       document.open(); document.write(html); document.close();
       return;
     } catch (cause) { error = cause.message; status = 'failed'; }
@@ -21469,7 +21476,11 @@ const savedTheme = document.querySelector('meta[name="voiceos-receipt-theme"]')?
 if (savedTheme) themeMode = savedTheme;
 // The package's fallback is useful for standalone files; production boots from
 // the injected payload immediately so the card cannot flash sample content.
+// A receipt written in place by a card gets no second voiceos:init. The card
+// that wrote it could invoke tools (it just sent), so the receipt can too.
+if (document.querySelector('meta[name="voiceos-receipt-invoke"]')) canInvoke = true;
 boot(DEMO.data, DEMO.args, themeMode);
+if (typeof setInvoke === 'function') setInvoke(canInvoke);
 `;
 var CONFIRMATION_ADAPTER = `/* Confirmation bridge for the unchanged thread.html handoff.
  * VoiceOS owns approval: this iframe stages edits, never invokes a send tool.

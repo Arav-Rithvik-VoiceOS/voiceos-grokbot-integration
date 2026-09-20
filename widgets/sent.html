@@ -119,6 +119,8 @@ const EYES='<span class="eyes"><i class="eye l"></i><i class="eye r"></i></span>
 const av=(b,cls='')=>'<span class="av '+(b.shape||'blob')+' '+cls+'" data-state="'+esc(b.status||'idle')+'" style="--c:'+esc(b.color)+'">'+EYES+'</span>';
 let inited=false;
 let CAN_INVOKE=false;const SOLO=parent===window; /* SOLO = opened in a browser tab (preview): sends are simulated */
+/* cards.ts appends messaging-adapter.js, whose capture listener swallows voiceos:init — it reports the host's invokeTool capability here instead. */
+function setInvoke(on){CAN_INVOKE=!!on;const m=$('#mbar');if(m)m.hidden=!(B&&(CAN_INVOKE||SOLO))}
 addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;if(e.source===parent&&m.capabilities)CAN_INVOKE=!!m.capabilities.invokeTool;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
 setTimeout(()=>{if(!inited)boot(DEMO.data,DEMO.args,'dark')},350);
 function boot(data,args,mode){document.documentElement.dataset.theme=mode;render(data||{},args||{});hydrate(args||{});report();new ResizeObserver(report).observe(document.body);}

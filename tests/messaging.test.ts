@@ -302,6 +302,17 @@ test("sent receipts carry a follow-up bar that sends through the confirm-less ca
     expect(html).not.toContain("grokbot_reply_check");
   }
 });
+test("the adapter hands the host's invokeTool capability to the receipt's follow-up bar", async () => {
+  // The adapter's capture listener swallows voiceos:init, and a receipt written in
+  // place by a card gets no init at all — without this hand-off the bar stays hidden.
+  const adapter = await Bun.file(new URL("../widgets/messaging-adapter.js", import.meta.url)).text();
+  const show = await Bun.file(new URL("../widgets/show.html", import.meta.url)).text();
+  expect(adapter.match(/setInvoke\(canInvoke\)/g)?.length).toBe(2);
+  for (const src of [adapter, show]) expect(src).toContain('<meta name="voiceos-receipt-invoke" content="1">');
+  const html = (await call("grokbot_send", { bot: "Pepper", message: "First" })).receipt.html;
+  expect(html).toContain("function setInvoke(on)");
+  expect(html).toContain("setInvoke(canInvoke)");
+});
 test("a follow-up from the group receipt sends once and leaves members and name alone", async () => {
   const r = await call("grokbot_card_send", { group: "g", message: "One more thing" });
   expect(writes).toEqual([["send", "g", "One more thing"]]);

@@ -177,7 +177,7 @@ function sendBubble(list,text){const b=document.createElement('div');b.className
 function unpackResult(result){if(result&&result.isError)throw new Error('The send failed.');if(result&&result.structuredContent)return result.structuredContent;const t=result&&result.content&&result.content.find(b=>b.type==='text');return t&&typeof t.text==='string'?JSON.parse(t.text):result}
 function swapTo(receipt){
  const mode=document.documentElement.dataset.theme||'dark';
- const html=receipt.html.replace('<meta charset="utf-8" />','<meta charset="utf-8" /><meta name="voiceos-receipt-theme" content="'+mode+'">');
+ const html=receipt.html.replace('<meta charset="utf-8" />','<meta charset="utf-8" /><meta name="voiceos-receipt-theme" content="'+mode+'"><meta name="voiceos-receipt-invoke" content="1">');
  document.open();document.write(html);document.close();
 }
 
