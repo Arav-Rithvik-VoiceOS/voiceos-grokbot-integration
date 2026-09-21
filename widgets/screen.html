@@ -168,8 +168,8 @@ function watchReply(at){
    if(res.reply&&res.reply.id!==_shown){replied=true;_shown=res.reply.id;showReply(B.name+(res.awaiting?' needs an answer':''),res.reply.text,st)}
    else if(res.busy&&!replied&&$('#reply').hidden)showReply(B.name+' is working…','',st);else if(!$('#reply').hidden)orb(st);
    idle=res.busy?0:idle+1;
-   if(replied&&idle>=1)return;       
-   if(!replied&&idle>=8)return;      
+   if(replied&&idle>=1)return;
+   if(!replied&&idle>=8)return;
   }
   setTimeout(tick,POLL)};
  setTimeout(tick,1500)}

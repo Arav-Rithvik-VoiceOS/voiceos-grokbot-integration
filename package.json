@@ -7,14 +7,19 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",
     "zod": "^3.24.0",
-    "tsx": "^4.20.2"
+    "tsx": "^4.20.2",
+    "highlight.js": "11.11.1",
+    "katex": "0.16.45",
+    "marked": "17.0.5",
+    "marked-katex-extension": "5.1.13",
+    "sanitize-html": "2.17.0"
   },
   "scripts": {
     "boot": "bun scripts/boot-check.ts",
     "smoke": "bun scripts/smoke.ts",
     "read-smoke": "bun scripts/read-handlers-smoke.ts",
     "preview": "bun scripts/preview-cards.ts",
-    "freeze-confirms": "bun scripts/gen-manifest.ts",
+    "freeze-confirms": "bun scripts/freeze-confirms.ts",
     "check-design": "bun scripts/check-design-pack.ts",
     "build-publish": "bun scripts/build-publish.mjs",
     "build-rfb": "bun scripts/build-rfb.ts",
@@ -23,9 +28,15 @@
     "test:messaging": "bun test tests/messaging.test.ts tests/confirmation.test.ts",
     "preview:messaging": "bun scripts/preview-messaging.ts",
     "check:installed": "bun scripts/check-installed.ts",
-    "push-cache": "bun scripts/push-manifest-cache.ts"
+    "push-cache": "bun scripts/push-manifest-cache.ts",
+    "start": "bun server.ts",
+    "build-intents": "bun scripts/build-intent-sdk.ts && bun scripts/build-intents.ts && bun scripts/freeze-confirms.ts",
+    "test": "bun scripts/test.ts",
+    "check:ui": "bun scripts/check-screen-card.ts && bun scripts/check-roster.ts && bun scripts/check-confirmations.ts && bun scripts/check-composer.ts && bun scripts/check-full-message.ts && bun scripts/check-rendering.ts"
   },
   "devDependencies": {
-    "@novnc/novnc": "^1.7.0"
+    "@novnc/novnc": "^1.7.0",
+    "@types/katex": "0.16.8",
+    "@types/sanitize-html": "2.16.1"
   }
 }

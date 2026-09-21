@@ -16,7 +16,13 @@ import type { Agent, TranscriptEntry } from "./client.ts";
 // `node scripts/inline-assets.mjs` after changing any widget; build-publish runs
 // it automatically. The mark is a data: URI because the card sandbox blocks the
 // network; the 64px PNG keeps two marks under the 96k glance cap.
-import { WIDGETS, MESSAGING_ADAPTER, CONFIRMATION_ADAPTER, MESSAGING_CSS, MARK_DATA_URI, RFB_B64 } from "./assets.generated.ts";
+import { WIDGETS, MESSAGING_ADAPTER, MESSAGING_CSS, MARK_DATA_URI, RFB_B64 } from "./assets.generated.ts";
+import { toThread, boundThread } from "./conversation.ts";
+import { renderConversationCard } from "./conversationWidget.ts";
+import { renderMarkdown } from "./markdown.ts";
+import { avatarFor } from "./avatar.ts";
+import { withConfirmationAvatars, confirmationAdapter } from "./confirmationWidget.ts";
+export { toThread } from "./conversation.ts";
 
 type CardName = "connect" | "show" | "sent-group" | "sent" | "create" | "thread" | "screen";
 
@@ -56,6 +62,18 @@ export function renderCard(
   payload: { data?: unknown; args?: unknown } = {},
   fills: Record<string, string> = {},
 ): string {
+  // Follow-up messages after a send use the same working composer as threads.
+  // The sent text is a temporary receipt, never a new input draft.
+  if (name === "sent" || name === "sent-group") {
+    const args = payload.args as { bot?: string; group?: string; message?: string };
+    return renderConversationCard({
+      data: { ...(payload.data as object), thread: args.message ? [{ id: "local:sent-receipt", from: "me", text: args.message, html: renderMarkdown(args.message), receipt: true }] : [] },
+      args: { bot: args.bot, group: args.group },
+    });
+  }
+  if ((name === "show" || name === "thread") && !(payload.data as { confirmation?: boolean })?.confirmation) {
+    return renderConversationCard(payload);
+  }
   const json = JSON.stringify({ data: payload.data ?? {}, args: payload.args ?? {} })
     .replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   // Function replacers so `$` in the data can't be read as a replacement pattern.
@@ -69,9 +87,12 @@ export function renderCard(
     // One lexical scope per document, including after the in-place sent transition.
     // Original source files stay intact; the adapter overrides only live wiring.
     html = html.replace("<script>", "<script>\n(()=>{\n")
-      .replace("</script>", () => `\n${(payload.data as { confirmation?: boolean })?.confirmation ? CONFIRMATION_ADAPTER : MESSAGING_ADAPTER}\n})();\n</script>`);
+      .replace("</script>", () => `\n${(payload.data as { confirmation?: boolean })?.confirmation ? confirmationAdapter : MESSAGING_ADAPTER}\n})();\n</script>`);
     html = html.replace("<script>", () => `<style>${MESSAGING_CSS}</style>\n<script>`);
   } else html = html.replace("__VOICEOS_DEMO__", () => json);
+  if (name === "thread" && (payload.data as { confirmation?: boolean })?.confirmation) {
+    html = withConfirmationAvatars(html);
+  }
   return pruneShapeCss(name, payload.data, html);
 }
 
@@ -130,17 +151,6 @@ const SHAPE_FALLBACK: Record<string, GrokShape> = {
   crystal: "hex", shield: "squircle", dome: "cloud", arch: "tablet", leaf: "teardrop",
 };
 
-const colorHex = (c?: string): string => {
-  if (!c) return GROK_COLOR_HEX.orange;
-  if (c.startsWith("#")) return c;
-  return GROK_COLOR_HEX[c.toLowerCase() as GrokColor] ?? GROK_COLOR_HEX.orange;
-};
-const shapeKind = (s?: string): GrokShape => {
-  const id = (s ?? "").toLowerCase();
-  if ((GROK_SHAPE_IDS as readonly string[]).includes(id)) return id as GrokShape;
-  return SHAPE_FALLBACK[id] ?? "blob";
-};
-
 // ── Tolerant input → Grok id (what the create tool sends to the gateway) ─────
 // VoiceOS caches the create card + schema in its config.json, so a stale card
 // can still send the OLD vocabulary (a design hex like #3D7BFF, or circ|sq|hex)
@@ -185,7 +195,7 @@ export function normalizeShapeId(input?: string): GrokShape | undefined {
 function statusOf(a: Agent): "working" | "idle" | "thinking" | "waiting" {
   if (a.awaitingUserResponse) return "waiting";
   if (a.isComposingMessage) return "thinking";
-  if (a.isRunningTurn || a.isRunning) return "working";
+  if (a.isRunning ?? a.isRunningTurn) return "working";
   return "idle";
 }
 
@@ -208,9 +218,13 @@ export function toBot(a: Agent) {
     id: a.id,
     name: a.name,
     label: a.title ?? "",
-    color: colorHex(a.avatarColor),
-    shape: shapeKind(a.avatarShape),
+    ...avatarFor(a),
+    isGroup: Boolean(a.isGroup),
     status: statusOf(a),
+    working: !a.isGroup && !a.awaitingUserResponse && Boolean((a.isRunning ?? a.isRunningTurn) || a.isComposingMessage),
+    attention: a.awaitingUserResponse === undefined ? undefined : Boolean(a.awaitingUserResponse),
+    unread: Boolean(a.hasUnread),
+    lastActivityAt: a.lastActivityAt ?? 0,
     task: (a.lastMessagePreview ?? "").trim(),
     time: relTime(a.lastActivityAt),
   };
@@ -219,49 +233,13 @@ export function toBot(a: Agent) {
 /** One group in the card's `data.groups` shape. */
 export function toGroup(a: Agent) {
   return {
-    id: a.id,
-    name: a.name,
+    ...toBot(a),
+    isGroup: true,
+    working: false,
     members: a.memberIds ?? [],
     last: (a.lastMessagePreview ?? "").trim(),
     time: relTime(a.lastActivityAt),
   };
-}
-
-/** Minimal, safe markdown → the card's inline HTML (bold + line breaks). */
-function mdToHtml(s: string): string {
-  const esc = s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return esc.replace(/\*\*([^*]+?)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
-}
-
-/**
- * transcript entries → the card's `thread` shape.
- * "me" is the human: a `kind:"message"` turn with role "user" and NO fromAgent.
- * The bot's own outgoing turns are `kind:"send-message"` ({type,content}); a
- * `role:"assistant"` or an agent-authored `role:"user"` (fromAgent set) is bot /
- * inter-agent chatter — all shown on the bot side.
- */
-export function toThread(entries: TranscriptEntry[]) {
-  const out: Array<Record<string, unknown>> = [];
-  for (const e of entries) {
-    let text = "";
-    let from: "me" | "bot" = "bot";
-    if (e.kind === "send-message") {
-      const m = e.message;
-      text = typeof m === "string" ? m : String((m as Record<string, unknown> | null)?.content ?? "");
-    } else if (e.kind === "message") {
-      text = String(e.content ?? "");
-      from = String(e.role ?? "").toLowerCase() === "user" && !e.fromAgent ? "me" : "bot";
-    } else {
-      continue;
-    }
-    text = text.trim();
-    if (!text) continue;
-    // Which bot sent it: group + inter-agent messages carry `author` (on a
-    // send-message) or `fromAgent` (on a message). Drives the sender orb + name.
-    const sender = from === "bot" ? (e.author?.id ?? e.fromAgent?.id) : undefined;
-    out.push({ from, ...(sender ? { bot: sender } : {}), html: mdToHtml(text), t: e.timestampMs ? relTime(e.timestampMs) : undefined });
-  }
-  return out;
 }
 
 // ── Card builders per tool ───────────────────────────────────────────────────
@@ -283,14 +261,20 @@ export function showCard(
  * `agents` (the roster) so a message from ANOTHER bot resolves that bot's orb +
  * name for the "Message from …" line; without it, only the thread bot is known. */
 export function threadCard(bot: Agent, entries: TranscriptEntry[], message = "", agents?: Agent[]) {
-  const bots = agents ? agents.filter((a) => !a.isGroup).map(toBot) : [toBot(bot)];
-  if (!bots.some((b) => b.id === bot.id)) bots.unshift(toBot(bot));
-  return glance(
-    "thread",
-    { data: { bots, thread: toThread(entries), me: "" }, args: { bot: bot.id, message } },
-    360,
-    "Grok Bot",
-  );
+  const roster = agents?.some(a => a.id === bot.id) ? agents : [bot, ...(agents ?? [])];
+  const bots = roster.filter(a => !a.isGroup).map(toBot);
+  const groups = roster.filter(a => a.isGroup).map(toGroup);
+  const thread = toThread(entries);
+  // Budget the actual escaped glance envelope, including inline script escaping.
+  let budget = 40_000;
+  let card;
+  do {
+    card = glance("thread", { data: { bots, groups, thread: boundThread(thread, budget), me: "" }, args: { [bot.isGroup ? "group" : "bot"]: bot.id, message } }, 360, "Grok Bot");
+    if (glanceChars(card) <= MAX_GLANCE_CHARS) return card;
+    budget = Math.floor(budget / 2);
+  } while (budget >= 1_000);
+  return card;
+
 }
 
 /**
@@ -327,7 +311,8 @@ export function groupThreadCard(
     {
       data: {
         bots: roster,
-        groups: [{ id: group.id, name: group.name, members: group.members, time: relTime(Date.now()), thread: toThread(entries) }],
+        groups: [{ ...toGroup(agents.find(a => a.id === group.id) ?? { ...group, isGroup: true }), members: group.members }],
+        thread: toThread(entries),
         me: "",
       },
       args: { group: group.id, groupName: group.name, members: group.members, message },
@@ -367,7 +352,7 @@ export function connectCard(account?: { name?: string; email?: string }) {
  * websockify WebSocket; the card opens it with its own bundled noVNC client
  * (RFB_B64). `stream.viewerUrl` is the pod's vnc.html, kept for reference
  * only (it is unusable in a browser: its assets 404 without the token header).
- * Clicking a live screen invokes the same hardened, view-only native window
+ * Clicking a live screen invokes the same hardened, interactive native window
  * used by `grokbot_open_computer_window`. Each bot has its own cloud computer,
  * so every bot's "screen" is its own persistent desktop. With no stream the
  * card shows its idle state and ships without the viewer bundle.
