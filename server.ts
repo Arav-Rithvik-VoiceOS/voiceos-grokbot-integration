@@ -13936,7 +13936,7 @@ class JSONSchemaGenerator {
               if (val === undefined) {
                 if (this.unrepresentable === "throw") {
                   throw new Error("Literal `undefined` cannot be represented in JSON Schema");
-                }
+                } else {}
               } else if (typeof val === "bigint") {
                 if (this.unrepresentable === "throw") {
                   throw new Error("BigInt literals cannot be represented in JSON Schema");
@@ -23043,6 +23043,17 @@ async function refreshBotChoices() {
 }
 server.server.setNotificationHandler(exports_external.object({ method: exports_external.literal(INTENT_REFRESH_NOTIFICATION_METHOD) }).passthrough(), async () => void refreshBotChoices());
 await server.connect(new StdioServerTransport);
+var exiting = false;
+function exitOnHostGone(reason) {
+  if (exiting)
+    return;
+  exiting = true;
+  log(`${reason}; exiting`);
+  process.exit(0);
+}
+process.stdin.once("end", () => exitOnHostGone("stdin ended"));
+process.stdin.once("close", () => exitOnHostGone("stdin closed"));
+server.server.onclose = () => exitOnHostGone("MCP transport closed");
 refreshBotChoices();
 log("server started, awaiting MCP requests on stdio");
 startAutomationWatch();
