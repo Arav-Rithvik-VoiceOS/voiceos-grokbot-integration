@@ -129,7 +129,7 @@ test("a live bot opens one native interactive computer window with plain JSON", 
     bot: "Pepper",
     live: true,
     viewOnly: false,
-    message: "Opened Pepper's computer in a interactive window.",
+    message: "Opened Pepper's computer in an interactive window.",
   });
   expect(r._voiceos_glance).toBeUndefined();
 });

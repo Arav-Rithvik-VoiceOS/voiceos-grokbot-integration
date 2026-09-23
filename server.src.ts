@@ -910,7 +910,7 @@ server.registerTool(
         bot: bot.name,
         live: true,
         viewOnly: false,
-        message: `Opened ${bot.name}'s computer in a interactive window.`,
+        message: `Opened ${bot.name}'s computer in an interactive window.`,
       });
     }),
 );
