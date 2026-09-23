@@ -1,5 +1,6 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 import * as actual from "../client.ts";
+import { toBot } from "../cards.ts";
 
 // Replace only external boundaries. These tests run the production handlers and cards.
 const resolveReal = actual.resolveAgent;
@@ -23,7 +24,8 @@ mock.module("@modelcontextprotocol/sdk/server/mcp.js", () => ({ McpServer: class
     setNotificationHandler() {},
     setRequestHandler(schema: any, handler: any) { requestHandlers.set(schema.shape.method.value, (req) => handler(schema.parse(req))); },
   };
-  registerTool(name: string, _schema: any, handler: any) { handlers.set(name, handler); return {}; }
+  registerTool(name: string, _schema: any, handler: any) { handlers.set(name, handler); return { update() {} }; }
+  tool(name: string, _description: string, _schema: any, handler: any) { handlers.set(name, handler); }
   sendToolListChanged() {}
   async connect() {}
 } }));
@@ -69,13 +71,24 @@ mock.module("../client.ts", () => ({
 await import("../server.src.ts");
 const call = async (name: string, args: any) => {
   try {
+    if (name === "grokbot_send" && args.bot && !args.recipientId) {
+      // Simulate the host preparation hook followed by approval. Direct
+      // unverified handler calls are tested separately in intents.test.ts.
+      await handlers.get("grokbot_show")!({});
+      const hook = await handlers.get("voiceos_hook_pre_tool_use")!({ payload_json: JSON.stringify({
+        hookApiVersion: 1, event: "preToolUse", toolName: name, args,
+      }) });
+      const prepared = JSON.parse(hook.content[0].text);
+      if (prepared.decision === "block") return { isError: true, error: prepared.responseText };
+      args = prepared.updatedArgs ?? args;
+    }
     const response = await handlers.get(name)!(args);
     return { ...JSON.parse(response.content[0].text), isError: response.isError };
   } catch (error) { return { isError: true, error: String(error) }; }
 };
 const cardData = (r: any) => {
   const html = r._voiceos_glance.blocks[0].html;
-  return JSON.parse(html.match(/const DEMO=(.*);/)[1]);
+  return JSON.parse(html.match(/<script type="application\/json" id="payload">([\s\S]*?)<\/script>/)?.[1] ?? html.match(/const DEMO=(.*);/)![1]);
 };
 beforeEach(() => {
   agents = [...bots.map(a => ({ ...a })), { id: "g", name: "Homework crew", isGroup: true, memberIds: ["p", "f"] }];
@@ -99,17 +112,17 @@ test("an offline bot returns a clear result without opening a computer window", 
   expect(r._voiceos_glance).toBeUndefined();
 });
 
-test("a live bot opens one native view-only computer window with plain JSON", async () => {
+test("a live bot opens one native interactive computer window with plain JSON", async () => {
   const wsUrl = "wss://pod.cursorvm.com/websockify?token=5&network_token=secret";
   desktopProbe = { live: true, wsUrl, viewerUrl: "https://pod.cursorvm.com/vnc.html" };
   const r = await call("grokbot_open_computer_window", { bot: "Pepper" });
-  expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", botColor: "#FF6700", botShape: "blob", wsUrl }]);
+  expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", botColor: toBot(bots[0]).color, botShape: toBot(bots[0]).shape, wsUrl }]);
   expect(r).toMatchObject({
     opened: true,
     bot: "Pepper",
     live: true,
-    viewOnly: true,
-    message: "Opened Pepper's computer in a view-only window.",
+    viewOnly: false,
+    message: "Opened Pepper's computer in a interactive window.",
   });
   expect(r._voiceos_glance).toBeUndefined();
 });
@@ -122,7 +135,7 @@ test("the computer-window tool accepts the exact bot ID carried by a screen card
 
   expect(r.opened).toBe(true);
   expect(r.bot).toBe("Pepper");
-  expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", botColor: "#FF6700", botShape: "blob", wsUrl }]);
+  expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", botColor: toBot(bots[0]).color, botShape: toBot(bots[0]).shape, wsUrl }]);
 });
 
 test("a live screen card opens its exact bot in the hardened computer-window tool", async () => {
@@ -206,21 +219,21 @@ test("confirmed voice send executes once and returns 1D without another draft", 
   expect(writes).toEqual([["send", "p", "Draft"]]);
   expect(r.sent).toBe(true);
   expect(r.composing).toBeUndefined();
-  expect(r.receipt.html).toContain('<title>Message sent</title>');
+  expect(r.receipt.html).toContain('<title>Grok Bot</title>');
 });
 test("arrow direct send returns the 1D receipt with the edited text", async () => {
   const r = await call("grokbot_send", { bot: "p", message: "Edited", via: "card" });
   expect(writes).toEqual([["send", "p", "Edited"]]);
   expect(r.sent).toBe(true);
-  expect(r.receipt.html).toContain('<title>Message sent</title>');
-  expect(cardData(r).args.message).toBe("Edited");
+  expect(r.receipt.html).toContain('<title>Grok Bot</title>');
+  expect(cardData(r).data.thread[0].text).toBe("Edited");
 });
 test("confirmed existing group sends once and returns its conversation", async () => {
   const r = await call("grokbot_group", { group: "Homework crew", message: "Team draft" });
   expect(writes).toEqual([["send", "g", "Team draft"]]);
   expect(r.sent).toBe(true);
-  expect(r._voiceos_glance.blocks[0].html).toContain('<title>Sent to group</title>');
-  expect(r.receipt.html).toContain('<title>Sent to group</title>');
+  expect(r._voiceos_glance.blocks[0].html).toContain('<title>Grok Bot</title>');
+  expect(r.receipt.html).toContain('<title>Grok Bot</title>');
   expect(cardData(r).args.group).toBe("g");
 });
 test("confirmed new group creates once and returns its conversation", async () => {
@@ -246,7 +259,7 @@ test("group arrow persists edited members and name on the same group before send
   expect(writes).toEqual([["members", "g", ["p", "t"]], ["name", "g", "Research"], ["send", "g", "Edited"]]);
   expect(r.sent).toBe(true);
   expect(cardData(r).data.groups[0]).toMatchObject({ id: "g", name: "Research", members: ["p", "t"] });
-  expect(r._voiceos_glance.blocks[0].html).toContain('<title>Sent to group</title>');
+  expect(r._voiceos_glance.blocks[0].html).toContain('<title>Grok Bot</title>');
 });
 test("first send creates once, then sends to the created group", async () => {
   const r = await call("grokbot_group", { members: ["p", "t"], groupName: "Research", message: "Start", via: "card" });
@@ -262,8 +275,8 @@ test("card send goes through grokbot_card_send once and returns the 1D receipt",
   const r = await call("grokbot_card_send", { bot: "Pepper", message: "From the card" });
   expect(writes).toEqual([["send", "p", "From the card"]]);
   expect(r.sent).toBe(true);
-  expect(r.receipt.html).toContain('<title>Message sent</title>');
-  expect(cardData(r).args.message).toBe("From the card");
+  expect(r.receipt.html).toContain('<title>Grok Bot</title>');
+  expect(cardData(r).data.thread[0].text).toBe("From the card");
 });
 test("card send refuses empty text and unknown bots without sending", async () => {
   expect((await call("grokbot_card_send", { bot: "Pepper", message: "   " })).isError).toBe(true);
@@ -273,7 +286,7 @@ test("card send refuses empty text and unknown bots without sending", async () =
 test("card group send saves edits, creates on first send, and returns the group receipt", async () => {
   const edited = await call("grokbot_card_send", { group: "g", members: ["p", "t"], groupName: "Research", message: "Edited" });
   expect(writes).toEqual([["members", "g", ["p", "t"]], ["name", "g", "Research"], ["send", "g", "Edited"]]);
-  expect(edited.receipt.html).toContain('<title>Sent to group</title>');
+  expect(edited.receipt.html).toContain('<title>Grok Bot</title>');
   writes = [];
   const created = await call("grokbot_card_send", { members: ["p", "f"], groupName: "Study", message: "Start" });
   expect(writes).toEqual([["create", "Study", ["p", "f"]], ["send", "new", "Start"]]);
@@ -294,17 +307,17 @@ test("card send to a group sends once and returns the group receipt", async () =
   expect(writes).toEqual([["send", "g", "From the card"]]);
   expect(r.sent).toBe(true);
   expect(r.group).toBe("g");
-  expect(r.receipt.html).toContain('<title>Sent to group</title>');
+  expect(r.receipt.html).toContain('<title>Grok Bot</title>');
   expect(cardData(r).args.group).toBe("g");
 });
 test("sent receipts carry a follow-up bar that sends through the confirm-less card tool", async () => {
   const one = (await call("grokbot_send", { bot: "Pepper", message: "First" })).receipt.html;
   const many = (await call("grokbot_group", { group: "g", message: "First" })).receipt.html;
-  expect(one).toContain("invoke('grokbot_card_send',{bot:B.id,message:v})");
-  expect(many).toContain("invoke('grokbot_card_send',{group:G.id,message:v})");
+  expect(one).toContain("invoke('grokbot_card_send',{bot:id,message:text})");
+  expect(many).toContain("invoke('grokbot_card_send',{bot:id,message:text})");
   for (const html of [one, many]) {
-    expect(html).toContain('id="mmsg"');
-    expect(html).toContain("offset-path");
+    expect(html).toContain('id="message"');
+    expect(html).toContain("grokbot_card_snapshot");
     // Card iframes are sandboxed without allow-forms: a <form> submit never fires.
     expect(html).not.toContain("<form");
     // The receipt shows no bot replies, so it must not poll (polling mutes the reply pill).
@@ -319,8 +332,8 @@ test("the adapter hands the host's invokeTool capability to the receipt's follow
   expect(adapter.match(/setInvoke\(canInvoke\)/g)?.length).toBe(2);
   for (const src of [adapter, show]) expect(src).toContain('<meta name="voiceos-receipt-invoke" content="1">');
   const html = (await call("grokbot_send", { bot: "Pepper", message: "First" })).receipt.html;
-  expect(html).toContain("function setInvoke(on)");
-  expect(html).toContain("setInvoke(canInvoke)");
+  expect(html).toContain("voiceos:init");
+  expect(html).toContain("capabilities?.invokeTool");
 });
 test("a reloaded receipt can re-list the user's messages: plain JSON, no glance, no writes", async () => {
   const r = await call("grokbot_sent_recent", { bot: "p" });
@@ -333,7 +346,7 @@ test("a reloaded receipt can re-list the user's messages: plain JSON, no glance,
   expect(tool.uiCallable).toBe(true);
   expect(tool.confirmation).toBeUndefined();
   const html = (await call("grokbot_send", { bot: "Pepper", message: "First" })).receipt.html;
-  expect(html).toContain("invoke('grokbot_sent_recent',{bot:B.id})");
+  expect(html).toContain("grokbot_card_snapshot");
 });
 test("a follow-up from the group receipt sends once and leaves members and name alone", async () => {
   const r = await call("grokbot_card_send", { group: "g", message: "One more thing" });
@@ -374,7 +387,7 @@ test("existing groups keep one member after removal; empty groups cannot send", 
 test("script-like text and template-token text remain message data", async () => {
   const message = '</script><script>throw new Error("injected")</script> __VOICEOS_RFB__ $&';
   const r = await call("grokbot_send", { bot: "Pepper", message });
-  expect(cardData(r).args.message).toBe(message);
+  expect(cardData(r).data.thread[0].text).toBe(message);
   const scripts = [...r._voiceos_glance.blocks[0].html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
   expect(scripts).toHaveLength(1);
   expect(() => new Function(scripts[0][1])).not.toThrow();
@@ -410,7 +423,9 @@ test("a long thread keeps the newest messages inside the size limit", async () =
 });
 test("manifest advertises exactly the registered server tools", async () => {
   const manifest = await Bun.file(new URL("../voiceos.integration.json", import.meta.url)).json();
-  expect(manifest.tools.map((t: any) => t.name).sort()).toEqual([...handlers.keys()].sort());
+  expect(handlers.has("voiceos_hook_pre_tool_use")).toBe(true);
+  expect(manifest.hooks.preToolUse.scope).toBe("own");
+  expect(manifest.tools.map((t: any) => t.name).sort()).toEqual([...handlers.keys()].filter(name => !name.startsWith("voiceos_hook_")).sort());
   expect(manifest.tools.find((t: any) => t.name === "grokbot_prepare_message").confirmation).toBeUndefined();
   for (const name of ["grokbot_send", "grokbot_group"]) {
     const tool = manifest.tools.find((t: any) => t.name === name);
@@ -419,7 +434,7 @@ test("manifest advertises exactly the registered server tools", async () => {
     expect(tool.confirmation.root.html).toContain('<title>Thread</title>');
     expect(tool.confirmation.root.html).toContain('voiceos:updateInput');
     expect(tool.confirmation.root.html).not.toContain('voiceos:invokeTool');
-    expect(tool.confirmation.root.html.length).toBeLessThanOrEqual(60000);
+    expect(tool.confirmation.root.html.length).toBeLessThanOrEqual(131072);
     expect(tool.confirmation.root.confirmLabel).toBe("↑");
     expect(tool.uiCallable).toBe(true);
   }

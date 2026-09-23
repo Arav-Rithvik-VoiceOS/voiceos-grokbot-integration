@@ -20,7 +20,8 @@ card** declared in the manifest, which the user can edit and approve.
   (name/description/inputSchema/confirmation). Every manifest tool must be
   registered in server.ts with the same name, and vice versa. Keep
   `runtime` exactly as generated — VoiceOS launches the server via run.sh.
-- `server.ts` — standard MCP stdio server (@modelcontextprotocol/sdk + zod).
+- `server.src.ts` — editable MCP stdio server (@modelcontextprotocol/sdk + zod).
+- `server.ts` — generated self-contained share bundle. Run `bun run build-publish`; never edit it directly.
 - `run.sh` — the launcher VoiceOS invokes; leave it alone.
 - `package.json` — add dependencies here, then `bun install`.
 - `icon.png` — written by the Stage-1 dump (`composio-tools.ts` fetches the

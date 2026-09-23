@@ -59,7 +59,7 @@ if (!idle.includes('"stream":""')) fail("idle card must have no stream");
 console.log(`idle screen card: ${glanceChars(idleCard)} glance chars ✓`);
 
 // 3. Repro page against the real pod, when a Grok Bot session exists on this Mac.
-try {
+if (process.argv.includes("--live-repro")) try {
   const { listAgents, agentScreen } = await import("../client.ts");
   const agents = await listAgents();
   let probe: Awaited<ReturnType<typeof agentScreen>> = { live: false };

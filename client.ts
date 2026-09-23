@@ -459,15 +459,15 @@ export interface Agent {
   name: string;
   description?: string;
   title?: string;
-  avatarDataUrl?: string;
-  avatarShape?: string;
-  avatarColor?: string;
+  avatarDataUrl?: string | null;
+  avatarShape?: string | null;
+  avatarColor?: string | null;
   isGroup?: boolean;
   memberIds?: string[];
   isRunning?: boolean;
   isRunningTurn?: boolean;
   isComposingMessage?: boolean;
-  awaitingUserResponse?: boolean;
+  awaitingUserResponse?: boolean | string | Record<string, unknown> | null;
   hasUnread?: boolean;
   unreadCount?: number;
   lastMessagePreview?: string;
@@ -485,9 +485,23 @@ export interface TranscriptEntry {
   toAgent?: { id?: string; name?: string };
   timestampMs?: number;
   requestId?: string;
+  images?: { url: string; alt?: string }[];
+  file_path?: string;
+  file_name?: string;
+  text?: string;
+  respondedValue?: string | null;
+  widgetSkipped?: boolean;
+  widgetDismissed?: boolean;
+  secretProvided?: boolean;
+  credentialResolution?: string;
+  formResolution?: string;
+  draftSent?: boolean;
+  draftDiscarded?: boolean;
 }
 
-export const listAgents = () => gateway<Agent[]>("listAgents", {});
+export async function listAgents() {
+  return gateway<Agent[]>("listAgents", {});
+}
 
 // ── Automations (Grok's name for scheduled tasks) ────────────────────────────
 /** One run of a scheduled task; `finishedAt` set means it completed. */
@@ -520,8 +534,26 @@ export interface AutomationEntry {
 /** Every scheduled task across all bots, each tagged with its agentId. */
 export const listAllAutomations = () => gateway<AutomationEntry[]>("listAllAutomations", {});
 
-export const sendPrompt = (agentId: string, prompt: string) =>
-  gateway<{ accepted?: boolean }>("sendPrompt", { agentId, prompt }, { timeoutMs: WRITE_TIMEOUT_MS });
+export const sendPrompt = (agentId: string, prompt: string, attachments: {
+  attachmentPaths?: string[]; attachmentNames?: string[]; clientNonce?: string;
+} = {}) =>
+  gateway<{ accepted?: boolean }>("sendPrompt", { agentId, prompt, ...attachments }, { timeoutMs: WRITE_TIMEOUT_MS });
+
+export const uploadAttachmentChunk = (args: {
+  agentId: string; uploadId: string; filename: string; offset: number;
+  totalSize: number; bytesBase64: string;
+}) => gateway<{ committedPath?: string }>("uploadAttachmentChunk", args, { timeoutMs: WRITE_TIMEOUT_MS });
+
+export interface TeachRecordingStatus {
+  state: "idle" | "recording" | "stopping";
+  agentId: string | null;
+  startedAtMs: number | null;
+  maxDurationMs: number;
+}
+export const ensureAgentComputer = (id: string) => gateway("ensureForeverBox", { id }, { timeoutMs: WRITE_TIMEOUT_MS });
+export const getTeachRecordingStatus = () => gateway<TeachRecordingStatus>("getTeachRecordingStatus");
+export const startTeachRecording = (agentId: string) => gateway<TeachRecordingStatus>("startTeachRecording", { agentId, entryPoint: "composer_menu" }, { timeoutMs: WRITE_TIMEOUT_MS });
+export const stopTeachRecording = (agentId: string, save: boolean) => gateway<TeachRecordingStatus>("stopTeachRecording", { agentId, save }, { timeoutMs: WRITE_TIMEOUT_MS });
 
 export const createAgent = (
   name: string,
@@ -567,8 +599,15 @@ export const renameGroup = (group: Agent, name: string) =>
     },
   }, { timeoutMs: WRITE_TIMEOUT_MS });
 
-export const transcriptTail = (id: string, limit = 8) =>
-  gateway<{ entries?: TranscriptEntry[]; nextBeforeSeq?: number }>("getAgentTranscriptTail", { id, limit });
+export const transcriptTail = (id: string, limit = 8, beforeSeq?: number) =>
+  gateway<{ entries?: TranscriptEntry[]; nextBeforeSeq?: number }>("getAgentTranscriptTail", { id, limit, ...(beforeSeq !== undefined ? { beforeSeq } : {}) });
+
+export const respondToWidget = (agentId: string, entryId: string, value: string) =>
+  gateway<{ accepted?: boolean } | null>("respondToWidget", { agentId, entryId, value }, { timeoutMs: WRITE_TIMEOUT_MS });
+export const dismissWidget = (agentId: string, entryId: string) =>
+  gateway<{ accepted?: boolean }>("dismissWidget", { agentId, entryId }, { timeoutMs: WRITE_TIMEOUT_MS });
+export const readAttachmentImage = (path: string) =>
+  gateway<{ dataUrl: string; width?: number; height?: number } | null>("readAttachmentImage", { path });
 
 // ── Reply detection (reply-ping) ─────────────────────────────────────────────
 //
@@ -589,6 +628,14 @@ export function entryText(e: TranscriptEntry): string {
   const m = e.message as { content?: unknown } | string | undefined;
   if (typeof m === "string") return m;
   if (m && typeof m.content === "string") return m.content;
+  if (m && typeof m === "object") {
+    const message = m as Record<string, any>;
+    if (message.type === "widget") return String(message.widget?.prompt ?? "Needs your answer.");
+    if (message.type === "attachment" || Array.isArray(message.images) && message.images.length) return "Shared an attachment.";
+    if (message.type === "secret-request") return String(message.secretRequest?.label ?? "Authentication required.");
+    if (message.type === "user-form") return String(message.formRequest?.title ?? "Needs your input.");
+    if (message.type) return "Needs your attention in Grok Bot.";
+  }
   return "";
 }
 
@@ -672,11 +719,13 @@ export async function resolveMembers(tokens: string[]): Promise<Agent[]> {
   );
 }
 
-/** Open the bot's larger view-only desktop in the hardened native host. */
+/** Open the bot's larger interactive desktop in the hardened native host. */
 export async function openComputerWindow(input: {
   botId: string;
   botName: string;
   wsUrl: string;
+  botColor?: string;
+  botShape?: string;
 }): Promise<{ reused: boolean }> {
   try {
     return await launchComputerWindow(input);
