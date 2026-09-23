@@ -920,6 +920,23 @@ server.server.setNotificationHandler(
 );
 
 await server.connect(new StdioServerTransport());
+
+// Exit when the host goes away. The background loops below (automation watch,
+// thread watches) keep the event loop alive forever, so without this every
+// VoiceOS quit left an orphaned server (PPID 1) polling the gateway. The SDK's
+// StdioServerTransport never listens for stdin EOF — its onclose fires only on
+// an explicit close() — so watch stdin directly, plus onclose for that case.
+let exiting = false;
+function exitOnHostGone(reason: string): void {
+  if (exiting) return;
+  exiting = true;
+  log(`${reason}; exiting`);
+  process.exit(0);
+}
+process.stdin.once("end", () => exitOnHostGone("stdin ended"));
+process.stdin.once("close", () => exitOnHostGone("stdin closed"));
+server.server.onclose = () => exitOnHostGone("MCP transport closed");
+
 void refreshBotChoices();
 log("server started, awaiting MCP requests on stdio");
 
