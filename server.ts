@@ -22176,6 +22176,21 @@ async function openComputerWindow2(input) {
     throw new IntegrationError("upstream", "The secure computer viewer could not open on this Mac. Close any old viewer window and try again.");
   }
 }
+function openBotChat(agentId) {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(agentId)) {
+    return Promise.reject(new IntegrationError("not_found", "That bot can't be opened."));
+  }
+  const url = `grokbot://app/v1/agent?id=${agentId}`;
+  return new Promise((resolve, reject) => {
+    execFile("/usr/bin/open", [url], (error2) => {
+      if (error2) {
+        log("could not open bot chat:", error2);
+        reject(new IntegrationError("upstream", "Couldn't open Grok Bot."));
+      } else
+        resolve();
+    });
+  });
+}
 function openGrokBotApp() {
   try {
     execFile("/usr/bin/open", ["-a", "Grok Bot"], () => {});
@@ -22536,7 +22551,15 @@ async function triggerReminder(message, opts = {}) {
   const text = message.trim().slice(0, 2000);
   if (!text)
     return null;
-  const params = opts.speak === false ? { message: text, speak: false } : { message: text };
+  const params = {
+    message: text
+  };
+  if (opts.speak === false)
+    params.speak = false;
+  if (opts.actions?.length)
+    params.actions = opts.actions;
+  if (opts.data)
+    params.data = opts.data;
   try {
     const res = await server.server.request({ method: "voiceos/reminders/trigger", params }, ReminderResult);
     return res.notificationId;
@@ -22545,6 +22568,33 @@ async function triggerReminder(message, opts = {}) {
     return null;
   }
 }
+var REMINDER_ACTION_METHOD = "voiceos/reminders/action";
+var ReminderActionRequest = exports_external.object({
+  method: exports_external.literal(REMINDER_ACTION_METHOD),
+  params: exports_external.object({
+    notificationId: exports_external.string().min(1).max(128),
+    actionId: exports_external.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+    data: exports_external.record(exports_external.unknown()).optional()
+  })
+});
+var REPLY_BUTTONS = [
+  { id: "open_chat", label: "Open" },
+  { id: "close", label: "Close" }
+];
+var REMINDER_ACTIONS = {
+  async open_chat(data) {
+    const botId = typeof data?.botId === "string" ? data.botId : "";
+    await openBotChat(botId);
+  },
+  async close() {}
+};
+server.server.setRequestHandler(ReminderActionRequest, async ({ params }) => {
+  const run = REMINDER_ACTIONS[params.actionId];
+  if (!run)
+    throw new Error("This button is no longer available.");
+  await run(params.data);
+  return { ok: true };
+});
 var POLL_MS = 5000;
 var MAX_WATCH_MS = 6 * 60 * 60000;
 var IDLE_STARTUP_MS = 3 * 60000;
@@ -22601,9 +22651,12 @@ function watchThreadThenNotify(bot, seen, ourText) {
               return;
             continue;
           }
-          const summary = summarize(entryText(replies[replies.length - 1]));
-          const msg = me?.awaitingUserResponse ? `${bot.name} needs an answer: ${summary}` : `${bot.name}: ${summary}`;
-          await triggerReminder(msg, { speak: true });
+          await triggerReminder(`${bot.name} replied.`, {
+            speak: false,
+            actions: REPLY_BUTTONS,
+            data: { botId: bot.id }
+          });
+          return;
         }
         if (sawActivity && !busy && replies.length === 0)
           return;
@@ -22660,7 +22713,7 @@ function startAutomationWatch() {
             const bot = nameById.get(e.agentId) ?? "A bot";
             const text = await automationResultText(e.agentId, run);
             const body = text ? `${bot} · ${e.automation.name}: ${summarize(text)}` : `${bot} · ${e.automation.name} ran.`;
-            await triggerReminder(body, { speak: true });
+            await triggerReminder(body, { speak: false });
           }
         }
         baselined = true;

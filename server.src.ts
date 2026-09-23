@@ -29,6 +29,7 @@ import {
   log,
   openComputerWindow,
   openGrokBotApp,
+  openBotChat,
   resolveAgent,
   resolveMembers,
   sendPrompt,
@@ -57,11 +58,21 @@ function result(payload: Record<string, unknown>, glance?: Record<string, unknow
 // reminder failure must never make the send look failed.
 const ReminderResult = z.object({ notificationId: z.string().min(1) });
 
-async function triggerReminder(message: string, opts: { speak?: boolean } = {}): Promise<string | null> {
+/** A reminder button: `id` must match a key in REMINDER_ACTIONS below. */
+type ReminderButton = { id: string; label: string };
+
+async function triggerReminder(
+  message: string,
+  opts: { speak?: boolean; actions?: ReminderButton[]; data?: Record<string, unknown> } = {},
+): Promise<string | null> {
   const text = message.trim().slice(0, 2000);
   if (!text) return null;
-  const params: { message: string; speak?: boolean } =
-    opts.speak === false ? { message: text, speak: false } : { message: text };
+  const params: { message: string; speak?: boolean; actions?: ReminderButton[]; data?: Record<string, unknown> } = {
+    message: text,
+  };
+  if (opts.speak === false) params.speak = false;
+  if (opts.actions?.length) params.actions = opts.actions;
+  if (opts.data) params.data = opts.data;
   try {
     const res = await server.server.request({ method: "voiceos/reminders/trigger", params }, ReminderResult);
     return res.notificationId;
@@ -70,6 +81,47 @@ async function triggerReminder(message: string, opts: { speak?: boolean } = {}):
     return null;
   }
 }
+
+// ── Reminder buttons ──────────────────────────────────────────────────────────
+//
+// A reminder can carry up to 3 buttons. On a click the host sends us the
+// reverse request `voiceos/reminders/action` { notificationId, actionId, data }
+// (decoded from the shipped 0.2.41 app). We answer { ok: true } once the effect
+// is done — the host then dismisses the card; a throw keeps the card up with an
+// error. A button cannot return a card: the only reply the host accepts is
+// { ok: true }. Handlers are a fixed map; incoming ids are never evaluated.
+const REMINDER_ACTION_METHOD = "voiceos/reminders/action";
+const ReminderActionRequest = z.object({
+  method: z.literal(REMINDER_ACTION_METHOD),
+  params: z.object({
+    notificationId: z.string().min(1).max(128),
+    actionId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+    data: z.record(z.unknown()).optional(),
+  }),
+});
+
+/** The two buttons on a "<bot> replied." pill. */
+const REPLY_BUTTONS: ReminderButton[] = [
+  { id: "open_chat", label: "Open" },
+  { id: "close", label: "Close" },
+];
+
+const REMINDER_ACTIONS: Record<string, (data: Record<string, unknown> | undefined) => Promise<void>> = {
+  // Open this bot's chat in the Grok Bot app.
+  async open_chat(data) {
+    const botId = typeof data?.botId === "string" ? data.botId : "";
+    await openBotChat(botId);
+  },
+  // Nothing to do: answering ok is what makes the host dismiss the card.
+  async close() {},
+};
+
+server.server.setRequestHandler(ReminderActionRequest, async ({ params }) => {
+  const run = REMINDER_ACTIONS[params.actionId];
+  if (!run) throw new Error("This button is no longer available.");
+  await run(params.data);
+  return { ok: true as const };
+});
 
 // Cadence + limits for the thread watch. Jonah confirmed a background poll may
 // run for days; a normal reply/turn is far shorter, so MAX_WATCH_MS is only a
@@ -95,9 +147,9 @@ const summarize = (text: string, max = 140): string => {
 };
 
 /**
- * Fire-and-forget: after a send, watch THIS bot's thread and ping the notch on
- * every reply it posts — the "on it…" line and the final answer both — until the
- * bot goes idle (its turn ends). We only ever watch a bot the user just messaged
+ * Fire-and-forget: after a send, watch THIS bot's thread and ping the notch ONCE
+ * ("<bot> replied.") on its first reply, then stop; also stop when the bot goes
+ * idle (its turn ends). We only ever watch a bot the user just messaged
  * through VoiceOS, and we stop the instant it's done, so an idle bot is never
  * polled. `seen` is the transcript baseline captured BEFORE the send, and
  * `ourText` is exactly what we sent — the one human turn we own. Any OTHER human
@@ -152,8 +204,10 @@ function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, o
 
         const replies = fresh.filter(isBotReply);
 
-        // Ping on new replies. If several land in one tick (a chatty burst),
-        // ping only the newest so one turn can't fire a stack of pills at once.
+        // ONE silent pill per send: "<bot> replied." with Open / Close. It never
+        // quotes the reply, and once it's up we stop watching, so a bot that
+        // posts three messages still gives one pill. The next VoiceOS send
+        // starts a new watch, which can ping again.
         if (replies.length) {
           sawActivity = true;
           // The screen card is on screen and shows this reply itself (its message
@@ -162,11 +216,12 @@ function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, o
             if (!busy) return;
             continue;
           }
-          const summary = summarize(entryText(replies[replies.length - 1]));
-          const msg = me?.awaitingUserResponse
-            ? `${bot.name} needs an answer: ${summary}`
-            : `${bot.name}: ${summary}`;
-          await triggerReminder(msg, { speak: true });
+          await triggerReminder(`${bot.name} replied.`, {
+            speak: false,
+            actions: REPLY_BUTTONS,
+            data: { botId: bot.id },
+          });
+          return;
         }
 
         // Turn is over: it engaged, it's idle, and nothing fresh is left.
@@ -255,7 +310,7 @@ function startAutomationWatch(): void {
             const body = text
               ? `${bot} · ${e.automation.name}: ${summarize(text)}`
               : `${bot} · ${e.automation.name} ran.`;
-            await triggerReminder(body, { speak: true });
+            await triggerReminder(body, { speak: false });
           }
         }
         baselined = true;

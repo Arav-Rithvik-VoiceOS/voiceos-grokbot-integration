@@ -4,6 +4,8 @@ import * as actual from "../client.ts";
 // Replace only external boundaries. These tests run the production handlers and cards.
 const resolveReal = actual.resolveAgent;
 const handlers = new Map<string, (args: any) => Promise<any>>();
+const requestHandlers = new Map<string, (req: any) => Promise<any>>();
+let openedChats: string[] = [];
 const bots: actual.Agent[] = [
   { id: "p", name: "Pepper", avatarColor: "orange" },
   { id: "f", name: "Friday", avatarColor: "green" },
@@ -16,7 +18,11 @@ let tail: actual.TranscriptEntry[] = EARLIER;
 let desktopProbe: Awaited<ReturnType<typeof actual.agentScreen>>;
 let computerWindows: Array<{ botId: string; botName: string; wsUrl: string }>;
 mock.module("@modelcontextprotocol/sdk/server/mcp.js", () => ({ McpServer: class {
-  server = { request: async () => ({ notificationId: "test" }), setNotificationHandler() {} };
+  server = {
+    request: async () => ({ notificationId: "test" }),
+    setNotificationHandler() {},
+    setRequestHandler(schema: any, handler: any) { requestHandlers.set(schema.shape.method.value, (req) => handler(schema.parse(req))); },
+  };
   registerTool(name: string, _schema: any, handler: any) { handlers.set(name, handler); return {}; }
   sendToolListChanged() {}
   async connect() {}
@@ -35,6 +41,7 @@ mock.module("../client.ts", () => ({
   resolveAgent: async (name: string, list = agents) => resolveReal(name, list),
   transcriptTail: async () => ({ entries: tail }),
   agentScreen: async () => desktopProbe,
+  openBotChat: async (id: string) => { openedChats.push(id); },
   openComputerWindow: async (input: { botId: string; botName: string; wsUrl: string }) => {
     computerWindows.push(input);
     return { reused: false };
@@ -77,6 +84,7 @@ beforeEach(() => {
   tail = EARLIER;
   desktopProbe = { live: false, boxState: "absent" };
   computerWindows = [];
+  openedChats = [];
 });
 
 test("an offline bot returns a clear result without opening a computer window", async () => {
@@ -422,4 +430,21 @@ test("manifest advertises exactly the registered server tools", async () => {
   expect(cardSend.confirmation).toBeUndefined();
   expect(cardSend.inputSchema.required).toEqual(["message"]);
   expect(Object.keys(cardSend.inputSchema.properties).sort()).toEqual(["bot", "group", "groupName", "members", "message"]);
+});
+
+const clickReminder = (actionId: string, data?: Record<string, unknown>) =>
+  requestHandlers.get("voiceos/reminders/action")!({
+    method: "voiceos/reminders/action",
+    params: { notificationId: "n1", actionId, ...(data ? { data } : {}) },
+  });
+
+test("reminder Open opens that bot's chat and Close just dismisses", async () => {
+  expect(await clickReminder("open_chat", { botId: "p" })).toEqual({ ok: true });
+  expect(openedChats).toEqual(["p"]);
+  expect(await clickReminder("close")).toEqual({ ok: true });
+  expect(openedChats).toEqual(["p"]);
+});
+
+test("an unknown reminder button fails instead of claiming success", async () => {
+  await expect(clickReminder("delete_all")).rejects.toThrow("no longer available");
 });

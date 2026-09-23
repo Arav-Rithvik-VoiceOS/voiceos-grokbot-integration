@@ -688,6 +688,27 @@ export async function openComputerWindow(input: {
   }
 }
 
+/**
+ * Open one bot's chat in the Grok Bot app via its deep link
+ * (grokbot://app/v1/agent?id=…). The app's parser rejects anything outside
+ * [A-Za-z0-9_-]{1,128}, so we check the id first. Resolves once `open` exits
+ * cleanly; rejects if it didn't, so a reminder button can show a real error.
+ */
+export function openBotChat(agentId: string): Promise<void> {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(agentId)) {
+    return Promise.reject(new IntegrationError("not_found", "That bot can't be opened."));
+  }
+  const url = `grokbot://app/v1/agent?id=${agentId}`;
+  return new Promise((resolve, reject) => {
+    execFile("/usr/bin/open", [url], (error) => {
+      if (error) {
+        log("could not open bot chat:", error);
+        reject(new IntegrationError("upstream", "Couldn't open Grok Bot."));
+      } else resolve();
+    });
+  });
+}
+
 /** Launch the Grok Bot app (used on the setup / not-connected path). */
 export function openGrokBotApp(): void {
   try {
