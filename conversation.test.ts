@@ -14,6 +14,7 @@ import {
   performConversationAction,
 } from "./conversationService.ts";
 import { threadCard, showCard, glanceChars } from "./cards.ts";
+import { LIVE_CHAT_JS } from "./assets.generated.ts";
 import type { TranscriptEntry } from "./client.ts";
 
 const question: TranscriptEntry = {
@@ -345,9 +346,12 @@ describe("card responses", () => {
   });
 });
 
-test("live conversation has no manual reload control", () => {
+test("live conversation refreshes itself: no manual reload control", () => {
   const html = threadCard({ id: "a", name: "Picasso" }, [])._voiceos_glance
     .blocks[0].html;
+  // The live chat rides inside the thread card's own script and polls
+  // grokbot_card_snapshot; the handoff UI gains no reload button.
+  expect(html).toContain(LIVE_CHAT_JS);
   expect(html).not.toContain("data-refresh");
   expect(html).not.toContain("Refresh manually");
 });

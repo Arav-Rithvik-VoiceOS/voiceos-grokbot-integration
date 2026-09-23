@@ -1,0 +1,51 @@
+/* ComposerKit: + menu, attachment chips, Teach a task panel. Built from the handoff's own tokens and shapes. */
+:root{--ck-pop:#262628;--ck-red:var(--bad)}
+html[data-theme=light]{--ck-pop:#fff;--ck-red:#d93636}
+.ck-hide{display:none!important}
+.compose button.plus{transition:background .12s,color .12s,transform .18s cubic-bezier(.2,.8,.2,1),opacity .15s}
+.compose button.plus:hover{background:var(--fill-3);color:var(--ink-1)}
+.compose button.plus[aria-expanded=true]{background:var(--fill-3);color:var(--ink-1);transform:rotate(45deg)}
+.compose button.plus[disabled]{opacity:.35;cursor:default}
+.compose button.plus:focus-visible,.ck-tray button:focus-visible,.ck-b:focus-visible{outline:2px solid rgba(255,138,0,.6);outline-offset:1px}
+.ck-menu{position:fixed;z-index:50;min-width:164px;padding:4px;display:flex;flex-direction:column;gap:1px;background:var(--ck-pop);border:1px solid var(--line);border-radius:14px;box-shadow:0 10px 28px rgba(0,0,0,.42);transform-origin:14px 100%;animation:ck-in .14s cubic-bezier(.2,.8,.2,1) both}
+html[data-theme=light] .ck-menu{box-shadow:0 10px 28px rgba(0,0,0,.14)}
+.ck-menu[hidden]{display:none}
+.ck-menu button{display:flex;align-items:center;gap:9px;height:30px;padding:0 12px 0 9px;border-radius:10px;font-size:13px;font-weight:500;color:var(--ink-1);white-space:nowrap;text-align:left;outline:none}
+.ck-menu button:hover,.ck-menu button:focus-visible{background:var(--fill-2)}
+.ck-menu button[disabled]{opacity:.4;cursor:default}
+.ck-menu svg{width:15px;height:15px;flex:none;color:var(--ink-2)}
+.ck-menu .ck-r,.ck-tl .ck-r{color:var(--ck-red)}
+@keyframes ck-in{from{opacity:0;transform:translateY(4px) scale(.97)}to{opacity:1;transform:none}}
+.ck-tray{display:flex;flex-wrap:wrap;gap:5px;padding:4px 2px 0;max-height:52px;overflow-y:auto}
+.ck-tray:empty{display:none}
+.ck-file{gap:4px;max-width:100%;padding-right:2px;color:var(--ink-1)}
+.ck-file>svg{width:11px;height:11px;flex:none;color:var(--ink-3)}
+.ck-file.is-sending{opacity:.6}
+.ck-nm{overflow:hidden;text-overflow:ellipsis;max-width:150px}
+.ck-sz{color:var(--ink-3)}
+.ck-x{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;flex:none;color:var(--ink-3);transition:background .12s,color .12s}
+.ck-x:hover{background:var(--fill-3);color:var(--ink-1)}
+.ck-x[disabled]{opacity:.4;cursor:default;background:none}
+.ck-chk{color:var(--ink-1);cursor:pointer}.ck-chk:hover{background:var(--fill-3)}
+.ck-teach{display:flex;flex-direction:column;gap:8px;padding:10px 10px 9px 12px;background:var(--fill-1);border:1px solid var(--line);border-radius:18px;outline:none;animation:in .22s cubic-bezier(.2,.8,.2,1) both}
+.ck-teach.on{border-color:rgba(255,93,93,.32)}
+.ck-tl{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;line-height:1.38;color:var(--ink-2);text-wrap:pretty}
+.ck-tl>svg{width:15px;height:15px;flex:none;margin-top:1px}
+.ck-tt{flex:1;min-width:0;color:var(--ink-1);font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ck-tm{color:var(--ink-3);font-size:11.5px;font-variant-numeric:tabular-nums;flex:none;padding-top:1px}
+.ck-dot{width:8px;height:8px;margin:5px 1px 0 3px;border-radius:50%;background:var(--bad);flex:none;animation:ck-rec 1.6s ease-out infinite}
+@keyframes ck-rec{0%{box-shadow:0 0 0 0 rgba(255,93,93,.55)}100%{box-shadow:0 0 0 6px rgba(255,93,93,0)}}
+.ck-st{display:flex;align-items:center;gap:6px;font-size:11.5px;line-height:1.35;color:var(--ink-3)}
+.ck-st:empty{display:none}
+.ck-st .ty{padding:0;flex:none}.ck-st .ty i{width:4px;height:4px}
+.ck-er{color:var(--ck-red)}
+.ck-ta{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:6px}
+.ck-b{height:28px;padding:0 11px;border-radius:14px;font-size:12.5px;font-weight:600;background:var(--fill-2);color:var(--ink-1);flex:none;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;transition:background .12s,color .12s,opacity .15s}
+.ck-b:hover{background:var(--fill-3)}
+.ck-b.q{background:none;color:var(--ink-2)}.ck-b.q:hover{background:var(--fill-1);color:var(--ink-1)}
+.ck-b.rm:hover{background:rgba(255,93,93,.14);color:var(--ck-red)}
+.ck-b.rec{background:rgba(255,93,93,.15);color:var(--ck-red)}.ck-b.rec:hover{background:rgba(255,93,93,.24)}
+.ck-b.rec::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.ck-b.pri{background:var(--ink-1);color:#0c0c0d}.ck-b.pri:hover{background:var(--ink-1);opacity:.88}
+html[data-theme=light] .ck-b.pri{color:#fff}
+.ck-b[disabled]{opacity:.4;cursor:default}

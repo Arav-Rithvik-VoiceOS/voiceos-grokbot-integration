@@ -38,12 +38,12 @@ import {
   agentScreen,
 } from "./client.ts";
 import { recordCardPoll, cardCovers } from "./cardWatch.ts";
-import { connectCard, screenCard, showCard, threadCard, sentCard, sentGroupCard, toBot, toGroup, toThread, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
+import { connectCard, screenCard, showCard, threadCard, groupThreadCard, sentCard, sentGroupCard, toBot, toGroup, toThread, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
 import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 import { conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
 import { ComposerFiles, teachTask, type ComposerArgs, type TeachAction } from "./composerService.ts";
-import { needsAttention } from "./conversation.ts";
+import { needsAttention, toCardThread, type CardItem } from "./conversation.ts";
 import { IntentRoster, resolveApprovedRecipient, registerIntentSupport } from "./intents.ts";
 import { INTENT_SLOT_VALUES_META_KEY } from "./intentSdk.generated.js";
 
@@ -394,6 +394,15 @@ function statusWord(a: Agent): string {
   return "idle";
 }
 
+/** The live conversation card for one transcript page: a group opens in the
+ * thread card's existing-group mode, a bot in its 1:1 mode. */
+function conversationCard(bot: Agent, agents: Agent[], tail: { entries?: TranscriptEntry[]; nextBeforeSeq?: number }) {
+  const entries = tail.entries ?? [];
+  return bot.isGroup
+    ? groupThreadCard(agents, { id: bot.id, name: bot.name, members: bot.memberIds ?? [] }, entries, "", tail.nextBeforeSeq)
+    : threadCard(bot, entries, "", agents, tail.nextBeforeSeq);
+}
+
 // ── READ: grokbot_show ───────────────────────────────────────────────────────
 const showTool = server.registerTool(
   "grokbot_show",
@@ -413,29 +422,37 @@ const showTool = server.registerTool(
   async (args: { bot?: string }) =>
     handle("grokbot_show", async () => {
       const agents = await listAgents();
-      // Only infer attention for older gateways that omit the authoritative flag.
+      const focus = args.bot?.trim();
+      // One short transcript page per bot and group. On the roster it fills the
+      // show card's chat panes, so a tapped bot opens populated (showCard drops
+      // these if they would push the card over the glance cap). On older
+      // gateways that omit the authoritative awaitingUserResponse flag, the same
+      // page infers it from a pending request or question.
+      const recent: Record<string, CardItem[]> = {};
+      const cursors: Record<string, number | undefined> = {};
       await Promise.all(
-        agents.filter(b => b.awaitingUserResponse === undefined).map(async (b) => {
+        agents.filter((b) => !focus || b.awaitingUserResponse === undefined).map(async (b) => {
           try {
             const tail = await transcriptTail(b.id, 6);
-            const thread = toThread(tail.entries ?? []);
-            if (needsAttention(thread)) b.awaitingUserResponse = true;
+            const thread = toCardThread(tail.entries ?? []);
+            if (b.awaitingUserResponse === undefined && needsAttention(thread)) b.awaitingUserResponse = true;
+            recent[b.id] = thread;
+            cursors[b.id] = tail.nextBeforeSeq;
           } catch {
             // One unreachable transcript must not hide the entire roster.
           }
         }),
       );
-      // Histories are fetched on opening a conversation, keeping a large roster
-      // below the glance cap. Pending requests still affect each roster status.
-      const card = showCard(agents);
-      if (args.bot?.trim()) {
-        // Open the requested conversation directly.
-        const bot = await resolveAgent(args.bot.trim(), agents);
+      if (focus) {
+        // Open the requested conversation directly, in the thread card.
+        const bot = await resolveAgent(focus, agents);
+        const tail = await transcriptTail(bot.id, 30);
         return result(
           { focus: bot.name, status: statusWord(bot), task: (bot.lastMessagePreview ?? "").trim() || null, message: `${bot.name} is ${statusWord(bot)}.` },
-          threadCard(bot, (await transcriptTail(bot.id, 30)).entries ?? [], "", agents),
+          conversationCard(bot, agents, tail),
         );
       }
+      const card = showCard(agents, undefined, recent, cursors);
       const bots = agents.filter((a) => !a.isGroup);
       const groups = agents.filter((a) => a.isGroup);
       return result(
@@ -536,7 +553,7 @@ const threadTool = server.registerTool(
           truncated,
           message: thread.length ? `Latest from ${bot.name}.` : `No recent messages from ${bot.name}.`,
         },
-        args.show ? threadCard(bot, entries, "", agents) : undefined,
+        args.show ? conversationCard(bot, agents, tail) : undefined,
       );
     }),
 );
@@ -573,7 +590,9 @@ server.registerTool("grokbot_prepare_message", {
   }
   const threads: Record<string, ReturnType<typeof toThread>> = {};
   if (target) {
-    try { threads[target.id] = toThread((await transcriptTail(target.id, 6)).entries ?? []); }
+    // Bounded: the model copies confirmationContext into the send call verbatim,
+    // and rendered markdown (tables, highlighted code) is far larger than its text.
+    try { threads[target.id] = toThread((await transcriptTail(target.id, 6)).entries ?? [], 12_000); }
     catch { /* Registration can precede the first transcript. */ }
   }
   const confirmationContext = JSON.stringify({ bots: agents.filter(a => !a.isGroup).map(toBot), groups: agents.filter(a => a.isGroup).map(toGroup), threads });

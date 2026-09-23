@@ -14,7 +14,6 @@ import {
   stopTeachRecording,
   agentScreen,
 } from "./client.ts";
-import { RFB_B64 } from "./assets.generated.ts";
 
 const runFile = promisify(execFile);
 // The native picker is opened only by the user's Attach files click. File paths
@@ -402,12 +401,10 @@ export async function teachTask(
       throw Error(
         "The bot’s computer is starting. Try Teach a task again in a moment.",
       );
-    return {
-      ok: true,
-      recording: status,
-      wsUrl: screen.wsUrl,
-      viewer: RFB_B64,
-    };
+    // Ready only: the card hands the user the native interactive computer
+    // window (grokbot_open_computer_window), so no socket URL or in-card
+    // viewer bundle rides in this result.
+    return { ok: true, recording: status };
   }
   if (action === "start") {
     const recording =

@@ -8,6 +8,7 @@ import { intentErrors, resolveIntentSlots, matchIntentTemplate, INTENT_SLOT_VALU
 import type { PreToolUseHookInput } from "./sdk/hooks.ts";
 import { intents, IntentRoster, botIntentNames, resolveApprovedRecipient, registerIntentSupport } from "./intents.ts";
 import type { Agent } from "./client.ts";
+import { GROK_COLOR_HEX } from "./cards.ts";
 import manifest from "./voiceos.integration.json";
 
 const agents: Agent[] = [
@@ -69,7 +70,8 @@ test("preparation keeps the enum name, supplies native identity, and leaves appr
   expect(prepared.updatedArgs).toMatchObject({ bot: "Terry", recipientId: "terry", message: "Check the draft" });
   const context = JSON.parse(prepared.updatedArgs!.confirmationContext as string);
   expect(context.bots).toHaveLength(1);
-  expect(context.bots[0]).toMatchObject({ id: "terry", name: "Terry", color: "#E02A88", shape: "pebble" });
+  // The card's own roster shape (cards.ts toBot), in Grok's palette.
+  expect(context.bots[0]).toMatchObject({ id: "terry", name: "Terry", color: GROK_COLOR_HEX.magenta, shape: "pebble" });
   expect(roster.beforeTool(hook({ bot: "Missing" })).decision).toBe("block");
   expect(roster.beforeTool(hook({ bot: "Blog Generation" })).decision).toBe("block");
   expect(roster.beforeTool({ ...hook({}), toolName: "grokbot_show" })).toEqual({});

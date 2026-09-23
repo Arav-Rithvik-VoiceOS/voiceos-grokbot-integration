@@ -8,7 +8,7 @@ import {
   type TranscriptEntry,
 } from "./client.ts";
 import {
-  toThread,
+  toCardThread,
   entryMedia,
   choiceResponse,
   entryState,
@@ -106,7 +106,8 @@ export async function conversationSnapshot(bot?: string, beforeSeq?: number, tra
     throw new Error("This bot is no longer available.");
   return {
     agents,
-    thread: boundThread(toThread(tail.entries ?? [])),
+    // CardItems (no media paths, no `t`): versions match conversationEntry's.
+    thread: boundThread(toCardThread(tail.entries ?? [])),
     nextBeforeSeq: tail.nextBeforeSeq,
   };
 }
@@ -124,7 +125,7 @@ export async function conversationEntry(
   if (!(await transport.listAgents()).some((a) => a.id === bot))
     throw new Error("This bot is no longer available.");
   const entry = await findEntry(bot, entryId, transport);
-  const item = toThread([entry])[0];
+  const item = toCardThread([entry])[0];
   if (!item || item.id !== entryId)
     throw new Error("This message is no longer available.");
   const serialized = serializeThreadItem(item),

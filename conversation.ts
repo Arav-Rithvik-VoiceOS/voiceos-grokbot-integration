@@ -138,7 +138,61 @@ export function toThread(entries: TranscriptEntry[]): ThreadItem[] {
   return items;
 }
 
-export function needsAttention(items: ThreadItem[]): boolean {
+/** What a card receives for one message. Media keep only their kind, name and
+ * position in entryMedia(entry) — a local path or cloud URL never reaches the
+ * iframe; the card asks grokbot_card_image for an image by (entryId, index). */
+export interface CardMedia {
+  kind: Media["kind"];
+  name: string;
+  index: number;
+}
+export interface CardItem {
+  id: string;
+  from: "me" | "bot";
+  bot?: string;
+  sender?: string;
+  text?: string;
+  html?: string;
+  sys?: string;
+  timestampMs?: number;
+  media?: CardMedia[];
+  choice?: Choice;
+  request?: RequestCard;
+  state?: EntryState;
+  answer?: string;
+  deferred?: { version: string; attention: boolean };
+}
+
+/** ThreadItem → CardItem. Idempotent (a CardItem maps to an identical CardItem)
+ * with a fixed key order, so every serialization — and every version hash —
+ * of the same message is byte-identical wherever it is computed. */
+export function toCardItem(item: ThreadItem | CardItem): CardItem {
+  const out: CardItem = { id: item.id, from: item.from };
+  if (item.bot) out.bot = item.bot;
+  if (item.sender) out.sender = item.sender;
+  if (item.text) out.text = item.text;
+  if (item.html) out.html = item.html;
+  if (item.sys !== undefined) out.sys = item.sys;
+  if (typeof item.timestampMs === "number") out.timestampMs = item.timestampMs;
+  if (item.media?.length)
+    out.media = item.media.map((m, i) => ({
+      kind: m.kind,
+      name: m.name,
+      index: typeof (m as CardMedia).index === "number" ? (m as CardMedia).index : i,
+    }));
+  if (item.choice) out.choice = item.choice;
+  if (item.request) out.request = item.request;
+  if (item.state) out.state = item.state;
+  if (item.answer) out.answer = item.answer;
+  if (item.deferred)
+    out.deferred = { version: item.deferred.version, attention: item.deferred.attention };
+  return out;
+}
+
+export const toCardThread = (entries: TranscriptEntry[]): CardItem[] =>
+  toThread(entries).map(toCardItem);
+
+export function needsAttention(items: (ThreadItem | CardItem)[]): boolean {
   return items.some(
     (i) =>
       i.deferred?.attention ||
@@ -146,9 +200,11 @@ export function needsAttention(items: ThreadItem[]): boolean {
   );
 }
 
-/** Markup is server-rendered and sanitized; it must survive deferred loading. */
-export function serializeThreadItem(item: ThreadItem): string {
-  return JSON.stringify(item);
+/** Markup is server-rendered and sanitized; it must survive deferred loading.
+ * Always the CardItem form, so a deferred preview's version and the chunk
+ * reader's version hash the same bytes. */
+export function serializeThreadItem(item: ThreadItem | CardItem): string {
+  return JSON.stringify(toCardItem(item));
 }
 export function threadItemVersion(serialized: string): string {
   return createHash("sha256").update(serialized).digest("hex").slice(0, 24);
@@ -158,11 +214,11 @@ export function threadItemVersion(serialized: string): string {
  * Oversized entries retain their IDs and load automatically through the chunk reader.
  */
 export function boundThread(
-  items: ThreadItem[],
+  items: (ThreadItem | CardItem)[],
   maxChars = 48_000,
-): ThreadItem[] {
-  const full = items;
-  const encoded = full.map(serializeThreadItem);
+): CardItem[] {
+  const full = items.map(toCardItem);
+  const encoded = full.map((item) => JSON.stringify(item));
   let size = encoded.reduce(
     (sum, item) => sum + item.length,
     2 + Math.max(0, full.length - 1),
@@ -174,7 +230,7 @@ export function boundThread(
     .sort((a, b) => encoded[b].length - encoded[a].length)) {
     if (size <= maxChars) break;
     const item = full[index];
-    const preview: ThreadItem = {
+    const preview = toCardItem({
       id: item.id,
       from: item.from,
       timestampMs: item.timestampMs,
@@ -185,7 +241,7 @@ export function boundThread(
         version: threadItemVersion(encoded[index]),
         attention: needsAttention([item]),
       },
-    };
+    });
     const previewSize = JSON.stringify(preview).length;
     if (previewSize >= encoded[index].length) continue;
     result[index] = preview;

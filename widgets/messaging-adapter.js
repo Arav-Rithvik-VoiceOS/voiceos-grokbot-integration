@@ -4,6 +4,10 @@ let pendingSend = null;
 let sequence = 0;
 let booted = false;
 let themeMode = 'dark';
+// LiveChat + ComposerKit ride only on a real thread card; sent receipts have neither.
+const liveBridge = typeof LiveChat !== 'undefined' ? LiveChat.bridge() : null;
+let liveChat = null;
+let liveKit = null;
 const originalBoot = boot;
 boot = function(data, args, mode) {
   if (booted) return;
@@ -13,6 +17,7 @@ boot = function(data, args, mode) {
   // Keep late host capability/theme updates from resetting a user's draft.
   const name = document.querySelector('#gname');
   if (name) name.addEventListener('input', () => { A.groupName = name.value; });
+  mountLive();
 };
 // Capture first: the host often supplies {} data and no args for result widgets.
 // Fall back to the server's baked live payload, never the package's demo roster.
@@ -28,12 +33,15 @@ addEventListener('message', event => {
   boot(m.data && Object.keys(m.data).length ? m.data : DEMO.data,
     { ...DEMO.args, ...m.args }, themeMode);
   // This listener swallows voiceos:init, so hand the capability to the sent
-  // cards' follow-up bar (boot above is a no-op once the baked payload booted).
+  // cards' follow-up bar and the live conversation (boot above is a no-op once
+  // the baked payload booted).
   if (typeof setInvoke === 'function') setInvoke(canInvoke);
+  if (liveBridge) liveBridge.canInvoke = canInvoke;
 }, true);
 
 function sendStatus(message, bad = false) {
   let status = document.querySelector('#send-status');
+  if (!message) { if (status) { status.remove(); report(); } return; }
   if (!status) {
     status = document.createElement('div');
     status.id = 'send-status'; status.className = 'sys';
@@ -63,6 +71,7 @@ function finishSend(status, result, error) {
       if (!receipt?.html) {
         // Completed is final even if the host omitted its large result. Never resend.
         sendStatus('Sent. Open the conversation to see the latest messages.');
+        if (liveChat) liveChat.refresh();
         return;
       }
       stage('message', '');
@@ -70,6 +79,7 @@ function finishSend(status, result, error) {
       // returns this receipt as data so the calling widget can show 1D / 1K.
       const html = receipt.html.replace('<meta charset="utf-8" />',
         '<meta charset="utf-8" /><meta name="voiceos-receipt-theme" content="' + themeMode + '"><meta name="voiceos-receipt-invoke" content="1">');
+      liveStop(); // The Window survives document.write: stop live timers first.
       document.open(); document.write(html); document.close();
       return;
     } catch (cause) { error = cause.message; status = 'failed'; }
@@ -91,6 +101,7 @@ addEventListener('message', event => {
   if (m.status === 'completed' && m.resultOmitted) {
     clearTimeout(pendingSend.timer); pendingSend = null;
     sendStatus('Sent. Open the conversation to see the latest messages.');
+    if (liveChat) liveChat.refresh();
     return;
   }
   finishSend(m.status, m.result, m.error);
@@ -99,14 +110,23 @@ addEventListener('message', event => {
 // VoiceOS uses allow-scripts without allow-forms, so use click / Enter events.
 wireComposer = function(root) {
   const form = root.querySelector('#compose');
-  form.querySelector('.plus')?.remove();
+  // 1:1 keeps the + for ComposerKit's menu (shown once tools are ready); groups drop it.
+  const plus = form.querySelector('.plus');
+  if (plus) { if (isGroup || !liveBridge || typeof ComposerKit === 'undefined') plus.remove(); else plus.hidden = true; }
   const input = form.querySelector('#msg');
   const button = form.querySelector('.send');
   button.type = 'button';
   let locked = false;
   const go = () => {
     const message = input.value.trim();
-    if (!message || pendingSend || locked) return;
+    const files = !!(liveKit && liveKit.hasAttachments());
+    if ((!message && !files) || pendingSend || locked) return;
+    if (files) {
+      // Files go as one grokbot_card_files job: no stage(), no receipt.
+      if (!liveKit.busy()) liveKit.send(message).then(result => { if (result === 'unknown') locked = true; });
+      return;
+    }
+    if (liveKit && liveKit.busy()) return;
     if (!canInvoke) { sendStatus('Sending is unavailable in this host. Your draft is still here.', true); return; }
     if (isGroup && members.length < (G ? 1 : 2)) {
       sendStatus(G ? 'Keep at least one bot in this group.' : 'Add at least two bots to start a group.', true); return;
@@ -132,6 +152,55 @@ wireComposer = function(root) {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); go(); }
   });
 };
+// Live conversation for 1:1 and existing groups; the new-group mode is unchanged.
+function mountLive() {
+  const list = document.querySelector('#msgs');
+  if (!liveBridge || liveChat || !list || typeof drawThread !== 'function') return;
+  const target = G ? { id: G.id, name: G.name, isGroup: true }
+    : !isGroup && SELF ? { id: SELF, name: botById(D, SELF).name, isGroup: false } : null;
+  if (!target) return;
+  liveChat = LiveChat.mount({
+    bridge: liveBridge, list, header: document.querySelector('#hd'), target,
+    items: (G ? G.thread : D.thread) || [], nextBeforeSeq: D.nextBeforeSeq,
+    renderItem: liveItem, onBots: liveBots, statusLine: sendStatus,
+  });
+  const form = document.querySelector('#compose');
+  if (target.isGroup || typeof ComposerKit === 'undefined' || !form) return;
+  liveKit = ComposerKit.mount({
+    bridge: liveBridge, form, input: form.querySelector('#msg'), sendButton: form.querySelector('.send'),
+    bot: { id: target.id, name: target.name }, status: sendStatus,
+    onSent: () => liveChat && liveChat.refresh(),
+    openComputer: () => liveChat && liveChat.openComputer(),
+  });
+  livePlus();
+  liveBridge.onReady(livePlus);
+}
+function livePlus() { const plus = document.querySelector('#compose .plus'); if (plus) plus.hidden = !liveBridge.canInvoke; }
+// msgHtml rows; "Messaged" falls back to the recipient's name, notices get no orb.
+function liveItem(m) {
+  if (typeof m.sys !== 'string') return msgHtml(m);
+  if (!m.bot) return m.sys ? '<div class="sys">' + esc(m.sys) + '</div>' : '';
+  const b = (D.bots || []).find(x => x.id === m.bot) || { name: m.sender || m.bot, color: '#888', shape: 'blob' };
+  return '<div class="sys">' + esc(m.sys) + ' ' + av(b, 'tiny') + ' ' + esc(b.name) + '</div>';
+}
+// A refresh's roster updates the header's status and orbs.
+function liveBots(bots) {
+  if (!bots.length) return;
+  D.bots = bots;
+  const setState = (a, b) => { const s = b.status || 'idle'; if (a && a.dataset.state !== s) Motion.set(a, s); };
+  if (isGroup) { $$('#hd .av[data-bot]').forEach(a => setState(a, botById(D, a.dataset.bot))); return; }
+  const b = bots.find(x => x.id === SELF);
+  if (!b) return;
+  const st = $('#hd .st'), name = $('#hd .t2');
+  if (st) st.innerHTML = '<span class="dot ' + dotCls(b) + '"></span>' + statusText(b) + ' · ' + esc(b.label);
+  if (name) name.textContent = b.name;
+  setState($('#hd .av'), b);
+}
+function liveStop() {
+  if (liveChat) liveChat.destroy();
+  if (liveKit) liveKit.destroy();
+  liveChat = liveKit = null;
+}
 // Group avatars remain a usable member-picker even with no selected members.
 if (typeof stackHtml === 'function') {
   const originalStack = stackHtml;
@@ -146,5 +215,6 @@ if (savedTheme) themeMode = savedTheme;
 // A receipt written in place by a card gets no second voiceos:init. The card
 // that wrote it could invoke tools (it just sent), so the receipt can too.
 if (document.querySelector('meta[name="voiceos-receipt-invoke"]')) canInvoke = true;
+if (liveBridge) liveBridge.canInvoke = canInvoke;
 boot(DEMO.data, DEMO.args, themeMode);
 if (typeof setInvoke === 'function') setInvoke(canInvoke);

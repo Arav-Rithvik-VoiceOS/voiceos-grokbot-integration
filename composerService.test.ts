@@ -9,9 +9,11 @@ import {
   type teachTransport,
 } from "./composerService.ts";
 import {
-  conversationRuntime,
-  renderConversationCard,
-} from "./conversationWidget.ts";
+  LIVE_CHAT_JS,
+  COMPOSER_KIT_JS,
+  MESSAGING_ADAPTER,
+  SHOW_ADAPTER,
+} from "./assets.generated.ts";
 import manifest from "./voiceos.integration.json";
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -260,7 +262,15 @@ test("preparing teaches nothing until the explicit Start recording action", asyn
   const r = await teachTask("a", "prepare", f.transport);
   expect(f.calls).toEqual([["prepare", "a"]]);
   expect(r.recording.state).toBe("idle");
-  expect("viewer" in r && r.viewer?.length).toBeGreaterThan(1000);
+  // The card demonstrates in the native computer window: no socket URL or
+  // in-card viewer bundle travels through the (logged) tool bridge.
+  expect(r).toEqual({ ok: true, recording: expect.objectContaining({ state: "idle" }) });
+  expect(JSON.stringify(r)).not.toContain("cursorvm");
+});
+test("preparing fails honestly while the bot's computer is still starting", async () => {
+  const f = teaching();
+  f.transport.agentScreen = async () => ({ live: false });
+  await expect(teachTask("a", "prepare", f.transport)).rejects.toThrow("starting");
 });
 test("start is idempotent; save uses native stop-and-save with no extra message", async () => {
   const f = teaching();
@@ -296,27 +306,26 @@ test("another bot cannot take over or stop an active recording", async () => {
   );
   expect(f.calls).toEqual([["start", "a"]]);
 });
-test("every conversation bridge tool has an explicit UI grant", () => {
-  const names = [
-    ...conversationRuntime.matchAll(/invoke\('(grokbot_[a-z_]+)'/g),
-  ].map((m) => m[1]);
-  expect(names).toContain("grokbot_card_files");
-  expect(names).toContain("grokbot_card_teach");
+test("every tool the card scripts invoke has an explicit UI grant", () => {
+  // The live chat, the composer kit and both glue scripts are what a card runs;
+  // any grokbot_* tool they name must be card-callable in the manifest.
+  const runtime = [LIVE_CHAT_JS, COMPOSER_KIT_JS, MESSAGING_ADAPTER, SHOW_ADAPTER].join("\n");
+  const names = [...new Set([...runtime.matchAll(/['"`](grokbot_[a-z_]+)['"`]/g)].map((m) => m[1]))];
+  for (const name of ["grokbot_card_files", "grokbot_card_teach", "grokbot_card_snapshot", "grokbot_open_computer_window"])
+    expect(names).toContain(name);
   for (const name of names)
-    expect(manifest.tools.find((t) => t.name === name)?.uiCallable, name).toBe(
-      true,
-    );
-  new Function(conversationRuntime);
-  expect(renderConversationCard({}).length).toBeLessThan(96000);
+    expect(manifest.tools.find((t) => t.name === name)?.uiCallable, name).toBe(true);
+  for (const src of [LIVE_CHAT_JS, COMPOSER_KIT_JS, MESSAGING_ADAPTER, SHOW_ADAPTER]) new Function(src);
 });
 
-test("sent receipts use the functional composer without redrafting the sent message", async () => {
+test("sent receipts keep the plain receipt: the sent text, no live chat or composer kit", async () => {
   const { sentCard, sentGroupCard } = await import("./cards.ts");
   for (const card of [sentCard({ id: "a", name: "Picasso" }, "Already sent"), sentGroupCard([], { id: "group", name: "Team", members: [] }, "Already sent")]) {
     const html = card._voiceos_glance.blocks[0].html;
-    expect(html).toContain("data-pick-files");
-    const data = JSON.parse(html.match(/id="payload">(.*?)<\/script>/)![1]);
-    expect(data.args.message).toBeUndefined();
-    expect(data.data.thread[0]).toMatchObject({text:"Already sent", receipt:true});
+    const data = JSON.parse(html.match(/^const DEMO=(.*);$/m)![1]);
+    expect(data.args.message).toBe("Already sent");
+    expect(html).toContain(MESSAGING_ADAPTER);
+    expect(html).not.toContain("const LiveChat");
+    expect(html).not.toContain("const ComposerKit");
   }
 });
