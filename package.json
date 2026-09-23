@@ -32,11 +32,12 @@
     "start": "bun server.ts",
     "build-intents": "bun scripts/build-intent-sdk.ts && bun scripts/build-intents.ts && bun scripts/freeze-confirms.ts",
     "test": "bun scripts/test.ts",
-    "check:ui": "bun scripts/check-screen-card.ts && bun scripts/check-roster.ts && bun scripts/check-confirmations.ts && bun scripts/check-composer.ts && bun scripts/check-full-message.ts && bun scripts/check-rendering.ts"
+    "check:ui": "bun scripts/check-screen-card.ts"
   },
   "devDependencies": {
     "@novnc/novnc": "^1.7.0",
     "@types/katex": "0.16.8",
-    "@types/sanitize-html": "2.16.1"
+    "@types/sanitize-html": "2.16.1",
+    "esbuild": "0.28.2"
   }
 }

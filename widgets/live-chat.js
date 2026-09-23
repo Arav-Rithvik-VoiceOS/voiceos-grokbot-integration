@@ -1,7 +1,10 @@
 /* LiveChat: the live conversation in Arav's thread + show cards (refresh, earlier messages, lazy
    images, requests, choices, deferred messages, Open computer). Rows use the card's own markup. */
 const LiveChat=(()=>{
- const END={completed:1,failed:1,cancelled:1,unknown:1},GAP=15e3,CAP=48,BUDGET=56,HARD=62;
+ // The host gives a card 64 requests for its whole life (a reopened notch reloads the page, not the count), and
+ // the in-place receipt's follow-ups share them. Automatic calls (refresh, images, deferred chunks, file polls)
+ // stop at AUTO, the user's own actions at HARD; sends are never refused here, so they keep at least 8, usually 24.
+ const END={completed:1,failed:1,cancelled:1,unknown:1},GAP=15e3,CAP=30,AUTO=40,HARD=56,LIMIT=64;
  // requestState.ts's passive types: connection prompts stay in history after they are done.
  const PASSIVE=/^(connectors?|listener-connect|scm-connect|onepassword-connect|team-access|slack-connect|cursor-agent|bot-template-share)$/;
  const DATA=/^data:image\/(png|jpeg|webp|gif);base64,/,UNSURE='The result is unconfirmed. Check Grok Bot before trying again.',OPEN='Open in Grok Bot';
@@ -25,10 +28,19 @@ const LiveChat=(()=>{
   if(t&&typeof t.text==='string'){try{return JSON.parse(t.text)}catch(_){throw fail(t.text,{status:'failed'})}}
   return r||{}}
 
- // One serialized invoke queue per card document; only its own 'lc_' requestIds are read.
+ // One invoke queue per card document: the host rejects a second pending action, so the card's own sends wait
+ // here too (queue). A turn ends on the host's terminal result, not on our timeout (the host may still be running
+ // it); 150 s is only a backstop. The listener reads only its own 'lc_' requestIds.
  function bridge(o){let can=!!(o&&o.canInvoke),seq=0,chain=Promise.resolve();const wait=new Map(),ready=new Set();
+  // A networked card has its own origin, so the count survives the notch's reloads there.
+  const disk=location.protocol==='voiceos-widget:',use=(n=b.count+1)=>{b.count=Math.max(b.count,n);if(disk)try{localStorage.setItem('lc-used',String(b.count))}catch(_){}};
+  const turn=go=>new Promise((ok,no)=>{chain=chain.then(()=>new Promise(free=>{const t=setTimeout(free,15e4),end=()=>{clearTimeout(t);free()};
+   try{go(ok,no,end)}catch(e){end();no(e)}}))});
+  // Refused before anything is posted: 'off' (no tools right now), 'auto' (automatic budget spent), 'hard' (card spent).
+  const refuse=(why,no,end)=>{const msg=why==='off'?'Open this card again to reconnect to Grok Bot.':'Open a fresh Grok Bot card to continue.';end();no(fail(msg,{status:'failed',refused:why,error:msg}))};
   addEventListener('message',e=>{const m=e.data;if(e.source!==parent||!m||m.type!=='voiceos:toolResult'||!END[m.status])return;
-   const p=wait.get(m.requestId);if(!p)return;wait.delete(m.requestId);clearTimeout(p.t);const s=m.status;
+   if(m.status==='failed'&&/action limit/i.test(m.error||''))use(LIMIT); // the host's budget is spent: ask no more
+   const p=wait.get(m.requestId);if(!p)return;wait.delete(m.requestId);clearTimeout(p.t);p.end();const s=m.status;
    if(s!=='completed')return p.no(fail(s==='unknown'?UNSURE:m.error||(s==='cancelled'?'Cancelled.':''),{status:s,unknown:s==='unknown'}));
    if(m.resultOmitted)return p.no(fail('The result was too large for this card.',{status:'unknown',unknown:true}));
    try{const b=unpack(m.result);if(b&&b.ok===false)throw fail(b.message,{status:'failed'});p.ok(b||{})}catch(err){p.no(err)}});
@@ -36,14 +48,16 @@ const LiveChat=(()=>{
    get canInvoke(){return can},
    set canInvoke(v){const was=can;can=!!v;if(can&&!was)ready.forEach(f=>{try{f()}catch(_){}})},
    onReady(f){ready.add(f);return()=>ready.delete(f)},
-   call(name,args,opt){const run=()=>new Promise((ok,no)=>{
-     if(!can)return no(fail('Open this card again to reconnect to Grok Bot.',{status:'failed'}));
-     if(b.count>=HARD)return no(fail('Open a fresh Grok Bot card to continue.',{status:'failed'}));
-     b.count++;const id='lc_'+Date.now().toString(36)+'_'+(++seq);
+   // f posts the card's own invoke and settles on its terminal result.
+   queue(f){return turn((ok,no,end)=>{if(!can)return refuse('off',no,end);use();Promise.resolve().then(f).then(ok,no).finally(end)})},
+   // opt.auto: an automatic call, refused once AUTO is spent.
+   call(name,args,opt){return turn((ok,no,end)=>{const auto=!!(opt&&opt.auto);
+     if(!can)return refuse('off',no,end);if(b.count>=(auto?AUTO:HARD))return refuse(auto?'auto':'hard',no,end);
+     use();const id='lc_'+Date.now().toString(36)+'_'+(++seq);
      // A timed-out call may already have acted: it rejects as unconfirmed and is never retried.
-     const t=setTimeout(()=>{if(wait.delete(id))no(fail(UNSURE,{status:'unknown',unknown:true}))},(opt&&opt.timeoutMs)||6e4);
-     wait.set(id,{ok,no,t});parent.postMessage({type:'voiceos:invokeTool',name,args:args||{},requestId:id},'*')});
-    const p=chain.then(run);chain=p.catch(()=>{});return p}};
+     const t=setTimeout(()=>no(fail(UNSURE,{status:'unknown',unknown:true})),(opt&&opt.timeoutMs)||6e4);
+     wait.set(id,{ok,no,end,t});parent.postMessage({type:'voiceos:invokeTool',name,args:args||{},requestId:id},'*')})}};
+  if(disk)try{b.count=+localStorage.getItem('lc-used')||0}catch(_){}
   return b}
 
  function mount(o){
@@ -53,7 +67,7 @@ const LiveChat=(()=>{
   const rep=()=>{try{typeof report==='function'&&report()}catch(_){}};
   const key=(...a)=>bot+':'+a.join(':'),ui=new Map(),busyK=new Set(),bad=new Set();
   const norm=a=>{const seen=new Set();return (Array.isArray(a)?a:[]).filter(i=>i&&typeof i==='object').map(i=>{const {t,...r}=i;r.id=r.id==null?'lc-anon-'+(++anon):String(r.id);return r}).filter(i=>!seen.has(i.id)&&seen.add(i.id))};
-  let items=norm(o.items),before=num(o.nextBeforeSeq),stick=true,dead=false,timer=0,busy=null,older=false,paused=false,erred=false,said=false;
+  let items=norm(o.items),before=num(o.nextBeforeSeq),stick=true,dead=false,timer=0,busy=null,older=false,paused=false,erred=false,said=false,last=0;
   const el=(tag,cls,text)=>{const e=document.createElement(tag);e.className=cls;if(text)e.textContent=text;return e};
   const top=el('button','sys lc-older','Earlier messages'),end=el('div','sys lc-paused','Live updates paused. Open this conversation again to continue.');
   let pc=null;
@@ -87,14 +101,14 @@ const LiveChat=(()=>{
    // Sign-ins and approvals finish in Grok Bot's own window: secrets never pass through VoiceOS, which logs tool calls.
    if(pend&&!(r.passive===true||PASSIVE.test(r.type||'')))s+='<div class="lc-row"><button class="lc-btn pri" data-lc-open="entry">'+OPEN+'</button>'+(/secret|credential|cookie/.test(r.type||'')?'<span class="lc-f">Sign in there, not here.</span>':'')+'</div>';
    return s+'</div>'}
-  function html(v){const m={...v,from:v.from==='me'?'me':'bot'},t=relTime(v.timestampMs);
+  function html(v,t){const m={...v,from:v.from==='me'?'me':'bot'};
    if(t)m.t=t;if(m.sys==='')return '';
    if(m.deferred){m.text=String(m.text||'').trim()+'…';delete m.html}
    let s='';try{s=o.renderItem(m)||''}catch(_){}
    if(typeof m.sys==='string')return s;
    return s+media(m)+choice(m)+request(m)+(m.deferred&&bad.has(key(m.id,m.deferred.version))?link(m.from,'This message did not load · '+OPEN):'')}
-  // Everything a row's markup depends on, so draw() re-renders exactly the rows that changed.
-  const sig=v=>JSON.stringify(v)+relTime(v.timestampMs)+'|'+(ui.get(v.id)||{v:0}).v+(v.deferred&&bad.has(key(v.id,v.deferred.version))?'!':'')+fs(v).map((f,i)=>{const k=mk(v,f,i);return IMG.has(k)?'i':bad.has(k)?'x':'-'}).join('');
+  // Everything a row's markup depends on except its time label, so draw() re-renders exactly the rows that changed.
+  const sig=v=>JSON.stringify(v)+'|'+(ui.get(v.id)||{v:0}).v+(v.deferred&&bad.has(key(v.id,v.deferred.version))?'!':'')+fs(v).map((f,i)=>{const k=mk(v,f,i);return IMG.has(k)?'i':bad.has(k)?'x':'-'}).join('');
 
   // Pinned to the newest message until the user scrolls up (also true before the frame has any layout).
   const near=()=>list.scrollHeight-list.clientHeight-list.scrollTop<=24,bottom=()=>{list.scrollTop=list.scrollHeight};
@@ -104,17 +118,25 @@ const LiveChat=(()=>{
   function draw(mode){if(dead)return;
    const pin=stick,h0=list.scrollHeight,y0=list.scrollTop,a=mode?null:anchor();
    const old=new Map([...list.children].filter(n=>n.dataset.lc).map(n=>[n.dataset.lc,n]));
-   const nodes=items.map(it=>{const v=view(it),s=sig(v);let n=old.get(it.id);if(n&&n.dataset.s===s)return n;
+   const ae=document.activeElement,nodes=items.map(it=>{const v=view(it),s=sig(v),t=relTime(v.timestampMs);let n=old.get(it.id);
+    // Only the time label moved on ("4m" → "5m"): update it in place, so a focused answer field keeps focus.
+    if(n&&n.dataset.s===s){if(n.dataset.t!==t){const x=n.querySelector('[data-lc-t]');if(x)x.textContent=t;n.dataset.t=t}return n}
     const fresh=!n;if(fresh){n=el('div','');n.dataset.lc=it.id}
-    n.dataset.s=s;n.innerHTML=html(v);
+    const fo=!fresh&&ae&&n.contains(ae)&&ae.matches('[data-lc-custom]')?[ae.selectionStart,ae.selectionEnd]:null;
+    n.dataset.s=s;n.dataset.t=t;n.innerHTML=html(v,t);
+    const f=n.firstElementChild;if(t&&f&&f.classList.contains('sys')&&f.textContent===t)f.dataset.lcT='';
+    if(fo){const x=n.querySelector('[data-lc-custom]');if(x&&!x.disabled){x.focus();try{x.setSelectionRange(fo[0],fo[1])}catch(_){}}}
     if(!v.html&&!v.text)n.querySelectorAll('.bubble').forEach(b=>{if(!b.firstChild)b.remove()});
     if(!fresh)n.querySelectorAll('.fade-in').forEach(x=>x.classList.remove('fade-in'));
     if(v.deferred){const b=[...n.querySelectorAll('.bubble')].pop();if(b&&!bad.has(key(v.id,v.deferred.version)))b.dataset.lcDef=''}
     n.querySelectorAll('img').forEach(i=>i.complete||i.addEventListener('load',()=>{if(stick&&!dead)bottom();rep()},{once:true}));
     return n});
-   // Rows the card appended itself (optimistic send bubbles) stay after the conversation.
+   // Rows the card appended itself (optimistic send bubbles) stay after the conversation, until it has the delivered copy.
+   const mine=items.filter(i=>i.from==='me'&&typeof i.text==='string');
+   [...list.children].forEach(n=>{const x=n.dataset.lcMine;if(x==null||n.dataset.lc)return;const at=+n.dataset.lcAt||0;
+    if(mine.some(i=>i.text.trim()===x&&(!i.timestampMs||i.timestampMs>=at-12e4))){const s=n.nextElementSibling;if(s&&!s.dataset.lc&&s.classList.contains('sys'))s.remove();n.remove()}});
    const rest=[...list.children].filter(n=>!n.dataset.lc&&n!==top&&n!==end&&!(items.length&&n.classList.contains('empty')));
-   top.hidden=before==null;
+   top.hidden=before==null;list.classList.toggle('lc-off',spent());
    const want=[top,...nodes,...rest];if(paused)want.push(end);
    // Move only what changed, so a focused answer field keeps focus across refreshes.
    let ref=list.firstChild;for(const n of want){if(n===ref)ref=ref.nextSibling;else list.insertBefore(n,ref)}
@@ -124,41 +146,42 @@ const LiveChat=(()=>{
    else if(a){const w=[...list.children].find(n=>n.dataset.lc===a.id),e=w&&(w.children[a.i]||w.firstElementChild);if(e)list.scrollTop+=e.getBoundingClientRect().top-a.top}
    scan();rep()}
 
-  const load=t=>t.dataset.lcImg!=null?loadImg(t):loadEntry(t);
+  // Out of automatic requests: placeholders stop shimmering and stay as they are.
+  const load=t=>{if(spent()){list.classList.add('lc-off');return pause()}t.dataset.lcImg!=null?loadImg(t):loadEntry(t)};
   const io=typeof IntersectionObserver==='function'?new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting&&!dead&&br.canInvoke){io.unobserve(e.target);load(e.target)}}),{root:list,rootMargin:'80px'}):null;
-  function scan(){if(!dead)list.querySelectorAll('[data-lc-img],[data-lc-def]').forEach(t=>{if(io){io.unobserve(t);io.observe(t)}else if(br.canInvoke)load(t)})}
+  function scan(){if(!dead&&!spent())list.querySelectorAll('[data-lc-img],[data-lc-def]').forEach(t=>{if(io){io.unobserve(t);io.observe(t)}else if(br.canInvoke)load(t)})}
   const itemOf=t=>{const w=t.closest('[data-lc]');return w&&items.find(i=>i.id===w.dataset.lc)};
 
   async function loadImg(t){const it=itemOf(t),ix=+t.dataset.lcImg;if(!it||!br.canInvoke)return;const k=key(it.id,ix);
    if(busyK.has(k))return;if(IMG.has(k)||bad.has(k))return draw();busyK.add(k);
-   try{const b=await br.call('grokbot_card_image',{bot,entryId:it.id,index:ix});if(!DATA.test(b&&b.dataUrl||''))throw 0;keep(IMG,k,b.dataUrl)}
-   catch(_){bad.add(k)}
+   try{const b=await br.call('grokbot_card_image',{bot,entryId:it.id,index:ix},{auto:1});if(!DATA.test(b&&b.dataUrl||''))throw 0;keep(IMG,k,b.dataUrl)}
+   catch(e){if(!(e&&e.refused))bad.add(k)} // a refused call never asked: the placeholder stays
    busyK.delete(k);draw()}
   // Every chunk comes from one version, in order; a changed message restarts at 0 (twice at most).
   async function loadEntry(t){const it=itemOf(t);if(!it||!it.deferred||!br.canInvoke)return;const v0=it.deferred.version,k=key(it.id,v0);
    if(FULL.has(k)||busyK.has(k)||bad.has(k))return;busyK.add(k);let offset=0,version=v0,parts='',restarts=0;
-   try{for(;;){const b=await br.call('grokbot_card_entry',{bot,entryId:it.id,offset,version});if(dead)return;
+   try{for(;;){const b=await br.call('grokbot_card_entry',{bot,entryId:it.id,offset,version},{auto:1});if(dead)return;
      if(!b||b.entryId!==it.id||typeof b.chunk!=='string'||typeof b.version!=='string'||typeof b.offset!=='number')throw 0;
      if(b.version!==version||b.offset!==offset){if(++restarts>2)throw 0;version=b.version;parts='';offset=0;if(b.offset)continue}
      parts+=b.chunk;if(b.nextOffset==null)break;if(!(b.nextOffset>offset))throw 0;offset=b.nextOffset}
     const full=JSON.parse(parts);if(!full||String(full.id)!==it.id||full.deferred)throw 0;
     delete full.t;full.id=it.id;keep(FULL,k,full);if(version!==v0)keep(FULL,key(it.id,version),full)}
-   catch(_){bad.add(k)}
+   catch(e){if(!(e&&e.refused))bad.add(k)}
    finally{busyK.delete(k);draw()}}
 
   function bots(b){if(o.onBots&&(Array.isArray(b.bots)||Array.isArray(b.groups)))try{o.onBots(b.bots||[],b.groups||[])}catch(_){}}
-  const over=()=>br.refreshes>=CAP||br.count>=BUDGET;
+  const spent=()=>br.count>=AUTO,over=()=>br.refreshes>=CAP||spent();
   function pause(){if(paused||dead)return;paused=true;clearTimeout(timer);timer=0;draw();try{o.paused&&o.paused()}catch(_){}}
   function schedule(){clearTimeout(timer);timer=0;if(!dead&&!paused&&br.canInvoke&&document.visibilityState!=='hidden')timer=setTimeout(()=>{timer=0;refresh()},GAP)}
   function refresh(){if(dead)return noop();if(!list.isConnected){destroy();return noop()}
    if(busy)return busy;if(!br.canInvoke)return noop();if(over()){pause();return noop()}
-   clearTimeout(timer);timer=0;br.refreshes++;
-   busy=br.call('grokbot_card_snapshot',{bot}).then(b=>{if(dead)return;const fresh=norm(b.thread),ids=new Set(fresh.map(i=>i.id)),at=items.findIndex(i=>ids.has(i.id));
+   clearTimeout(timer);timer=0;br.refreshes++;last=Date.now();
+   busy=br.call('grokbot_card_snapshot',{bot},{auto:1}).then(b=>{if(dead)return;const fresh=norm(b.thread),ids=new Set(fresh.map(i=>i.id)),at=items.findIndex(i=>ids.has(i.id));
      // Loaded older rows stay above the newest page; a page with no overlap replaces them (the gap is "Earlier messages").
      const kept=at<0?[]:items.slice(0,at).filter(i=>!ids.has(i.id)&&!i.id.startsWith('lc-anon-'));
      items=[...kept,...fresh];if(!kept.length)before=num(b.nextBeforeSeq);
      bots(b);if(erred){erred=false;say('')}draw()})
-    .catch(e=>{if(!dead){erred=true;say(e.message,true)}})
+    .catch(e=>{if(!dead&&e.refused!=='auto'){erred=true;say(e.message,true)}}) // out of automatic requests: just pause
     .finally(()=>{busy=null;if(!dead)over()?pause():schedule()});
    return busy}
   function loadOlder(){if(dead||older||before==null||!br.canInvoke)return noop();older=top.disabled=true;top.textContent='Loading…';
@@ -196,7 +219,9 @@ const LiveChat=(()=>{
    if(t.hasAttribute('data-lc-dismiss'))act(v,'dismiss',t)}
   const onInput=e=>{if(e.target.matches('[data-lc-custom]')){const it=itemOf(e.target);if(it)st8(it.id).custom=e.target.value}};
   const onKey=e=>{if(e.key==='Enter'&&!e.isComposing&&e.target.matches('[data-lc-custom]')){e.preventDefault();const s=e.target.closest('.lc-card').querySelector('[data-lc-send]');if(s)s.click()}};
-  const vis=()=>{if(dead)return;if(document.visibilityState==='hidden'){clearTimeout(timer);timer=0}else if(!timer&&!busy&&!paused)refresh()};
+  // Showing the card again refreshes at most once per GAP (each refresh spends the host's budget).
+  const vis=()=>{if(dead)return;if(document.visibilityState==='hidden'){clearTimeout(timer);timer=0}
+   else if(!timer&&!busy&&!paused){const w=last+GAP-Date.now();if(w>0)timer=setTimeout(()=>{timer=0;refresh()},w);else refresh()}};
   const ro=()=>list.classList.toggle('lc-ro',!br.canInvoke);
   // A hidden card waits: vis() refreshes it once it is shown.
   const off=br.onReady?br.onReady(()=>{if(dead)return;ro();if(pc)pc.hidden=false;draw();if(document.visibilityState!=='hidden')refresh()}):null;

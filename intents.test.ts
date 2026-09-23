@@ -57,26 +57,104 @@ test("roster changes publish new choices once; outages clear old names", async (
   fail = true;
   await expect(roster.refresh()).rejects.toThrow("offline");
   expect(published.at(-1)).toEqual([]);
-  expect(roster.beforeTool(hook({ bot: "New Terry" })).decision).toBe("block");
+  expect((await roster.beforeTool(hook({ bot: "New Terry" }))).decision).toBe("block");
 });
 
 test("preparation keeps the enum name, supplies native identity, and leaves approval to VoiceOS", async () => {
   let now = 1000;
   const roster = new IntentRoster(async () => agents, () => now);
-  expect(roster.beforeTool(hook({ bot: "Terry" })).decision).toBe("block");
+  expect((await roster.beforeTool(hook({ bot: "Terry" }))).decision).toBe("block");
   await roster.refresh();
-  const prepared = roster.beforeTool(hook({ bot: "Terry", message: "Check the draft" }));
+  const prepared = await roster.beforeTool(hook({ bot: "Terry", message: "Check the draft" }));
   expect(prepared.decision).toBeUndefined();
   expect(prepared.updatedArgs).toMatchObject({ bot: "Terry", recipientId: "terry", message: "Check the draft" });
   const context = JSON.parse(prepared.updatedArgs!.confirmationContext as string);
-  expect(context.bots).toHaveLength(1);
+  // Every individual bot (rows from other bots resolve their names), no groups.
+  expect(context.bots.map((b: { id: string }) => b.id)).toEqual(["terry", "seo"]);
+  expect(context.groups).toEqual([]);
   // The card's own roster shape (cards.ts toBot), in Grok's palette.
   expect(context.bots[0]).toMatchObject({ id: "terry", name: "Terry", color: GROK_COLOR_HEX.magenta, shape: "pebble" });
-  expect(roster.beforeTool(hook({ bot: "Missing" })).decision).toBe("block");
-  expect(roster.beforeTool(hook({ bot: "Blog Generation" })).decision).toBe("block");
-  expect(roster.beforeTool({ ...hook({}), toolName: "grokbot_show" })).toEqual({});
+  expect((await roster.beforeTool(hook({ bot: "Missing" }))).decision).toBe("block");
+  expect((await roster.beforeTool(hook({ bot: "Blog Generation" }))).decision).toBe("block");
+  expect(await roster.beforeTool({ ...hook({}), toolName: "grokbot_show" })).toEqual({});
   now += 90_001;
-  expect(roster.beforeTool(hook({ bot: "Terry" })).decision).toBe("block");
+  expect((await roster.beforeTool(hook({ bot: "Terry" }))).decision).toBe("block");
+});
+
+const ctx = (r: { updatedArgs?: Record<string, unknown> }) => JSON.parse(r.updatedArgs!.confirmationContext as string);
+const prepared = (threads: Record<string, unknown[]>) =>
+  JSON.stringify({ bots: [{ id: "terry", name: "Terry" }, { id: "seo", name: "SEO Master" }], groups: [], threads });
+
+test("a mangled or foreign prepared context never blocks the send; it only loses its rows", async () => {
+  const roster = new IntentRoster(async () => agents);
+  await roster.refresh();
+  for (const confirmationContext of ['{"bots":[', "null", "oops", "[]", prepared({ seo: [{ id: "x", from: "bot", text: "hi", html: "<p>hi</p>" }] })]) {
+    const r = await roster.beforeTool(hook({ bot: "Terry", message: "Hi", confirmationContext }));
+    expect(r.decision).toBeUndefined();
+    expect(r.updatedArgs!.recipientId).toBe("terry");
+    expect(ctx(r).threads).toEqual({});
+  }
+});
+
+test("copied rows are rebuilt: markup from their text, `from` one of two words", async () => {
+  const roster = new IntentRoster(async () => agents);
+  await roster.refresh();
+  const evil = [
+    { id: "1", from: 'bot"><img src=x onerror=alert(1)>', text: "**Done**", html: '<img src=x onerror="parent.postMessage(1)">' },
+    { id: "2", from: "me", text: "Plan", t: "5m", junk: "<script>" },
+  ];
+  const r = await roster.beforeTool(hook({ bot: "Terry", message: "Hi", confirmationContext: prepared({ terry: evil }) }));
+  const rows = ctx(r).threads.terry;
+  expect(rows).toEqual([
+    { id: "1", from: "bot", text: "**Done**", html: "<p><strong>Done</strong></p>\n" },
+    { id: "2", from: "me", t: "5m", text: "Plan" },
+  ]);
+  expect(JSON.stringify(rows)).not.toContain("onerror");
+  // The group confirmation gets the same treatment, and a roster from the live cache.
+  const group = await roster.beforeTool({ ...hook({ group: "group", message: "Hi", confirmationContext: JSON.stringify({ bots: [{ id: "terry", name: "Terry", shape: 'x" onmouseover="alert(1)' }], groups: [], threads: { group: evil } }) }), toolName: "grokbot_group" });
+  const g = ctx(group);
+  expect(g.bots.map((b: { shape: string }) => b.shape)).toEqual(["pebble", "hex"]);
+  expect(g.groups).toEqual([expect.objectContaining({ id: "group", members: ["terry", "seo"] })]);
+  expect(g.threads.group[0]).toEqual({ id: "1", from: "bot", text: "**Done**", html: "<p><strong>Done</strong></p>\n" });
+  expect(JSON.stringify(g)).not.toContain("onerror");
+  // No context: the card's own frozen roster applies, untouched.
+  expect(await roster.beforeTool({ ...hook({ group: "group", message: "Hi" }), toolName: "grokbot_group" })).toEqual({});
+});
+
+test("rows that mention another bot keep that bot's name, orb and color", async () => {
+  const roster = new IntentRoster(async () => agents);
+  await roster.refresh();
+  const rows = [
+    { id: "m", from: "bot", bot: "seo", text: "From SEO", html: "<p>From SEO</p>" },
+    { id: "s", from: "bot", bot: "seo", sys: "Messaged" },
+    { id: "n", from: "bot", sys: "Terry finished a task" },
+  ];
+  const r = await roster.beforeTool(hook({ bot: "Terry", message: "Hi", confirmationContext: prepared({ terry: rows }) }));
+  const c = ctx(r);
+  expect(c.bots.find((b: { id: string }) => b.id === "seo")).toMatchObject({ name: "SEO Master", color: GROK_COLOR_HEX.green, shape: "hex" });
+  expect(c.threads.terry.map((i: { id: string }) => i.id)).toEqual(["m", "s", "n"]);
+  expect(c.threads.terry[2]).toEqual({ id: "n", from: "bot", sys: "Terry finished a task" });
+});
+
+test("a send that skipped preparation reads the recipient's rows, but never waits long for them", async () => {
+  const roster = new IntentRoster(async () => agents);
+  await roster.refresh();
+  const asked: string[] = [];
+  roster.recentRows = async id => { asked.push(id); return [{ id: "r", from: "bot", text: "Recent", html: "<p>Recent</p>" }]; };
+  const direct = await roster.beforeTool(hook({ bot: "Terry", message: "Hi" }));
+  expect(asked).toEqual(["terry"]);
+  expect(ctx(direct).threads.terry).toEqual([{ id: "r", from: "bot", text: "Recent", html: "<p>Recent</p>" }]);
+  // Prepared rows are used as they are: no second read.
+  await roster.beforeTool(hook({ bot: "Terry", message: "Hi", confirmationContext: prepared({ terry: [] }) }));
+  expect(asked).toEqual(["terry"]);
+  roster.recentRows = () => new Promise(() => {});
+  const started = Date.now();
+  const slow = await roster.beforeTool(hook({ bot: "Terry", message: "Hi" }));
+  expect(Date.now() - started).toBeLessThan(1_500);
+  expect(slow.updatedArgs).toMatchObject({ recipientId: "terry" });
+  expect(ctx(slow).threads).toEqual({});
+  roster.recentRows = async () => { throw new Error("gateway down"); };
+  expect((await roster.beforeTool(hook({ bot: "Terry", message: "Hi" }))).updatedArgs).toMatchObject({ recipientId: "terry" });
 });
 
 test("approved name cannot redirect to a replacement bot or skip preparation", () => {
@@ -86,6 +164,18 @@ test("approved name cannot redirect to a replacement bot or skip preparation", (
   expect(() => resolveApprovedRecipient("Terry", "terry", [{ id: "replacement", name: "Terry" }])).toThrow("changed");
   expect(() => resolveApprovedRecipient("Terry", "terry", [{ id: "terry", name: "Renamed" }])).toThrow("couldn't find");
   expect(() => resolveApprovedRecipient("Terry", "terry", [...agents, { id: "duplicate", name: "Terry" }])).toThrow("More than one");
+  // A group may share a bot's name: the hook and the send both resolve individuals.
+  expect(resolveApprovedRecipient("Terry", "terry", [...agents, { id: "g2", name: "Terry", isGroup: true }]).id).toBe("terry");
+});
+
+test("a bot sharing a group's name is published, verified and sent to", async () => {
+  const withGroup = [...agents, { id: "g2", name: "Terry", isGroup: true }];
+  const roster = new IntentRoster(async () => withGroup);
+  await roster.refresh();
+  expect(botIntentNames(withGroup)).toEqual(["SEO Master", "Terry"]);
+  const r = await roster.beforeTool(hook({ bot: "Terry", message: "Hi" }));
+  expect(r.updatedArgs!.recipientId).toBe("terry");
+  expect(resolveApprovedRecipient("Terry", r.updatedArgs!.recipientId as string, withGroup).id).toBe("terry");
 });
 
 test("actual MCP tools/list metadata and refresh notification carry current enum choices", async () => {

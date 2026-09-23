@@ -86,3 +86,11 @@ test("the recipient pin is applied to the rendered confirmation, and a moved anc
   expect(() => pinnedConfirmationAdapter(source.replace("confirmationBooted = true;", "confirmationBooted=true;"))).toThrow("anchors");
   expect(() => pinnedConfirmationAdapter(source.replace("stage = function(key, value) {", "stage = (key, value) => {"))).toThrow("anchors");
 });
+test("the manifest's frozen confirmations are what cards.ts renders today (run `bun run freeze-confirms`)", async () => {
+  // VoiceOS reads confirmation cards from the manifest, never from the server.
+  const manifest = await Bun.file(new URL("../voiceos.integration.json", import.meta.url)).json();
+  for (const tool of ["grokbot_send", "grokbot_group"]) {
+    const frozen = manifest.tools.find((t: any) => t.name === tool).confirmation.root.html;
+    expect(frozen).toBe(renderCard("thread", { data: { confirmation: true, tool, bots: [], groups: [], threads: {}, me: "" }, args: {} }));
+  }
+});

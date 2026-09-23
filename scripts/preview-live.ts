@@ -14,7 +14,7 @@
  *
  * The card HTML gets two preview-only additions: the card CSP meta, and a tiny
  * shim that forwards card errors to the log, can speed up the card's timers (to
- * reach the 48-refresh cap in seconds), can force document.visibilityState (to
+ * reach the 30-refresh cap in seconds), can force document.visibilityState (to
  * test pause/resume), and lets the host page click/inspect inside the sandbox
  * (`card.click(sel)`, `card.inspect(sel)` in the console).
  */
@@ -267,7 +267,7 @@ const show = cards.showCard(
   Object.fromEntries(Object.entries(showEntries).filter(([, e]) => e.length > SHOW_TAIL).map(([id]) => [id, SHOW_CURSOR])),
 ) as Card;
 // Confirmation: the thread grokbot_prepare_message hands a grokbot_send confirmation.
-const confirmThread = cards.toThread(pepperEntries.filter((e) => ["p-ask", "p-rich", "p-more", "p-image", "p-file", "p-messaged"].includes(e.id!)), 12_000);
+const confirmThread = cards.confirmationRows(cards.toThread(pepperEntries.filter((e) => ["p-ask", "p-rich", "p-more", "p-image", "p-file", "p-messaged"].includes(e.id!)), 12_000));
 const confirmHtml = cards.renderCard("thread", {
   data: { confirmation: true, tool: "grokbot_send", bots: agents.filter((a) => !a.isGroup).map(cards.toBot), groups: agents.filter((a) => a.isGroup).map(cards.toGroup), threads: { pepper: confirmThread }, me: "" },
 });
@@ -279,7 +279,7 @@ type Scenario = {
 const scenarios: Scenario[] = [
   { slug: "thread-1to1-dark", title: "1:1 thread · dark", theme: "dark", invoke: true, html: htmlOf(thread1to1), glance: cards.glanceChars(thread1to1), initArgs: demoArgs(htmlOf(thread1to1)),
     blurb: "Pepper's conversation with every message type: formatted text, images, files, requests, choices, a Messaged row, a notice and a deferred huge message.",
-    hint: "Scroll up to load the huge note and the images. Try Earlier messages at the top, answer the choices, open the + menu (Attach files, Teach a task) and the Open computer button. A new message arrives every 15 s; use Timer speed to hit the 48-refresh cap fast." },
+    hint: "Scroll up to load the huge note and the images. Try Earlier messages at the top, answer the choices, open the + menu (Attach files, Teach a task) and the Open computer button. A new message arrives every 15 s; use Timer speed to hit the 30-refresh cap fast." },
   { slug: "thread-1to1-light", title: "1:1 thread · light", theme: "light", invoke: true, html: htmlOf(thread1to1Draft), glance: cards.glanceChars(thread1to1Draft), initArgs: demoArgs(htmlOf(thread1to1Draft)),
     blurb: "The same conversation in the light theme, with a draft already in the composer.",
     hint: "Watch the draft while the chat refreshes: it must stay exactly as typed. Check tables, code colors and math in the light theme." },
@@ -308,7 +308,7 @@ function warningsFor(s: Scenario): string[] {
   if (!s.confirmation && !s.html.includes("LiveChat")) w.push("live-chat.js is not in this card yet (rerun inline-assets, or cards.ts does not inject it): refresh, older messages, media, requests and deferred loading will not run.");
   if (!s.confirmation && s.slug !== "thread-group" && !s.html.includes("ComposerKit")) w.push("composer-kit.js is not in this card yet: no Attach files / Teach a task menu.");
   if (s.confirmation && /LiveChat|ComposerKit/.test(s.html)) w.push("The confirmation card carries live-chat/composer code. SPEC: confirmation cards get only MARKDOWN_CSS.");
-  if (s.glance !== undefined && s.glance > 96_000) w.push(`Glance is ${s.glance.toLocaleString("en-US")} chars, over the 96 000 cap: VoiceOS would drop this card.`);
+  if (s.glance !== undefined && s.glance > cards.MAX_GLANCE_CHARS) w.push(`Glance is ${s.glance.toLocaleString("en-US")} chars, over the ${cards.MAX_GLANCE_CHARS.toLocaleString("en-US")} cap: VoiceOS would drop this card.`);
   return w;
 }
 
@@ -388,11 +388,11 @@ function settings() {
 }
 function renderCounts() {
   const cap = settings().cap;
-  countsEl.textContent = 'requests ' + S.requests + (cap ? ' / ' + cap : '') + '  ·  live refreshes ' + S.refreshes + ' / 48' +
+  countsEl.textContent = 'requests ' + S.requests + (cap ? ' / ' + cap : '') + '  ·  live refreshes ' + S.refreshes + ' / 30' +
     Object.keys(S.byTool).map(k => '  ·  ' + k.replace('grokbot_', '') + ' ' + S.byTool[k]).join('');
 }
 function renderMeta() {
-  metaEl.textContent = 'frame ' + frame.offsetHeight + 'px' + (lastHeight ? ' (card asked ' + lastHeight + ')' : '') + (FX.glance ? '  ·  glance ' + FX.glance.toLocaleString('en-US') + ' / 96,000 chars' : '') + '  ·  card html ' + FX.card.length.toLocaleString('en-US') + ' chars';
+  metaEl.textContent = 'frame ' + frame.offsetHeight + 'px' + (lastHeight ? ' (card asked ' + lastHeight + ')' : '') + (FX.glance ? '  ·  glance ' + FX.glance.toLocaleString('en-US') + ' / ${cards.MAX_GLANCE_CHARS.toLocaleString("en-US")} chars' : '') + '  ·  card html ' + FX.card.length.toLocaleString('en-US') + ' chars';
 }
 
 // ── Card lifecycle ──
@@ -442,10 +442,10 @@ async function invoke(m) {
   if (refresh) S.refreshes++;
   renderCounts();
   log('→ ' + name, short(args), 'call');
-  // SPEC checks: one call in flight per card, ≤48 live refreshes, none while hidden.
+  // SPEC checks: one call in flight per card, ≤30 live refreshes, none while hidden.
   if (S.inFlight.size) log('SPEC', (S.inFlight.size + 1) + ' calls in flight at once (the card bridge should send one at a time)', 'warn');
   S.inFlight.add(m.requestId);
-  if (refresh && S.refreshes > 48) log('SPEC', 'live refresh ' + S.refreshes + ' is over the 48-per-card cap', 'bad');
+  if (refresh && S.refreshes > 30) log('SPEC', 'live refresh ' + S.refreshes + ' is over the 30-per-card cap', 'bad');
   if (refresh && cardVisibility() !== 'visible') log('SPEC', 'live refresh while the card is hidden', 'bad');
   if (!/^[a-zA-Z0-9_-]+$/.test(String(m.requestId || ''))) log('HOST', 'invalid requestId ' + short(m.requestId) + ': VoiceOS rejects it', 'bad');
   if (!st.invoke) { log('HOST', 'invokeTool while capabilities.invokeTool is false: the card must not call tools', 'bad'); return reply({ status: 'failed', error: 'Tool actions are unavailable in this card.' }); }
@@ -721,7 +721,7 @@ ${warnings.map((w) => `<div class="warn-box">${escHtml(w)}</div>`).join("\n")}
     <label><input type="checkbox" id="invoke"> capabilities.invokeTool</label>
     <label><input type="checkbox" id="twostep"> Real-host double init (false, then true)</label>
     <label>Init data <select id="initData">${opt([["empty", "{} (like VoiceOS)"], ["omit", "omitted"]])}</select></label>
-    <label>Timer speed <select id="speed">${opt([["1", "1× (real)"], ["10", "10×"], ["40", "40× (48 refreshes ≈ 20 s)"]])}</select></label>
+    <label>Timer speed <select id="speed">${opt([["1", "1× (real)"], ["10", "10×"], ["40", "40× (30 refreshes ≈ 11 s)"]])}</select></label>
     <label>Host request cap <select id="cap">${opt([["64", "64 per card (VoiceOS)"], ["0", "off"]])}</select></label>
     <label>Card visibility <select id="visibility">${opt([["real", "this tab's"], ["visible", "force visible"], ["hidden", "force hidden"]])}</select></label>
     <h2>Next reply</h2>
@@ -751,7 +751,7 @@ function indexPage(): string {
     return `<a class="tile" href="${s.slug}.html"><b>${escHtml(s.title)}</b><span>${escHtml(s.blurb)}</span>${w.length ? `<em>${w.length} warning${w.length > 1 ? "s" : ""}</em>` : ""}</a>`;
   }).join("\n");
   const checks: [string, string][] = [
-    ["Live refresh", "A new message every 15 s while visible; the header status changes. After 48 refreshes: “Live updates paused…”."],
+    ["Live refresh", "A new message every 15 s while visible; the header status changes. After 30 refreshes: “Live updates paused…”."],
     ["Older messages", "“Earlier messages” at the top loads 3 older pages, keeps the scroll position, then hides."],
     ["Drafts", "Typed text survives every refresh; in the roster card it survives Back and reopen."],
     ["Formatted text", "Table scrolls sideways, code has colors, math renders, one-line text looks like before."],

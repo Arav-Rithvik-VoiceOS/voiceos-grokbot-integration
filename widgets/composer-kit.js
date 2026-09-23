@@ -2,8 +2,9 @@
 const ComposerKit=(()=>{
  const MEM=new Map(); // per bot, per document: a remounted show-card pane keeps its chips, job and recording
  const UNSURE='Delivery is unconfirmed. Check Grok Bot before sending again.';
- // The host allows only 64 request IDs per card (shared with live refresh), so polls back off and stop at 24.
- const STEP=[1e3,1e3,1e3,2e3,2e3,3e3,5e3,8e3],POLLS=24;
+ // Polls spend the card's automatic request budget (shared with live refresh), so they back off and stop at 24;
+ // the file picker waits on the user, so it gets fewer, slower polls. After that: Check status.
+ const STEP=[1e3,1e3,1e3,2e3,2e3,3e3,5e3,8e3],POLLS=24,PICK=[3e3,5e3,8e3,10e3,12e3,15e3];
  const CLIP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 11.5l-8.4 8.4a5.4 5.4 0 0 1-7.6-7.6l8.4-8.4a3.6 3.6 0 0 1 5.1 5.1l-8.4 8.4a1.8 1.8 0 0 1-2.5-2.5l7.7-7.7"/></svg>';
  const REC='<svg class="ck-r" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4.2" fill="currentColor"/></svg>';
  const X='<svg width="8" height="8" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M2 2l6 6M8 2L2 8"/></svg>';
@@ -21,12 +22,13 @@ const ComposerKit=(()=>{
   if(form.__ck)form.__ck.destroy();
   const name=bot.name||'this bot',N=h(name),cs=getComputedStyle(form);
   let m=MEM.get(bot.id);if(!m)MEM.set(bot.id,m={files:[],job:null,nonce:null,sent:null,locked:false,rec:null});
-  let dead=false,open=false,active=false,stalled=false,said=false,forced=false,hard=false,teach=null,panel=null,tick=0;
+  let dead=false,open=false,active=false,stalled=false,said=false,forced=false,hard=false,tracking=false,teach=null,panel=null,tick=0;
   const off=[],on=(t,ev,f,c)=>{t.addEventListener(ev,f,c);off.push(()=>t.removeEventListener(ev,f,c))};
   const say=(t,bad)=>{said=!!t;try{o.status&&o.status(t||'',!!bad)}catch(_){}},hush=()=>{if(said)say('')};
-  const call=(tool,a)=>bridge.call(tool,{bot:bot.id,...a}),files=a=>call('grokbot_card_files',a),tc=a=>call('grokbot_card_teach',{action:a});
+  const call=(tool,a,x)=>bridge.call(tool,{bot:bot.id,...a},x),files=(a,x)=>call('grokbot_card_files',a,x),tc=a=>call('grokbot_card_teach',{action:a});
   const job=(k,s='working')=>!!m.job&&m.job.kind===k&&m.job.state===s;
-  const busy=()=>m.locked||active||!!(m.job&&m.job.state==='working')||!!(teach&&teach.step!=='idle');
+  // A picker the kit stopped polling (Check status) does not hold up a plain text send.
+  const busy=()=>m.locked||active||!!(m.job&&m.job.state==='working'&&!(stalled&&m.job.kind==='pick'))||!!(teach&&teach.step!=='idle');
   const edge=(el,ks)=>ks.forEach(k=>el.style['margin'+k]=cs['margin'+k]);
   const fire=f=>{try{f&&f()}catch(_){}};
 
@@ -61,7 +63,7 @@ const ComposerKit=(()=>{
   if(typeof ResizeObserver==='function'){const ro=new ResizeObserver(()=>place());ro.observe(document.body);off.push(()=>ro.disconnect())}
 
   // Overrides the glue's send-button rule only while chips or a job need it.
-  function sync(){if(dead)return;const was=hard,pk=job('pick');hard=m.locked||active||job('send');
+  function sync(){if(dead)return;const was=hard,pk=job('pick')&&!stalled;hard=m.locked||active||job('send');
    if(hard)input.disabled=true;else if(was)input.disabled=false;
    plus.disabled=hard||pk;if(plus.disabled)toggle(false);
    const f=hard||pk||m.files.length>0;
@@ -71,21 +73,27 @@ const ComposerKit=(()=>{
    tray.innerHTML=m.files.map(f=>'<span class="chip ck-file'+(f.sending?' is-sending':'')+'" title="'+h(f.name)+'">'+CLIP+'<span class="ck-nm">'+h(f.name)+'</span><span class="ck-sz">'+size(f.size)+'</span><button type="button" class="ck-x" data-rm="'+h(f.id)+'" aria-label="Remove '+h(f.name)+'"'+(lock||f.sending?' disabled':'')+'>'+X+'</button></span>').join('')
     +(stalled&&m.job?'<button type="button" class="chip ck-chk" data-ck="check">Check status</button>':'');
    sync()}
-  function accept(b){if(!b||dead)return;if(Array.isArray(b.attachments))m.files=b.attachments.filter(f=>f&&f.id);if(b.job&&b.job.id)m.job=b.job;draw()}
-  on(tray,'click',e=>{const x=e.target.closest('[data-rm]');if(x)drop(x.dataset.rm,x);else if(e.target.closest('[data-ck=check]'))track(true).then(settle)});
+  // A closed pane still records what the server said, and wakes this bot's open pane (if any) to follow the job.
+  function accept(b){if(!b)return;if(Array.isArray(b.attachments))m.files=b.attachments.filter(f=>f&&f.id);if(b.job&&b.job.id)m.job=b.job;dead?m.wake&&m.wake():draw()}
+  const follow=now=>{tracking=true;return track(now).finally(()=>{tracking=false})};
+  const resume=()=>{if(dead||tracking||active)return;if(m.locked){say(UNSURE,true);draw()}else if(m.job&&m.job.state==='working')follow().then(settle);else draw()};
+  on(tray,'click',e=>{const x=e.target.closest('[data-rm]');if(x)drop(x.dataset.rm,x);else if(e.target.closest('[data-ck=check]')&&!tracking)follow(true).then(settle)});
   on(form,'input',sync); // bubble phase: after the glue's own input listener
   // Capture phase: runs before the glue's Enter handler, so a busy composer cannot send around the kit.
   on(form,'keydown',e=>{if(e.target===input&&e.key==='Enter'&&!e.shiftKey&&busy()){e.preventDefault();e.stopImmediatePropagation();if(job('pick'))say('Finish choosing files first.')}},true);
 
   // Polls the current job until it leaves 'working'. now: the user's Check status (no wait first).
-  async function track(now){stalled=false;draw();const t0=Date.now();let fails=0;
+  async function track(now){stalled=false;draw();const t0=Date.now(),pick=!!m.job&&m.job.kind==='pick',steps=pick?PICK:STEP;let fails=0;
    for(let n=0;!dead&&m.job&&m.job.state==='working';n++){
-    if(n>=POLLS||Date.now()-t0>3e5){stalled=true;return}
-    if(!(now&&!n))await wait(STEP[Math.min(n,STEP.length-1)]);
+    if(n>=(pick?PICK.length:POLLS)||Date.now()-t0>3e5){stalled=true;return}
+    if(!(now&&!n))await wait(steps[Math.min(n,steps.length-1)]);
     if(dead||!m.job)return;
-    try{accept(await files({action:'status',jobId:m.job.id}));fails=0}
-    catch(err){if(dead)return;
+    try{accept(await files({action:'status',jobId:m.job.id},{auto:!(now&&!n)}));fails=0}
+    catch(err){if(dead||!m.job)return;
      if(/expired/i.test(err.message)){m.job={...m.job,state:m.job.kind==='send'?'unknown':'cancelled'};return}
+     // Nothing was asked. Out of automatic requests (or tools): wait for Check status. The card is spent: a picker
+     // ends here, and a send stays unconfirmed (it may already have acted).
+     if(err.refused){if(err.refused==='hard')m.job={...m.job,state:m.job.kind==='send'?'unknown':'failed',message:err.message};else stalled=true;return}
      if(++fails>1){stalled=true;return}}}}
   // Turns the tracked job into UI; returns the send outcome.
   function settle(){const j=m.job;if(dead)return 'unknown';if(!j){draw();return 'failed'}
@@ -104,8 +112,8 @@ const ComposerKit=(()=>{
    try{accept(await files({action:'pick'}))}
    catch(err){if(dead)return;if(!unsure(err))return say(err.message,true);
     try{accept(await files({action:'status'}))}catch(_){return say(err.message,true)}}
-   if(!m.job)return hush();
-   await track();settle()}
+   if(dead)return;if(!m.job)return hush();
+   await follow();settle()}
   async function drop(id,btn){if(m.locked||active||job('send'))return;btn.disabled=true;
    try{accept(await files({action:'remove',attachmentId:id}));hush();input.focus()}
    catch(err){if(dead)return;if(/no longer available/i.test(err.message)){m.files=m.files.filter(f=>f.id!==id);draw()}else btn.disabled=false;say(err.message||'That file could not be removed.',true)}}
@@ -121,8 +129,8 @@ const ComposerKit=(()=>{
    let r;
    try{accept(await files({action:'send',attachments:ids,message:text,clientNonce:m.nonce.v}));
     if(!m.job||m.job.kind!=='send')throw Object.assign(Error(UNSURE),{unknown:true});
-    await track();r=settle()}
-   catch(err){if(dead)return 'unknown';
+    await follow();r=settle()}
+   catch(err){if(dead){if(unsure(err)){m.locked=true;m.wake&&m.wake()}return 'unknown'}
     if(unsure(err)){m.locked=true;say(UNSURE,true);r='unknown'}
     else{say(err.message||'Not sent. Your draft is still here.',true);r='failed'}}
    if(dead)return r;
@@ -187,11 +195,11 @@ const ComposerKit=(()=>{
    catch(err){if(dead||teach!==g)return;g.step='rec';g.err=unsure(err)?'Not confirmed. Check Grok Bot before trying again.':err.message||'That didn’t go through.';drawTeach()}}
 
   const kit={hasAttachments:()=>m.files.length>0,send,busy,
-   destroy(){if(dead)return;toggle(false);dead=true;clearInterval(tick);off.forEach(f=>f());menu.remove();tray.remove();if(panel)panel.remove();panel=teach=null;form.classList.remove('ck-hide');if(form.__ck===kit)delete form.__ck}};
+   destroy(){if(dead)return;toggle(false);dead=true;if(m.wake===resume)m.wake=null;clearInterval(tick);off.forEach(f=>f());menu.remove();tray.remove();if(panel)panel.remove();panel=teach=null;form.classList.remove('ck-hide');if(form.__ck===kit)delete form.__ck}};
   form.__ck=kit;
   // Resume what this document already knows for this bot; no request unless a job is still running.
   draw();
-  if(m.locked)say(UNSURE,true);else if(m.job&&m.job.state==='working')track().then(settle);
+  m.wake=resume;resume();
   if(mine(m.rec))openPanel('rec');
   return kit}
 

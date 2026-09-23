@@ -4,6 +4,7 @@ import {
   respondToWidget,
   dismissWidget,
   openGrokBotApp,
+  openBotChat,
   readAttachmentImage,
   type TranscriptEntry,
 } from "./client.ts";
@@ -29,6 +30,7 @@ export const conversationTransport = {
   respondToWidget,
   dismissWidget,
   openGrokBotApp,
+  openBotChat,
   readAttachmentImage,
 };
 type Transport = typeof conversationTransport;
@@ -64,7 +66,10 @@ export async function performConversationAction(
   if (args.action === "open") {
     // OAuth, credentials and OS approvals belong to Grok's trusted native flow.
     // Do not pass secrets through the generic (logged) widget tool bridge.
-    transport.openGrokBotApp();
+    // Straight to this bot's conversation, where the request waits. No roster
+    // check first: an expired session is exactly when the app must still open.
+    try { await transport.openBotChat(args.bot); }
+    catch { transport.openGrokBotApp(); }
     return { ok: true, opened: true };
   }
   if (!(await transport.listAgents()).some((a) => a.id === args.bot))

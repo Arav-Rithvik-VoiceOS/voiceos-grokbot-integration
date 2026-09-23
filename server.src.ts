@@ -38,11 +38,11 @@ import {
   agentScreen,
 } from "./client.ts";
 import { recordCardPoll, cardCovers } from "./cardWatch.ts";
-import { connectCard, screenCard, showCard, threadCard, groupThreadCard, sentCard, sentGroupCard, toBot, toGroup, toThread, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
+import { connectCard, screenCard, showCard, threadCard, groupThreadCard, sentCard, sentGroupCard, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
 import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 import { conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
-import { ComposerFiles, teachTask, type ComposerArgs, type TeachAction } from "./composerService.ts";
+import { ComposerFiles, sweepStaleAttachments, teachTask, type ComposerArgs, type TeachAction } from "./composerService.ts";
 import { needsAttention, toCardThread, type CardItem } from "./conversation.ts";
 import { IntentRoster, resolveApprovedRecipient, registerIntentSupport } from "./intents.ts";
 import { INTENT_SLOT_VALUES_META_KEY } from "./intentSdk.generated.js";
@@ -50,6 +50,12 @@ import { INTENT_SLOT_VALUES_META_KEY } from "./intentSdk.generated.js";
 const server = new McpServer({ name: TOOLKIT, version: "1.0.0" });
 const intentRoster = new IntentRoster(readAgents);
 const listAgents = () => intentRoster.refresh();
+/** A recipient's last few messages as a confirmation draws them. Bounded: the
+ * model copies prepare's context into the send verbatim, and rendered markdown
+ * (tables, highlighted code) is far larger than its text. */
+const recentRows = async (id: string): Promise<ConfirmRow[]> =>
+  confirmationRows(toThread((await transcriptTail(id, 6)).entries ?? [], 12_000));
+intentRoster.recentRows = recentRows;
 
 /** A tool result: JSON for the model, plus (optionally) a live glance card. */
 function result(payload: Record<string, unknown>, glance?: Record<string, unknown>) {
@@ -446,9 +452,15 @@ const showTool = server.registerTool(
       if (focus) {
         // Open the requested conversation directly, in the thread card.
         const bot = await resolveAgent(focus, agents);
-        const tail = await transcriptTail(bot.id, 30);
+        // Best-effort, like the roster's panes: a just-created bot or a slow
+        // gateway still opens the conversation (its live refresh fills it in).
+        let tail: Awaited<ReturnType<typeof transcriptTail>> = {};
+        let historyUnavailable = false;
+        try { tail = await transcriptTail(bot.id, 30); }
+        catch (error) { historyUnavailable = true; log("grokbot_show transcript read failed:", error); }
         return result(
-          { focus: bot.name, status: statusWord(bot), task: (bot.lastMessagePreview ?? "").trim() || null, message: `${bot.name} is ${statusWord(bot)}.` },
+          { focus: bot.name, status: statusWord(bot), task: (bot.lastMessagePreview ?? "").trim() || null,
+            ...(historyUnavailable ? { historyUnavailable: true } : {}), message: `${bot.name} is ${statusWord(bot)}.` },
           conversationCard(bot, agents, tail),
         );
       }
@@ -482,6 +494,10 @@ const composerFiles = new ComposerFiles(undefined, async (botId, message) => {
   const baseline = (await transcriptTail(botId, 12)).entries ?? [];
   return () => watchThreadThenNotify(bot, baseline.map(e => e.id), message);
 });
+// Staged copies are private user files: remove them on every exit (host gone,
+// SIGINT/SIGTERM), and sweep what a killed or crashed server left behind.
+process.once("exit", () => composerFiles.cleanupSync());
+void sweepStaleAttachments().catch(error => log("attachment sweep failed:", error));
 server.registerTool("grokbot_card_files", {
   title: "Attach files from the bot card",
   description: "Internal — only for explicit attachment picker, removal, send, and status actions in the Grok Bot card. Never call from a voice or model request.",
@@ -588,14 +604,14 @@ server.registerTool("grokbot_prepare_message", {
     }
     resolved = { ...args, ...(existing ? { group: existing.id } : {}), members: memberIds };
   }
-  const threads: Record<string, ReturnType<typeof toThread>> = {};
+  const threads: Record<string, ConfirmRow[]> = {};
   if (target) {
-    // Bounded: the model copies confirmationContext into the send call verbatim,
-    // and rendered markdown (tables, highlighted code) is far larger than its text.
-    try { threads[target.id] = toThread((await transcriptTail(target.id, 6)).entries ?? [], 12_000); }
+    try { threads[target.id] = await recentRows(target.id); }
     catch { /* Registration can precede the first transcript. */ }
   }
-  const confirmationContext = JSON.stringify({ bots: agents.filter(a => !a.isGroup).map(toBot), groups: agents.filter(a => a.isGroup).map(toGroup), threads });
+  const send = args.bot !== undefined;
+  const keep = [...(target ? [target.id, ...(target.memberIds ?? [])] : []), ...(Array.isArray(resolved.members) ? resolved.members : [])];
+  const context = confirmationContext(send ? agents.filter(a => !a.isGroup) : agents, threads, keep, send);
   // NO glance here, on purpose. A tool result that carries _voiceos_glance makes
   // the notch present it as the turn's result (the host snapshots it as the
   // answer), and the grokbot_send confirmation that follows a moment later is
@@ -603,7 +619,7 @@ server.registerTool("grokbot_prepare_message", {
   // card. Plain JSON keeps the notch in its thinking state until the
   // confirmation opens.
   return result({ ready: true, nextTool: args.bot !== undefined ? "grokbot_send" : "grokbot_group",
-    args: { ...resolved, confirmationContext }, message: "Recipients verified. Use the returned args to open the message confirmation." });
+    args: { ...resolved, confirmationContext: context }, message: "Recipients verified. Use the returned args to open the message confirmation." });
 }));
 
 // The "Sent to group" receipt (sent-group.html): a RECEIPT like the 1:1 send,

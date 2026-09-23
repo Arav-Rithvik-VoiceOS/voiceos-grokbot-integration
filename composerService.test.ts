@@ -1,9 +1,10 @@
 import { test, expect, afterEach } from "bun:test";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, mkdir, readdir, readFile, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ComposerFiles,
+  sweepStaleAttachments,
   teachTask,
   type ComposerTransport,
   type teachTransport,
@@ -101,6 +102,39 @@ test("picker stages private opaque handles and uploads actual bytes only on send
   expect(
     (await f.service.handle({ bot: "a", action: "status" })).attachments,
   ).toHaveLength(0);
+});
+test("staged copies are removed synchronously at exit, and a dead server's are swept later", async () => {
+  const f = await fixture();
+  await f.pick();
+  const staged = (f.service as unknown as { rootPath: string }).rootPath;
+  expect(staged.startsWith(join(tmpdir(), "voiceos-grok-attachments-"))).toBe(true);
+  expect(await readFile(join(staged, ".owner"), "utf8")).toBe(String(process.pid));
+  expect((await readdir(staged)).length).toBe(2);
+  f.service.cleanupSync();
+  expect(await readdir(staged).catch(() => null)).toBeNull();
+
+  const root = await mkdtemp(join(tmpdir(), "grok-sweep-test-"));
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  const make = async (name: string, owner?: string, oldMs = 0) => {
+    const dir = join(root, `voiceos-grok-attachments-${name}`);
+    await mkdir(dir);
+    await writeFile(join(dir, "file"), "private");
+    if (owner !== undefined) await writeFile(join(dir, ".owner"), owner);
+    if (oldMs) await utimes(dir, new Date(Date.now() - oldMs), new Date(Date.now() - oldMs));
+  };
+  await make("dead", "999991");
+  await make("alive", "999992");
+  await make("self", String(process.pid));
+  await make("legacy-old", undefined, 60 * 60_000);
+  await make("legacy-new");
+  await mkdir(join(root, "unrelated"));
+  await sweepStaleAttachments(root, (pid) => pid === 999992);
+  expect((await readdir(root)).sort()).toEqual([
+    "unrelated",
+    "voiceos-grok-attachments-alive",
+    "voiceos-grok-attachments-legacy-new",
+    "voiceos-grok-attachments-self",
+  ]);
 });
 test("removal removes the staged attachment without uploading or messaging", async () => {
   const f = await fixture();

@@ -7,11 +7,15 @@
 .lc-link{cursor:pointer;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:2px;transition:color .12s}.lc-link:hover{color:var(--ink-2)}
 .lc-link.bot,.lc-img.bot,.lc-file.bot,.lc-card.bot{align-self:flex-start}
 .lc-link.me,.lc-img.me,.lc-file.me,.lc-card.me{align-self:flex-end}
+/* thread.html's group sender line; show.html has no rule for it. */
+.lc-list .from{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-3);margin:4px 0 -3px 6px;align-self:flex-start}
 .lc-img{display:block;max-width:82%;max-height:200px;border-radius:16px;object-fit:contain}
 .lc-img.bot{border-bottom-left-radius:6px}.lc-img.me{border-bottom-right-radius:6px}
 .lc-ph{width:168px;height:112px;display:grid;place-items:center;padding:10px;border:1px solid var(--line);color:var(--ink-3);font-size:11px;background:linear-gradient(100deg,var(--fill-1) 40%,var(--fill-2) 50%,var(--fill-1) 60%) 0 0/300% 100%;animation:lc-sh 1.4s linear infinite}
 .lc-ph span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @keyframes lc-sh{to{background-position:-150% 0}}
+/* No tools, or no automatic requests left: a still box with the image's name, not a load that never comes. */
+.lc-ro .lc-ph,.lc-off .lc-ph{animation:none;background:var(--fill-1)}
 .lc-file{gap:5px;max-width:82%;padding:3px 8px;line-height:18px;border-radius:8px;cursor:pointer;transition:background .12s,color .12s}
 .lc-file span{overflow:hidden;text-overflow:ellipsis}.lc-file svg{flex:none;width:12px;height:12px;color:var(--ink-3)}
 .lc-file:hover{background:var(--fill-3);color:var(--ink-1)}

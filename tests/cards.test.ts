@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { runInNewContext } from "node:vm";
 import { toCardItem, toCardThread, toThread as threadItems, boundThread, type CardItem } from "../conversation.ts";
 import { conversationSnapshot, conversationEntry, conversationTransport } from "../conversationService.ts";
 import {
   renderCard, threadCard, groupThreadCard, groupComposeCard, showCard, sentCard, sentGroupCard, connectCard, glanceChars,
-  pinnedConfirmationAdapter, relTime, toThread,
+  pinnedConfirmationAdapter, relTime, toThread, toBot, MAX_GLANCE_CHARS, CONFIRM_EXTRAS, confirmationContext, CONFIRMATION_CONTEXT_CHARS,
 } from "../cards.ts";
 import {
   MESSAGING_ADAPTER, MESSAGING_CSS, LIVE_CHAT_JS, LIVE_CHAT_CSS, MARKDOWN_CSS,
@@ -11,7 +12,7 @@ import {
 } from "../assets.generated.ts";
 import type { Agent, TranscriptEntry } from "../client.ts";
 
-const MAX_GLANCE = 96_000;
+const MAX_GLANCE = MAX_GLANCE_CHARS;
 const htmlOf = (card: { _voiceos_glance: { blocks: { html: string }[] } }) => card._voiceos_glance.blocks[0].html;
 const demo = (html: string) => JSON.parse(html.match(/^const DEMO=(.*);$/m)![1]);
 const scripts = (html: string) => [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
@@ -69,6 +70,14 @@ const short = (i: number): TranscriptEntry => ({
   content: `Message ${i}: ` + "a reasonably ordinary sentence ".repeat(8),
 });
 const roster = (n: number): Agent[] => Array.from({ length: n }, (_, i) => ({ id: `b${i}`, name: `Bot ${i}`, avatarShape: "hex" }));
+// Realistic worst case: UUID ids, long names and titles, full previews, every shape.
+const SHAPES = ["blob", "pebble", "squircle", "tablet", "wedge", "hex", "cloud", "teardrop"];
+const bigRoster = (n: number): Agent[] => Array.from({ length: n }, (_, i) => ({
+  id: `${String(i).padStart(8, "0")}-1f2e-4d3c-8b7a-0123456789ab`, name: `Research and outreach assistant ${i}`,
+  title: "Executive assistant for the research team", avatarShape: SHAPES[i % 8], avatarColor: "violet",
+  lastMessagePreview: "Here is the summary of everything I found about the quarterly numbers and the draft ".repeat(3),
+  lastActivityAt: Date.now() - 3_600_000,
+}));
 
 describe("card items", () => {
   test("never carry a media path, and keep every field the live chat renders", () => {
@@ -195,6 +204,48 @@ describe("baked cards stay under the glance cap", () => {
     // A pane that lost its history also loses its cursor (it would skip messages).
     for (const id of Object.keys(data.nextBeforeSeqs)) expect(data.threads[id]).toBeDefined();
   });
+  test("a 1:1 card bakes only the bots its rows draw; the live refresh brings the rest", () => {
+    const agents = roster(40);
+    const fromOther: TranscriptEntry = { id: "other", kind: "message", role: "user", fromAgent: { id: "b7", name: "Bot 7" }, content: "Hi" };
+    const data = demo(htmlOf(threadCard(agents[0], [short(1), fromOther], "", agents))).data;
+    expect(data.bots.map((b: { id: string }) => b.id)).toEqual(["b0", "b7"]);
+  });
+  test("an ordinary roster opens every chat pane prefetched", () => {
+    const agents = roster(12);
+    const threads = Object.fromEntries(agents.map((a) => [a.id, toCardThread(Array.from({ length: 6 }, (_, i) => ({ ...short(i), id: `${a.id}-${i}` })))]));
+    const data = demo(htmlOf(showCard(agents, undefined, threads))).data;
+    for (const a of agents) expect(data.threads[a.id]).toHaveLength(6);
+    for (const a of agents) expect(data.threads[a.id].every((i: { deferred?: unknown }) => !i.deferred)).toBe(true);
+  });
+  for (const n of [60, 100, 200]) {
+    test(`${n} long-named bots: thread, group and show cards stay under the cap and keep history`, () => {
+      const agents = bigRoster(n);
+      const entries = Array.from({ length: 30 }, (_, i) => short(i));
+      const members = agents.slice(0, 3).map((a) => a.id);
+      const one = threadCard(agents[0], entries, "", agents, 3);
+      const group = groupThreadCard(agents, { id: "g", name: "Crew", members }, entries, "", 3);
+      const threads = Object.fromEntries(agents.map((a) => [a.id, toCardThread(entries.slice(0, 6))]));
+      const show = showCard(agents, undefined, threads);
+      for (const card of [one, group, show]) expect(glanceChars(card)).toBeLessThanOrEqual(MAX_GLANCE);
+      expect(demo(htmlOf(one)).data.thread).toHaveLength(30);
+      expect(demo(htmlOf(group)).data.groups[0].thread).toHaveLength(30);
+      expect(demo(htmlOf(group)).data.bots).toHaveLength(n);
+      expect(demo(htmlOf(show)).data.bots).toHaveLength(n);
+      // Every roster row is one ellipsized line.
+      for (const b of demo(htmlOf(show)).data.bots) expect(b.task.length).toBeLessThanOrEqual(120);
+    });
+  }
+  test("a roster too big for any history degrades to a slim roster, never an over-cap card", () => {
+    const agents = bigRoster(1_000);
+    const group = groupThreadCard(agents, { id: "g", name: "Crew", members: [agents[0].id] }, [short(1)]);
+    const show = showCard(agents, undefined, { [agents[0].id]: toCardThread([short(1)]) });
+    for (const card of [group, show]) expect(glanceChars(card)).toBeLessThanOrEqual(MAX_GLANCE);
+    const bots = demo(htmlOf(group)).data.bots;
+    expect(bots).toHaveLength(1_000);
+    expect(bots[0].label).toBe("Executive assistant for the research team");
+    expect(bots[1].label).toBeUndefined();
+    expect(demo(htmlOf(show)).data.bots).toHaveLength(1_000);
+  });
   test("small prefetched panes are kept whole with their cursors and time labels", () => {
     const agents = roster(4);
     const threads = { b0: toCardThread([picture]), b1: [] };
@@ -226,6 +277,45 @@ describe("renderCard asset injection", () => {
     // over init, so every avatar shape must survive.
     expect(html).toContain(".av.teardrop");
     expect(() => new Function(script)).not.toThrow();
+  });
+  test("a confirmation draws notices without an orb and hands links to the host", () => {
+    const html = renderCard("thread", { data: { confirmation: true, tool: "grokbot_group", bots: [], groups: [], threads: {}, me: "" }, args: {} });
+    expect(scripts(html)[0]).toContain(`${pinnedConfirmationAdapter()}\n${CONFIRM_EXTRAS}\n})();`);
+    let click: any;
+    const posts: any[] = [];
+    const sandbox: any = {
+      msgHtml: () => "ORB", esc: (s: string) => String(s).replace(/</g, "&lt;"),
+      document: { addEventListener: (type: string, fn: any, capture: boolean) => { if (type === "click" && capture) click = fn; } },
+      parent: { postMessage: (m: any) => posts.push(m) },
+    };
+    runInNewContext(`${CONFIRM_EXTRAS}\nthis.draw=msgHtml;`, sandbox);
+    expect(sandbox.draw({ id: "n", from: "bot", sys: "Titus <b>finished</b>" })).toBe('<div class="sys">Titus &lt;b>finished&lt;/b></div>');
+    expect(sandbox.draw({ id: "e", from: "bot", sys: "" })).toBe("");
+    expect(sandbox.draw({ id: "m", from: "bot", bot: "p", sys: "Messaged" })).toBe("ORB");
+    expect(sandbox.draw({ id: "x", from: "bot", text: "Hi" })).toBe("ORB");
+    const press = (href: string) => {
+      let prevented = false;
+      const a = { href };
+      click({ target: { closest: (sel: string) => (sel === "a[href]" ? a : null) }, preventDefault: () => { prevented = true; } });
+      return prevented;
+    };
+    expect(press("https://example.com/report")).toBe(true);
+    expect(press("http://example.com/")).toBe(true);
+    expect(posts).toEqual([{ type: "voiceos:openUrl", url: "https://example.com/report" }]);
+  });
+  test("a confirmation context over budget keeps the bots it draws whole", () => {
+    const agents = bigRoster(400);
+    const keep = agents[5].id;
+    const rows = { [agents[0].id]: [{ id: "r", from: "bot" as const, bot: keep, text: "Hi" }] };
+    const send = JSON.parse(confirmationContext(agents, rows, [agents[0].id], true));
+    expect(JSON.stringify(send).length).toBeLessThanOrEqual(CONFIRMATION_CONTEXT_CHARS);
+    expect(send.bots.map((b: { id: string }) => b.id)).toEqual([agents[0].id, keep]);
+    expect(send.bots[0]).toMatchObject({ ...toBot(agents[0]), task: "" });
+    // A group confirmation adds members from the whole roster: nobody drops out.
+    const group = JSON.parse(confirmationContext([...agents.slice(0, 200), { id: "g", name: "Crew", isGroup: true, memberIds: [agents[1].id] }], { g: [] }, []));
+    expect(group.bots).toHaveLength(200);
+    expect(group.bots[1].label).toBe("Executive assistant for the research team");
+    expect(group.groups[0]).toMatchObject({ id: "g", last: "" });
   });
   test("sent receipts are unchanged: the messaging adapter and its CSS only", () => {
     for (const card of [sentCard({ id: "b0", name: "Bot 0" }, "Hello $& $'"), sentGroupCard(roster(2), { id: "g", name: "Crew", members: ["b0", "b1"] }, "Hello")]) {

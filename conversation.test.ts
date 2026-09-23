@@ -13,7 +13,7 @@ import {
   conversationEntry,
   performConversationAction,
 } from "./conversationService.ts";
-import { threadCard, showCard, glanceChars } from "./cards.ts";
+import { threadCard, showCard, glanceChars, MAX_GLANCE_CHARS } from "./cards.ts";
 import { LIVE_CHAT_JS } from "./assets.generated.ts";
 import type { TranscriptEntry } from "./client.ts";
 
@@ -252,7 +252,7 @@ describe("Grok conversation event parity", () => {
       glanceChars(
         threadCard({ id: "picasso", name: "Picasso" }, [image, question]),
       ),
-    ).toBeLessThan(96000);
+    ).toBeLessThanOrEqual(MAX_GLANCE_CHARS);
     expect(
       glanceChars(
         showCard(
@@ -262,7 +262,7 @@ describe("Grok conversation event parity", () => {
           })),
         ),
       ),
-    ).toBeLessThan(96000);
+    ).toBeLessThanOrEqual(MAX_GLANCE_CHARS);
   });
 });
 
@@ -285,6 +285,9 @@ describe("card responses", () => {
         },
         openGrokBotApp: () => {
           calls.push("open");
+        },
+        openBotChat: async (id: string) => {
+          calls.push(`open:${id}`);
         },
       },
     };
@@ -339,6 +342,20 @@ describe("card responses", () => {
     expect(
       await performConversationAction(
         { bot: "picasso", action: "open" },
+        f.transport,
+      ),
+    ).toEqual({ ok: true, opened: true });
+    // Straight to the bot's conversation, where the request waits.
+    expect(f.calls).toEqual(["open:picasso"]);
+  });
+  test("a bot the deep link cannot open still brings Grok Bot up", async () => {
+    const f = setup();
+    f.transport.openBotChat = async () => {
+      throw Error("That bot can't be opened.");
+    };
+    expect(
+      await performConversationAction(
+        { bot: "bad id", action: "open" },
         f.transport,
       ),
     ).toEqual({ ok: true, opened: true });
@@ -482,7 +499,7 @@ test("script escaping cannot overflow the initial card for long messages", () =>
   const card = threadCard({ id: "sam", name: "Sam" }, [
     { id: "long", kind: "message", content: text },
   ]);
-  expect(glanceChars(card)).toBeLessThan(96000);
+  expect(glanceChars(card)).toBeLessThanOrEqual(MAX_GLANCE_CHARS);
   expect(card._voiceos_glance.blocks[0].html).not.toContain(
     "View full message",
   );

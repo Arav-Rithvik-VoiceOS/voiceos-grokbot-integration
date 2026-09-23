@@ -15,7 +15,8 @@ import { join } from "node:path";
 import { screenCard, glanceChars } from "../cards.ts";
 import type { Agent } from "../client.ts";
 
-/** VoiceOS drops any widget glance whose JSON.stringify({blocks}) exceeds this (validateGlancePayload). */
+/** The screen card's own budget: VoiceOS 0.2.27's widget glance cap (validateGlancePayload), far under
+ * cards.ts MAX_GLANCE_CHARS, so the embedded viewer (build-rfb.ts) stays small on every host. */
 const CAP = 96_000;
 /** The gate must measure a WORST-CASE real card, not a toy one: a real fork-box socket url is ~185
  * chars and a real bot carries a UUID + long name/label. A short fixture once passed at 95.5k while
@@ -48,7 +49,7 @@ if (!/const RFB_B64='H4sI/.test(live)) fail("live card is missing the gzip+base6
 if (!live.includes(`"stream":"${WS_URL}"`)) fail("live card args.stream is not the WebSocket url");
 if (!live.includes("goLive(a)")) fail("live card lost the goLive path");
 if (!live.includes("DecompressionStream")) fail("live card has no inflate path");
-console.log(`live screen card: ${liveChars} glance chars (${Math.round((liveChars / CAP) * 100)}% of the 96k cap), html ${Buffer.byteLength(live)} B ✓`);
+console.log(`live screen card: ${liveChars} glance chars (${Math.round((liveChars / CAP) * 100)}% of its 96k budget), html ${Buffer.byteLength(live)} B ✓`);
 
 // 2. Idle card: no viewer, no placeholders, small.
 const idleCard = screenCard(bot);

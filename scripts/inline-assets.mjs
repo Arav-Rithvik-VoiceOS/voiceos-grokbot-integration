@@ -30,9 +30,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const text = (rel) => readFileSync(join(root, rel), "utf8");
 const s = (v) => JSON.stringify(v); // safe for any HTML/JS/CSS content
 // The scripts and styles injected into the thread and show cards share the
-// 96k glance cap with the handoff itself, and every byte they spend is a
-// message the card cannot show. Whitespace and comments only (esbuild comes
-// with tsx): names, globals (LiveChat, ComposerKit) and behavior are unchanged.
+// glance cap (cards.ts MAX_GLANCE_CHARS) with the handoff itself, and every byte they spend is a
+// message the card cannot show. Whitespace and comments only (esbuild is a
+// pinned devDependency, so the frozen bytes move only with the lockfile):
+// names, globals (LiveChat, ComposerKit) and behavior are unchanged.
 // The widget HTML is the design handoff and stays verbatim, and so does the
 // confirmation adapter: cards.ts patches it by exact source anchors.
 const minified = (rel) => transformSync(text(rel), {

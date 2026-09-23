@@ -12,6 +12,8 @@
 .bubble ul,.bubble ol{padding-left:18px}
 .bubble li+li{margin-top:2px}
 .bubble li::marker{color:var(--ink-3)}
+/* Task lists: the checkbox is the marker. */
+.bubble li:has(>input[type=checkbox]:first-child),.bubble li:has(>p:first-child>input[type=checkbox]:first-child){list-style:none}
 .bubble li input[type=checkbox]{width:auto;padding:0;border:0;margin:0 5px 0 0;vertical-align:-1px;accent-color:var(--accent)}
 .bubble blockquote{border-left:2px solid var(--fill-3);padding:1px 0 1px 9px;color:var(--ink-2)}
 .bubble hr{border:0;border-top:1px solid var(--line)}

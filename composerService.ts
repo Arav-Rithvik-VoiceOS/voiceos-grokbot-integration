@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, copyFile, stat, open, rm, chmod } from "node:fs/promises";
+import { mkdtemp, copyFile, stat, open, rm, chmod, readdir, readFile, writeFile } from "node:fs/promises";
+import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import {
@@ -56,6 +57,24 @@ export const composerTransport = {
 };
 export type ComposerTransport = typeof composerTransport;
 const TTL_MS = 30 * 60_000;
+const STAGING_PREFIX = "voiceos-grok-attachments-";
+const OWNER_FILE = ".owner";
+
+/** Remove staging directories whose server is gone (killed or crashed before
+ * its exit cleanup). Each directory names its owner pid; one without a marker
+ * is only removed once it is older than any live staged file could be. */
+export async function sweepStaleAttachments(root = tmpdir(), alive = (pid: number) => {
+  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
+}) {
+  for (const name of await readdir(root)) {
+    if (!name.startsWith(STAGING_PREFIX)) continue;
+    const dir = join(root, name);
+    const pid = Number(await readFile(join(dir, OWNER_FILE), "utf8").catch(() => ""));
+    const info = pid > 0 ? undefined : await stat(dir).catch(() => undefined);
+    const stale = pid > 0 ? pid !== process.pid && !alive(pid) : !!info && Date.now() - info.mtimeMs > TTL_MS;
+    if (stale) await rm(dir, { recursive: true, force: true });
+  }
+}
 const MAX_FILES = 20;
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 type Attachment = {
@@ -94,6 +113,7 @@ export class ComposerFiles {
   private jobs = new Map<string, Job>();
   private sends = new Map<string, string>();
   private root?: Promise<string>;
+  private rootPath?: string;
   constructor(
     private transport: ComposerTransport = composerTransport,
     private beforeSend?: (
@@ -102,7 +122,11 @@ export class ComposerFiles {
     ) => Promise<(() => void) | undefined>,
   ) {}
   private directory() {
-    return (this.root ??= mkdtemp(join(tmpdir(), "voiceos-grok-attachments-")));
+    return (this.root ??= mkdtemp(join(tmpdir(), STAGING_PREFIX)).then(async (dir) => {
+      this.rootPath = dir;
+      await writeFile(join(dir, OWNER_FILE), String(process.pid), { mode: 0o600 });
+      return dir;
+    }));
   }
   private async prune() {
     const cutoff = Date.now() - TTL_MS;
@@ -363,6 +387,11 @@ export class ComposerFiles {
   }
   async settled(jobId: string) {
     await this.jobs.get(jobId)?.promise;
+  }
+  /** Synchronous, for process exit: no promise settles after "exit". */
+  cleanupSync() {
+    if (!this.rootPath) return;
+    try { rmSync(this.rootPath, { recursive: true, force: true }); } catch { /* best-effort at exit */ }
   }
   async dispose() {
     await Promise.all([...this.jobs.values()].map((j) => j.promise));

@@ -1,5 +1,6 @@
 {
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "voiceos-grokbot",
@@ -17,6 +18,7 @@
         "@novnc/novnc": "^1.7.0",
         "@types/katex": "0.16.8",
         "@types/sanitize-html": "2.16.1",
+        "esbuild": "0.28.2",
       },
     },
   },

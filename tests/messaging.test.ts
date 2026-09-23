@@ -17,6 +17,7 @@ let publishCreated = true;
 const EARLIER: actual.TranscriptEntry[] = [{ kind: "message", role: "user", content: "Earlier message", id: "old" }];
 let tail: actual.TranscriptEntry[] = EARLIER;
 let tailCursor: number | undefined;
+let tailFails = false;
 let desktopProbe: Awaited<ReturnType<typeof actual.agentScreen>>;
 let computerWindows: Array<{ botId: string; botName: string; wsUrl: string }>;
 mock.module("@modelcontextprotocol/sdk/server/mcp.js", () => ({ McpServer: class {
@@ -42,7 +43,10 @@ mock.module("../client.ts", () => ({
     return bot;
   },
   resolveAgent: async (name: string, list = agents) => resolveReal(name, list),
-  transcriptTail: async () => ({ entries: tail, ...(tailCursor !== undefined ? { nextBeforeSeq: tailCursor } : {}) }),
+  transcriptTail: async () => {
+    if (tailFails) throw new actual.IntegrationError("upstream", "transcript read failed");
+    return { entries: tail, ...(tailCursor !== undefined ? { nextBeforeSeq: tailCursor } : {}) };
+  },
   agentScreen: async () => desktopProbe,
   openBotChat: async (id: string) => { openedChats.push(id); },
   openComputerWindow: async (input: { botId: string; botName: string; wsUrl: string }) => {
@@ -97,6 +101,7 @@ beforeEach(() => {
   publishCreated = true;
   tail = EARLIER;
   tailCursor = undefined;
+  tailFails = false;
   desktopProbe = { live: false, boxState: "absent" };
   computerWindows = [];
   openedChats = [];
@@ -506,7 +511,70 @@ test("the send confirmation context stays small when recent replies are huge", a
   tail = [{ kind: "send-message", id: "big", message: { type: "text", content: "| a | b |\n|---|---|\n" + "| `x` | **y** |\n".repeat(3000) } }];
   const r = await call("grokbot_prepare_message", { bot: "Pepper", message: "Hi" });
   expect(r.args.confirmationContext.length).toBeLessThan(16_000);
-  expect(JSON.parse(r.args.confirmationContext).threads.p[0]).toMatchObject({ id: "big", deferred: expect.any(Object) });
+  // A deferred preview is its opening text; the confirmation has no loader.
+  const [row] = JSON.parse(r.args.confirmationContext).threads.p;
+  expect(row).toMatchObject({ id: "big", text: expect.stringMatching(/…$/) });
+  expect(row.html).toBeUndefined();
+  expect(row.deferred).toBeUndefined();
+});
+
+// What thread.html's own msgHtml draws in a confirmation (no live chat there).
+const confirmRowsOf = (context: string, id: string) => JSON.parse(context).threads[id] as any[];
+const PENDING: actual.TranscriptEntry[] = [
+  { kind: "send-message", id: "ask", author: { id: "t", name: "Titus" }, message: { type: "widget", widget: { prompt: "Which venue for the talk?", options: [{ label: "Hall A", value: "Hall A" }] } } },
+  { kind: "notice", id: "note", text: "Titus finished a task" },
+  { kind: "notice", id: "blank", text: "" },
+  { kind: "user-attachment", id: "file", file_path: "/Users/arav/Private/Q3 report.pdf", file_name: "Q3 report.pdf" },
+  { kind: "send-message", id: "shot", message: { type: "text", content: "", images: [{ url: "file:///home/box/a.png", alt: "Concept A" }] } },
+  { kind: "send-message", id: "perm", message: { type: "permission-request", permission: { title: "Approve command" } } },
+  { kind: "message", role: "user", fromAgent: { id: "f", name: "Friday" }, content: "From Friday", id: "fri" },
+];
+test("confirmation rows never draw an empty bubble or a nameless orb", async () => {
+  tail = PENDING;
+  for (const [args, key] of [[{ bot: "Titus", message: "Hall A" }, "t"], [{ group: "Homework crew", message: "Hi" }, "g"]] as const) {
+    const r = await call("grokbot_prepare_message", args);
+    const rows = confirmRowsOf(r.args.confirmationContext, key);
+    expect(rows.map(i => i.id)).toEqual(["ask", "note", "file", "shot", "perm", "fri"]);
+    for (const row of rows) {
+      if (row.sys === undefined) expect(Boolean(row.text || row.html)).toBe(true);
+      expect(Object.keys(row).every(k => ["id", "from", "bot", "sys", "t", "text", "html"].includes(k))).toBe(true);
+    }
+    expect(rows[0]).toMatchObject({ from: "bot", bot: "t", text: "Which venue for the talk?" });
+    expect(rows[1]).toEqual({ id: "note", from: "bot", sys: "Titus finished a task" });
+    expect(rows[2]).toMatchObject({ from: "me", text: "Q3 report.pdf" });
+    expect(rows[3]).toMatchObject({ text: "Concept A" });
+    expect(rows[4]).toMatchObject({ text: "Approve command" });
+    expect(rows[5]).toMatchObject({ bot: "f", html: expect.stringContaining("From Friday") });
+    expect(JSON.stringify(rows)).not.toContain("/Users/arav");
+  }
+});
+test("a model-initiated send without preparation still shows the recipient's rows and whole roster", async () => {
+  tail = [...EARLIER, { kind: "message", role: "user", fromAgent: { id: "f", name: "Friday" }, content: "From Friday", id: "fri" }];
+  await handlers.get("grokbot_show")!({});
+  const hook = await handlers.get("voiceos_hook_pre_tool_use")!({ payload_json: JSON.stringify({
+    hookApiVersion: 1, event: "preToolUse", toolName: "grokbot_send", args: { bot: "Pepper", message: "Hi" },
+  }) });
+  const { updatedArgs } = JSON.parse(hook.content[0].text);
+  expect(updatedArgs.recipientId).toBe("p");
+  const context = JSON.parse(updatedArgs.confirmationContext);
+  expect(context.bots.map((b: any) => b.id)).toEqual(["p", "f", "t"]);
+  expect(context.threads.p.map((i: any) => i.id)).toEqual(["old", "fri"]);
+});
+test("a group named like a bot does not stop an approved send to that bot", async () => {
+  agents.push({ id: "g2", name: "Pepper", isGroup: true, memberIds: ["f", "t"] });
+  const r = await call("grokbot_send", { bot: "Pepper", message: "Hi" });
+  expect(r.sent).toBe(true);
+  expect(writes).toEqual([["send", "p", "Hi"]]);
+});
+test("showing one bot opens its conversation even when its history cannot be read", async () => {
+  tailFails = true;
+  const r = await call("grokbot_show", { bot: "Pepper" });
+  expect(r.isError).toBeFalsy();
+  expect(r).toMatchObject({ focus: "Pepper", historyUnavailable: true });
+  expect(cardData(r).args.bot).toBe("p");
+  expect(cardData(r).data.thread).toEqual([]);
+  tailFails = false;
+  expect((await call("grokbot_show", { bot: "Pepper" })).historyUnavailable).toBeUndefined();
 });
 
 const clickReminder = (actionId: string, data?: Record<string, unknown>) =>
