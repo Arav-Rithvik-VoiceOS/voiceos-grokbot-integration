@@ -73,7 +73,7 @@ export function buildViewerDocument(
   try {
     rfbSource = gunzipSync(Buffer.from(compressedRfbBase64, "base64")).toString("utf8");
   } catch {
-    throw new Error("The view-only desktop viewer is unavailable.");
+    throw new Error("The desktop viewer is unavailable.");
   }
 
   const moduleSource = rfbSource.replace(
@@ -81,7 +81,7 @@ export function buildViewerDocument(
     "var VoiceOSRFB=$1;",
   );
   if (moduleSource === rfbSource) {
-    throw new Error("The view-only desktop viewer is unavailable.");
+    throw new Error("The desktop viewer is unavailable.");
   }
 
   // An HTML parser must never read bundle bytes as a closing script tag. This
@@ -93,7 +93,7 @@ export function buildViewerDocument(
     .replace("__VOICEOS_RFB_SOURCE__", () => htmlSafeSource);
 
   if (/__VOICEOS_(?:CSP_CONNECT|NONCE|RFB_SOURCE)__/.test(html)) {
-    throw new Error("The view-only desktop viewer is unavailable.");
+    throw new Error("The desktop viewer is unavailable.");
   }
   return html;
 }
@@ -256,7 +256,7 @@ export async function openComputerWindow(input: {
 }): Promise<{ reused: boolean }> {
   const wsUrl = validateDesktopWebSocketUrl(input.wsUrl);
   const template = WIDGETS.computer;
-  if (!template) throw new Error("The view-only desktop viewer is unavailable.");
+  if (!template) throw new Error("The desktop viewer is unavailable.");
   const html = buildViewerDocument(template, RFB_FULL_B64, wsUrl);
   const { session, reused } = viewerSession(input.botId);
   const requestId = randomBytes(18).toString("base64url");

@@ -1,0 +1,48 @@
+/* Markdown inside the handoff's .bubble (server-rendered, sanitized by markdown.ts). A single plain
+   paragraph renders exactly like the old text bubble; blocks only get space between each other. */
+.bubble{min-width:0}
+.bubble>*,.bubble li>*{margin:0}
+.bubble>*+*,.bubble li>*+*{margin-top:7px}
+.bubble strong{font-weight:650}
+.bubble a{color:inherit;text-decoration:underline;text-decoration-color:var(--ink-3);text-underline-offset:2px}
+.bubble a:hover{text-decoration-color:currentColor}
+.bubble h1,.bubble h2,.bubble h3,.bubble h4,.bubble h5,.bubble h6{font-size:13.5px;font-weight:650;letter-spacing:-.005em;line-height:1.3}
+.bubble h1{font-size:15px;letter-spacing:-.012em}.bubble h2{font-size:14.5px}
+.bubble>h1+*,.bubble>h2+*,.bubble>h3+*,.bubble>h4+*,.bubble>h5+*,.bubble>h6+*{margin-top:4px}
+.bubble ul,.bubble ol{padding-left:18px}
+.bubble li+li{margin-top:2px}
+.bubble li::marker{color:var(--ink-3)}
+/* Task lists: the checkbox is the marker. */
+.bubble li:has(>input[type=checkbox]:first-child),.bubble li:has(>p:first-child>input[type=checkbox]:first-child){list-style:none}
+.bubble li input[type=checkbox]{width:auto;padding:0;border:0;margin:0 5px 0 0;vertical-align:-1px;accent-color:var(--accent)}
+.bubble blockquote{border-left:2px solid var(--fill-3);padding:1px 0 1px 9px;color:var(--ink-2)}
+.bubble hr{border:0;border-top:1px solid var(--line)}
+.bubble code,.bubble kbd,.bubble pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.bubble :not(pre)>code{font-size:12px;background:var(--fill-2);border-radius:5px;padding:1px 4px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.bubble kbd{font-size:11px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px}
+.bubble mark{background:rgba(255,138,0,.28);color:inherit;border-radius:3px;padding:0 2px}
+.bubble .code-block{max-width:100%;border-radius:11px;background:rgba(0,0,0,.28);border:1px solid var(--line);overflow:hidden}
+html[data-theme=light] .bubble .code-block{background:rgba(0,0,0,.035)}
+.bubble .code-language{padding:5px 10px 0;font-size:10.5px;font-weight:600;color:var(--ink-3);letter-spacing:.02em}
+.bubble pre{margin:0;padding:6px 10px 8px;overflow:auto;overscroll-behavior-x:contain;font-size:11.5px;line-height:1.45;white-space:pre;overflow-wrap:normal;word-wrap:normal}
+.bubble pre code{font:inherit;white-space:inherit;background:none;padding:0}
+.bubble .table-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.bubble table{border-collapse:collapse;font-size:12px;line-height:1.35;font-variant-numeric:tabular-nums}
+.bubble th,.bubble td{padding:4px 12px 4px 0;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;min-width:48px;overflow-wrap:normal;word-wrap:normal}
+.bubble th:last-child,.bubble td:last-child{padding-right:0}
+.bubble th{font-weight:600;color:var(--ink-2);white-space:nowrap}
+.bubble tr:last-child td{border-bottom:0}
+.bubble th[align=right],.bubble td[align=right]{text-align:right}.bubble th[align=center],.bubble td[align=center]{text-align:center}
+.bubble math{font-size:1.06em}
+.bubble .katex-display,.bubble math[display=block]{display:block;max-width:100%;overflow-x:auto;overflow-y:hidden;padding:2px 0;text-align:center}
+.bubble .hljs{color:inherit}
+:root{--hk:#c792ea;--hs:#9ad49e;--hn:#f7ba7e;--ht:#82aaff;--ha:#ff8a80;--hb:#7fd8f0}
+html[data-theme=light]{--hk:#8a3fd1;--hs:#2e7d32;--hn:#b35c00;--ht:#1f5fd1;--ha:#c62828;--hb:#0b7285}
+.hljs-comment,.hljs-quote{color:var(--ink-3);font-style:italic}
+.hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-type{color:var(--hk)}
+.hljs-string,.hljs-regexp,.hljs-addition{color:var(--hs)}
+.hljs-number,.hljs-symbol,.hljs-bullet{color:var(--hn)}
+.hljs-title,.hljs-section,.hljs-function{color:var(--ht)}
+.hljs-attr,.hljs-attribute,.hljs-variable,.hljs-template-variable,.hljs-deletion{color:var(--ha)}
+.hljs-built_in,.hljs-meta,.hljs-name{color:var(--hb)}
+.hljs-emphasis{font-style:italic}.hljs-strong{font-weight:650}

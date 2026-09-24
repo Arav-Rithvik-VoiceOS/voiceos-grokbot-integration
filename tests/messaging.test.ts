@@ -1,9 +1,12 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 import * as actual from "../client.ts";
+import { toBot } from "../cards.ts";
 
 // Replace only external boundaries. These tests run the production handlers and cards.
 const resolveReal = actual.resolveAgent;
 const handlers = new Map<string, (args: any) => Promise<any>>();
+const requestHandlers = new Map<string, (req: any) => Promise<any>>();
+let openedChats: string[] = [];
 const bots: actual.Agent[] = [
   { id: "p", name: "Pepper", avatarColor: "orange" },
   { id: "f", name: "Friday", avatarColor: "green" },
@@ -13,11 +16,18 @@ let agents: actual.Agent[], writes: any[], rejectSend: boolean;
 let publishCreated = true;
 const EARLIER: actual.TranscriptEntry[] = [{ kind: "message", role: "user", content: "Earlier message", id: "old" }];
 let tail: actual.TranscriptEntry[] = EARLIER;
+let tailCursor: number | undefined;
+let tailFails = false;
 let desktopProbe: Awaited<ReturnType<typeof actual.agentScreen>>;
 let computerWindows: Array<{ botId: string; botName: string; wsUrl: string }>;
 mock.module("@modelcontextprotocol/sdk/server/mcp.js", () => ({ McpServer: class {
-  server = { request: async () => ({ notificationId: "test" }), setNotificationHandler() {} };
-  registerTool(name: string, _schema: any, handler: any) { handlers.set(name, handler); return {}; }
+  server = {
+    request: async () => ({ notificationId: "test" }),
+    setNotificationHandler() {},
+    setRequestHandler(schema: any, handler: any) { requestHandlers.set(schema.shape.method.value, (req) => handler(schema.parse(req))); },
+  };
+  registerTool(name: string, _schema: any, handler: any) { handlers.set(name, handler); return { update() {} }; }
+  tool(name: string, _description: string, _schema: any, handler: any) { handlers.set(name, handler); }
   sendToolListChanged() {}
   async connect() {}
 } }));
@@ -33,8 +43,12 @@ mock.module("../client.ts", () => ({
     return bot;
   },
   resolveAgent: async (name: string, list = agents) => resolveReal(name, list),
-  transcriptTail: async () => ({ entries: tail }),
+  transcriptTail: async () => {
+    if (tailFails) throw new actual.IntegrationError("upstream", "transcript read failed");
+    return { entries: tail, ...(tailCursor !== undefined ? { nextBeforeSeq: tailCursor } : {}) };
+  },
   agentScreen: async () => desktopProbe,
+  openBotChat: async (id: string) => { openedChats.push(id); },
   openComputerWindow: async (input: { botId: string; botName: string; wsUrl: string }) => {
     computerWindows.push(input);
     return { reused: false };
@@ -62,21 +76,35 @@ mock.module("../client.ts", () => ({
 await import("../server.src.ts");
 const call = async (name: string, args: any) => {
   try {
+    if (name === "grokbot_send" && args.bot && !args.recipientId) {
+      // Simulate the host preparation hook followed by approval. Direct
+      // unverified handler calls are tested separately in intents.test.ts.
+      await handlers.get("grokbot_show")!({});
+      const hook = await handlers.get("voiceos_hook_pre_tool_use")!({ payload_json: JSON.stringify({
+        hookApiVersion: 1, event: "preToolUse", toolName: name, args,
+      }) });
+      const prepared = JSON.parse(hook.content[0].text);
+      if (prepared.decision === "block") return { isError: true, error: prepared.responseText };
+      args = prepared.updatedArgs ?? args;
+    }
     const response = await handlers.get(name)!(args);
     return { ...JSON.parse(response.content[0].text), isError: response.isError };
   } catch (error) { return { isError: true, error: String(error) }; }
 };
 const cardData = (r: any) => {
   const html = r._voiceos_glance.blocks[0].html;
-  return JSON.parse(html.match(/const DEMO=(.*);/)[1]);
+  return JSON.parse(html.match(/const DEMO=(.*);/)![1]);
 };
 beforeEach(() => {
   agents = [...bots.map(a => ({ ...a })), { id: "g", name: "Homework crew", isGroup: true, memberIds: ["p", "f"] }];
   writes = []; rejectSend = false;
   publishCreated = true;
   tail = EARLIER;
+  tailCursor = undefined;
+  tailFails = false;
   desktopProbe = { live: false, boxState: "absent" };
   computerWindows = [];
+  openedChats = [];
 });
 
 test("an offline bot returns a clear result without opening a computer window", async () => {
@@ -91,17 +119,17 @@ test("an offline bot returns a clear result without opening a computer window", 
   expect(r._voiceos_glance).toBeUndefined();
 });
 
-test("a live bot opens one native view-only computer window with plain JSON", async () => {
+test("a live bot opens one native interactive computer window with plain JSON", async () => {
   const wsUrl = "wss://pod.cursorvm.com/websockify?token=5&network_token=secret";
   desktopProbe = { live: true, wsUrl, viewerUrl: "https://pod.cursorvm.com/vnc.html" };
   const r = await call("grokbot_open_computer_window", { bot: "Pepper" });
-  expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", botColor: "#FF6700", botShape: "blob", wsUrl }]);
+  expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", botColor: toBot(bots[0]).color, botShape: toBot(bots[0]).shape, wsUrl }]);
   expect(r).toMatchObject({
     opened: true,
     bot: "Pepper",
     live: true,
-    viewOnly: true,
-    message: "Opened Pepper's computer in a view-only window.",
+    viewOnly: false,
+    message: "Opened Pepper's computer in an interactive window.",
   });
   expect(r._voiceos_glance).toBeUndefined();
 });
@@ -114,7 +142,7 @@ test("the computer-window tool accepts the exact bot ID carried by a screen card
 
   expect(r.opened).toBe(true);
   expect(r.bot).toBe("Pepper");
-  expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", botColor: "#FF6700", botShape: "blob", wsUrl }]);
+  expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", botColor: toBot(bots[0]).color, botShape: toBot(bots[0]).shape, wsUrl }]);
 });
 
 test("a live screen card opens its exact bot in the hardened computer-window tool", async () => {
@@ -402,7 +430,9 @@ test("a long thread keeps the newest messages inside the size limit", async () =
 });
 test("manifest advertises exactly the registered server tools", async () => {
   const manifest = await Bun.file(new URL("../voiceos.integration.json", import.meta.url)).json();
-  expect(manifest.tools.map((t: any) => t.name).sort()).toEqual([...handlers.keys()].sort());
+  expect(handlers.has("voiceos_hook_pre_tool_use")).toBe(true);
+  expect(manifest.hooks.preToolUse.scope).toBe("own");
+  expect(manifest.tools.map((t: any) => t.name).sort()).toEqual([...handlers.keys()].filter(name => !name.startsWith("voiceos_hook_")).sort());
   expect(manifest.tools.find((t: any) => t.name === "grokbot_prepare_message").confirmation).toBeUndefined();
   for (const name of ["grokbot_send", "grokbot_group"]) {
     const tool = manifest.tools.find((t: any) => t.name === name);
@@ -411,7 +441,7 @@ test("manifest advertises exactly the registered server tools", async () => {
     expect(tool.confirmation.root.html).toContain('<title>Thread</title>');
     expect(tool.confirmation.root.html).toContain('voiceos:updateInput');
     expect(tool.confirmation.root.html).not.toContain('voiceos:invokeTool');
-    expect(tool.confirmation.root.html.length).toBeLessThanOrEqual(60000);
+    expect(tool.confirmation.root.html.length).toBeLessThanOrEqual(131072);
     expect(tool.confirmation.root.confirmLabel).toBe("↑");
     expect(tool.uiCallable).toBe(true);
   }
@@ -422,4 +452,144 @@ test("manifest advertises exactly the registered server tools", async () => {
   expect(cardSend.confirmation).toBeUndefined();
   expect(cardSend.inputSchema.required).toEqual(["message"]);
   expect(Object.keys(cardSend.inputSchema.properties).sort()).toEqual(["bot", "group", "groupName", "members", "message"]);
+});
+
+const PICTURE: actual.TranscriptEntry = {
+  kind: "send-message", id: "pic", timestampMs: Date.now() - 3 * 60_000,
+  message: { type: "text", content: "**Done.** Here it is", images: [{ url: "file:///home/box/secret/a.png", alt: "Shot" }] },
+};
+test("the roster card opens chat panes populated with card items and their cursors", async () => {
+  tail = [...EARLIER, PICTURE];
+  tailCursor = 31;
+  const r = await call("grokbot_show", {});
+  const data = cardData(r).data;
+  expect(data.bots.map((b: any) => b.id)).toEqual(["p", "f", "t"]);
+  expect(data.threads.p.map((i: any) => i.id)).toEqual(["old", "pic"]);
+  expect(data.threads.g).toHaveLength(2);
+  expect(data.threads.p[1]).toMatchObject({ html: expect.stringContaining("<strong>Done.</strong>"), media: [{ kind: "image", name: "Shot", index: 0 }], t: "3m" });
+  expect(data.nextBeforeSeqs).toMatchObject({ p: 31, g: 31 });
+  expect(JSON.stringify(data)).not.toContain("file://");
+  expect(r.groups).toEqual([{ name: "Homework crew", members: ["p", "f"] }]);
+});
+test("showing one bot opens its conversation in the thread card; a group opens in group mode", async () => {
+  tailCursor = 8;
+  const one = await call("grokbot_show", { bot: "Pepper" });
+  expect(one.focus).toBe("Pepper");
+  expect(cardData(one).args.bot).toBe("p");
+  expect(cardData(one).data).toMatchObject({ thread: [{ id: "old", from: "me", text: "Earlier message" }], nextBeforeSeq: 8 });
+  expect(one._voiceos_glance.blocks[0].html).toContain("<title>Thread</title>");
+  const group = await call("grokbot_show", { bot: "Homework crew" });
+  expect(cardData(group).args).toMatchObject({ group: "g", members: ["p", "f"] });
+  expect(cardData(group).data.groups[0].thread[0].id).toBe("old");
+});
+test("a pending request on an older gateway still marks its bot as needing you", async () => {
+  tail = [{ kind: "send-message", id: "ask", message: { type: "widget", widget: { prompt: "Pick", options: [{ label: "A", value: "A" }] } } }];
+  const r = await call("grokbot_show", {});
+  expect(r.bots.find((b: any) => b.name === "Pepper").status).toBe("waiting for you");
+  agents[0].awaitingUserResponse = false;
+  expect((await call("grokbot_show", {})).bots.find((b: any) => b.name === "Pepper").status).toBe("idle");
+});
+test("the card snapshot returns roster shapes and card items without presentation time", async () => {
+  tail = [...EARLIER, PICTURE];
+  tailCursor = 12;
+  const r = await call("grokbot_card_snapshot", { bot: "p" });
+  expect(r.ok).toBe(true);
+  expect(r.bots.map((b: any) => b.id)).toEqual(["p", "f", "t"]);
+  expect(r.groups).toEqual([expect.objectContaining({ id: "g", members: ["p", "f"] })]);
+  expect(r.thread.map((i: any) => i.id)).toEqual(["old", "pic"]);
+  expect(r.thread.every((i: any) => !("t" in i))).toBe(true);
+  expect(r.nextBeforeSeq).toBe(12);
+  expect(JSON.stringify(r)).not.toContain("file://");
+  expect(r._voiceos_glance).toBeUndefined();
+  expect(await call("grokbot_card_snapshot", { bot: "missing" })).toMatchObject({ ok: false, message: expect.stringContaining("no longer available") });
+});
+test("reading a thread with show:true opens a group in group mode", async () => {
+  const r = await call("grokbot_thread", { bot: "Homework crew", show: true });
+  expect(cardData(r).args.group).toBe("g");
+});
+test("the send confirmation context stays small when recent replies are huge", async () => {
+  tail = [{ kind: "send-message", id: "big", message: { type: "text", content: "| a | b |\n|---|---|\n" + "| `x` | **y** |\n".repeat(3000) } }];
+  const r = await call("grokbot_prepare_message", { bot: "Pepper", message: "Hi" });
+  expect(r.args.confirmationContext.length).toBeLessThan(16_000);
+  // A deferred preview is its opening text; the confirmation has no loader.
+  const [row] = JSON.parse(r.args.confirmationContext).threads.p;
+  expect(row).toMatchObject({ id: "big", text: expect.stringMatching(/…$/) });
+  expect(row.html).toBeUndefined();
+  expect(row.deferred).toBeUndefined();
+});
+
+// What thread.html's own msgHtml draws in a confirmation (no live chat there).
+const confirmRowsOf = (context: string, id: string) => JSON.parse(context).threads[id] as any[];
+const PENDING: actual.TranscriptEntry[] = [
+  { kind: "send-message", id: "ask", author: { id: "t", name: "Titus" }, message: { type: "widget", widget: { prompt: "Which venue for the talk?", options: [{ label: "Hall A", value: "Hall A" }] } } },
+  { kind: "notice", id: "note", text: "Titus finished a task" },
+  { kind: "notice", id: "blank", text: "" },
+  { kind: "user-attachment", id: "file", file_path: "/Users/arav/Private/Q3 report.pdf", file_name: "Q3 report.pdf" },
+  { kind: "send-message", id: "shot", message: { type: "text", content: "", images: [{ url: "file:///home/box/a.png", alt: "Concept A" }] } },
+  { kind: "send-message", id: "perm", message: { type: "permission-request", permission: { title: "Approve command" } } },
+  { kind: "message", role: "user", fromAgent: { id: "f", name: "Friday" }, content: "From Friday", id: "fri" },
+];
+test("confirmation rows never draw an empty bubble or a nameless orb", async () => {
+  tail = PENDING;
+  for (const [args, key] of [[{ bot: "Titus", message: "Hall A" }, "t"], [{ group: "Homework crew", message: "Hi" }, "g"]] as const) {
+    const r = await call("grokbot_prepare_message", args);
+    const rows = confirmRowsOf(r.args.confirmationContext, key);
+    expect(rows.map(i => i.id)).toEqual(["ask", "note", "file", "shot", "perm", "fri"]);
+    for (const row of rows) {
+      if (row.sys === undefined) expect(Boolean(row.text || row.html)).toBe(true);
+      expect(Object.keys(row).every(k => ["id", "from", "bot", "sys", "t", "text", "html"].includes(k))).toBe(true);
+    }
+    expect(rows[0]).toMatchObject({ from: "bot", bot: "t", text: "Which venue for the talk?" });
+    expect(rows[1]).toEqual({ id: "note", from: "bot", sys: "Titus finished a task" });
+    expect(rows[2]).toMatchObject({ from: "me", text: "Q3 report.pdf" });
+    expect(rows[3]).toMatchObject({ text: "Concept A" });
+    expect(rows[4]).toMatchObject({ text: "Approve command" });
+    expect(rows[5]).toMatchObject({ bot: "f", html: expect.stringContaining("From Friday") });
+    expect(JSON.stringify(rows)).not.toContain("/Users/arav");
+  }
+});
+test("a model-initiated send without preparation still shows the recipient's rows and whole roster", async () => {
+  tail = [...EARLIER, { kind: "message", role: "user", fromAgent: { id: "f", name: "Friday" }, content: "From Friday", id: "fri" }];
+  await handlers.get("grokbot_show")!({});
+  const hook = await handlers.get("voiceos_hook_pre_tool_use")!({ payload_json: JSON.stringify({
+    hookApiVersion: 1, event: "preToolUse", toolName: "grokbot_send", args: { bot: "Pepper", message: "Hi" },
+  }) });
+  const { updatedArgs } = JSON.parse(hook.content[0].text);
+  expect(updatedArgs.recipientId).toBe("p");
+  const context = JSON.parse(updatedArgs.confirmationContext);
+  expect(context.bots.map((b: any) => b.id)).toEqual(["p", "f", "t"]);
+  expect(context.threads.p.map((i: any) => i.id)).toEqual(["old", "fri"]);
+});
+test("a group named like a bot does not stop an approved send to that bot", async () => {
+  agents.push({ id: "g2", name: "Pepper", isGroup: true, memberIds: ["f", "t"] });
+  const r = await call("grokbot_send", { bot: "Pepper", message: "Hi" });
+  expect(r.sent).toBe(true);
+  expect(writes).toEqual([["send", "p", "Hi"]]);
+});
+test("showing one bot opens its conversation even when its history cannot be read", async () => {
+  tailFails = true;
+  const r = await call("grokbot_show", { bot: "Pepper" });
+  expect(r.isError).toBeFalsy();
+  expect(r).toMatchObject({ focus: "Pepper", historyUnavailable: true });
+  expect(cardData(r).args.bot).toBe("p");
+  expect(cardData(r).data.thread).toEqual([]);
+  tailFails = false;
+  expect((await call("grokbot_show", { bot: "Pepper" })).historyUnavailable).toBeUndefined();
+});
+
+const clickReminder = (actionId: string, data?: Record<string, unknown>) =>
+  requestHandlers.get("voiceos/reminders/action")!({
+    method: "voiceos/reminders/action",
+    params: { notificationId: "n1", actionId, ...(data ? { data } : {}) },
+  });
+
+test("reminder Open opens that bot's chat and Close just dismisses", async () => {
+  expect(await clickReminder("open_chat", { botId: "p" })).toEqual({ ok: true });
+  expect(openedChats).toEqual(["p"]);
+  expect(await clickReminder("close")).toEqual({ ok: true });
+  expect(openedChats).toEqual(["p"]);
+});
+
+test("an unknown reminder button fails instead of claiming success", async () => {
+  await expect(clickReminder("delete_all")).rejects.toThrow("no longer available");
 });

@@ -1,0 +1,46 @@
+/* LiveChat extras, drawn with the handoff's own tokens (.sys lines, bubble radii, fills, accent). */
+.lc-list>[data-lc]{display:contents}
+.lc-older{cursor:pointer;transition:color .12s}.lc-older:hover{color:var(--ink-2)}.lc-older[disabled]{cursor:default}
+.lc-older[hidden],.lc-ro .lc-older,.lc-ro .lc-row,.lc-ro .lc-link,.lc-ro .lc-in{display:none}
+.lc-ro .lc-opt,.lc-ro .lc-file{pointer-events:none}
+.lc-paused{text-align:center}
+.lc-link{cursor:pointer;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:2px;transition:color .12s}.lc-link:hover{color:var(--ink-2)}
+.lc-link.bot,.lc-img.bot,.lc-file.bot,.lc-card.bot{align-self:flex-start}
+.lc-link.me,.lc-img.me,.lc-file.me,.lc-card.me{align-self:flex-end}
+/* thread.html's group sender line; show.html has no rule for it. */
+.lc-list .from{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-3);margin:4px 0 -3px 6px;align-self:flex-start}
+.lc-img{display:block;max-width:82%;max-height:200px;border-radius:16px;object-fit:contain}
+.lc-img.bot{border-bottom-left-radius:6px}.lc-img.me{border-bottom-right-radius:6px}
+.lc-ph{width:168px;height:112px;display:grid;place-items:center;padding:10px;border:1px solid var(--line);color:var(--ink-3);font-size:11px;background:linear-gradient(100deg,var(--fill-1) 40%,var(--fill-2) 50%,var(--fill-1) 60%) 0 0/300% 100%;animation:lc-sh 1.4s linear infinite}
+.lc-ph span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@keyframes lc-sh{to{background-position:-150% 0}}
+/* No tools, or no automatic requests left: a still box with the image's name, not a load that never comes. */
+.lc-ro .lc-ph,.lc-off .lc-ph{animation:none;background:var(--fill-1)}
+.lc-file{gap:5px;max-width:82%;padding:3px 8px;line-height:18px;border-radius:8px;cursor:pointer;transition:background .12s,color .12s}
+.lc-file span{overflow:hidden;text-overflow:ellipsis}.lc-file svg{flex:none;width:12px;height:12px;color:var(--ink-3)}
+.lc-file:hover{background:var(--fill-3);color:var(--ink-1)}
+.lc-card{max-width:88%;min-width:0;display:flex;flex-direction:column;gap:7px;padding:9px 11px 10px;border-radius:16px;border-bottom-left-radius:6px;background:var(--fill-1);border:1px solid var(--line);font-size:12.5px;line-height:1.38;overflow-wrap:anywhere}
+.lc-card.me{border-bottom-left-radius:16px;border-bottom-right-radius:6px}
+.lc-card.lc-att{border-color:rgba(255,138,0,.4)}
+.lc-q{display:flex;align-items:flex-start;gap:6px;font-size:13px;font-weight:600;letter-spacing:-.005em}
+.lc-q>span:first-child{flex:1;min-width:0}.lc-q .chip{flex:none;margin-top:1px}
+.lc-d{color:var(--ink-2);white-space:pre-wrap;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.lc-kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 9px;margin:0;font-size:11.5px}
+.lc-kv dt{color:var(--ink-3)}.lc-kv dd{margin:0;color:var(--ink-2);white-space:pre-wrap;max-height:62px;overflow-y:auto}
+.lc-f{color:var(--ink-3);font-size:11.5px}
+.lc-ans{color:var(--ink-3);font-size:12px}
+.lc-opts{display:flex;flex-direction:column;gap:3px}
+.lc-opt{display:flex;align-items:flex-start;gap:8px;width:100%;padding:6px 9px 6px 7px;border-radius:10px;background:var(--fill-1);text-align:left;transition:background .12s}
+.lc-opt:hover{background:var(--fill-2)}.lc-opt[aria-pressed=true]{background:var(--fill-3)}.lc-opt[disabled]{opacity:.5;cursor:default}
+.lc-k{flex:none;width:17px;height:17px;margin-top:1px;border-radius:5px;display:grid;place-items:center;background:var(--fill-2);color:var(--ink-2);font-size:10.5px;font-weight:650}
+.lc-opt[aria-pressed=true] .lc-k{background:var(--accent);color:#fff}
+.lc-ot{flex:1;min-width:0}.lc-ot small{display:block;color:var(--ink-3);font-size:11.5px}
+.lc-card .lc-in{padding:6px 10px;border-radius:10px;font-size:12.5px}
+.lc-row{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.lc-btn{height:26px;padding:0 11px;border-radius:13px;font-size:12px;font-weight:600;background:var(--fill-2);color:var(--ink-1);flex:none;transition:background .12s}
+.lc-btn:hover{background:var(--fill-3)}.lc-btn[disabled]{opacity:.45;cursor:default}
+.lc-btn.pri{background:rgba(255,138,0,.16);color:var(--accent)}.lc-btn.pri:hover{background:rgba(255,138,0,.26)}
+.lc-pc{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;flex:none;color:var(--ink-2);background:var(--fill-1);transition:background .12s,color .12s}
+.lc-pc:hover{background:var(--fill-2);color:var(--ink-1)}.lc-pc[disabled]{opacity:.45;cursor:default}.lc-pc[hidden]{display:none}
+.lc-older:focus-visible,.lc-link:focus-visible,.lc-file:focus-visible,.lc-opt:focus-visible,.lc-btn:focus-visible,.lc-pc:focus-visible{outline:2px solid rgba(255,138,0,.6);outline-offset:1px}
+.lc-st{justify-content:center;text-align:center;padding:0 14px;max-height:48px;overflow-y:auto;flex-shrink:0}.lc-st.bad{color:var(--bad)}.lc-st[hidden]{display:none}

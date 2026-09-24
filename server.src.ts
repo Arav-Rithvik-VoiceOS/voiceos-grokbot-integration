@@ -24,11 +24,12 @@ import {
   type AutomationRun,
   entryText,
   isBotReply,
-  listAgents,
+  listAgents as readAgents,
   listAllAutomations,
   log,
   openComputerWindow,
   openGrokBotApp,
+  openBotChat,
   resolveAgent,
   resolveMembers,
   sendPrompt,
@@ -37,11 +38,24 @@ import {
   agentScreen,
 } from "./client.ts";
 import { recordCardPoll, cardCovers } from "./cardWatch.ts";
-import { connectCard, screenCard, showCard, threadCard, sentCard, sentGroupCard, toBot, toGroup, toThread, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
+import { connectCard, screenCard, showCard, threadCard, groupThreadCard, sentCard, sentGroupCard, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
 import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
+import { conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
+import { ComposerFiles, sweepStaleAttachments, teachTask, type ComposerArgs, type TeachAction } from "./composerService.ts";
+import { needsAttention, toCardThread, type CardItem } from "./conversation.ts";
+import { IntentRoster, resolveApprovedRecipient, registerIntentSupport } from "./intents.ts";
+import { INTENT_SLOT_VALUES_META_KEY } from "./intentSdk.generated.js";
 
 const server = new McpServer({ name: TOOLKIT, version: "1.0.0" });
+const intentRoster = new IntentRoster(readAgents);
+const listAgents = () => intentRoster.refresh();
+/** A recipient's last few messages as a confirmation draws them. Bounded: the
+ * model copies prepare's context into the send verbatim, and rendered markdown
+ * (tables, highlighted code) is far larger than its text. */
+const recentRows = async (id: string): Promise<ConfirmRow[]> =>
+  confirmationRows(toThread((await transcriptTail(id, 6)).entries ?? [], 12_000));
+intentRoster.recentRows = recentRows;
 
 /** A tool result: JSON for the model, plus (optionally) a live glance card. */
 function result(payload: Record<string, unknown>, glance?: Record<string, unknown>) {
@@ -57,11 +71,21 @@ function result(payload: Record<string, unknown>, glance?: Record<string, unknow
 // reminder failure must never make the send look failed.
 const ReminderResult = z.object({ notificationId: z.string().min(1) });
 
-async function triggerReminder(message: string, opts: { speak?: boolean } = {}): Promise<string | null> {
+/** A reminder button: `id` must match a key in REMINDER_ACTIONS below. */
+type ReminderButton = { id: string; label: string };
+
+async function triggerReminder(
+  message: string,
+  opts: { speak?: boolean; actions?: ReminderButton[]; data?: Record<string, unknown> } = {},
+): Promise<string | null> {
   const text = message.trim().slice(0, 2000);
   if (!text) return null;
-  const params: { message: string; speak?: boolean } =
-    opts.speak === false ? { message: text, speak: false } : { message: text };
+  const params: { message: string; speak?: boolean; actions?: ReminderButton[]; data?: Record<string, unknown> } = {
+    message: text,
+  };
+  if (opts.speak === false) params.speak = false;
+  if (opts.actions?.length) params.actions = opts.actions;
+  if (opts.data) params.data = opts.data;
   try {
     const res = await server.server.request({ method: "voiceos/reminders/trigger", params }, ReminderResult);
     return res.notificationId;
@@ -70,6 +94,47 @@ async function triggerReminder(message: string, opts: { speak?: boolean } = {}):
     return null;
   }
 }
+
+// ── Reminder buttons ──────────────────────────────────────────────────────────
+//
+// A reminder can carry up to 3 buttons. On a click the host sends us the
+// reverse request `voiceos/reminders/action` { notificationId, actionId, data }
+// (decoded from the shipped 0.2.41 app). We answer { ok: true } once the effect
+// is done — the host then dismisses the card; a throw keeps the card up with an
+// error. A button cannot return a card: the only reply the host accepts is
+// { ok: true }. Handlers are a fixed map; incoming ids are never evaluated.
+const REMINDER_ACTION_METHOD = "voiceos/reminders/action";
+const ReminderActionRequest = z.object({
+  method: z.literal(REMINDER_ACTION_METHOD),
+  params: z.object({
+    notificationId: z.string().min(1).max(128),
+    actionId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+    data: z.record(z.unknown()).optional(),
+  }),
+});
+
+/** The two buttons on a "<bot> replied." pill. */
+const REPLY_BUTTONS: ReminderButton[] = [
+  { id: "open_chat", label: "Open" },
+  { id: "close", label: "Close" },
+];
+
+const REMINDER_ACTIONS: Record<string, (data: Record<string, unknown> | undefined) => Promise<void>> = {
+  // Open this bot's chat in the Grok Bot app.
+  async open_chat(data) {
+    const botId = typeof data?.botId === "string" ? data.botId : "";
+    await openBotChat(botId);
+  },
+  // Nothing to do: answering ok is what makes the host dismiss the card.
+  async close() {},
+};
+
+server.server.setRequestHandler(ReminderActionRequest, async ({ params }) => {
+  const run = REMINDER_ACTIONS[params.actionId];
+  if (!run) throw new Error("This button is no longer available.");
+  await run(params.data);
+  return { ok: true as const };
+});
 
 // Cadence + limits for the thread watch. Jonah confirmed a background poll may
 // run for days; a normal reply/turn is far shorter, so MAX_WATCH_MS is only a
@@ -95,9 +160,9 @@ const summarize = (text: string, max = 140): string => {
 };
 
 /**
- * Fire-and-forget: after a send, watch THIS bot's thread and ping the notch on
- * every reply it posts — the "on it…" line and the final answer both — until the
- * bot goes idle (its turn ends). We only ever watch a bot the user just messaged
+ * Fire-and-forget: after a send, watch THIS bot's thread and ping the notch ONCE
+ * ("<bot> replied.") on its first reply, then stop; also stop when the bot goes
+ * idle (its turn ends). We only ever watch a bot the user just messaged
  * through VoiceOS, and we stop the instant it's done, so an idle bot is never
  * polled. `seen` is the transcript baseline captured BEFORE the send, and
  * `ourText` is exactly what we sent — the one human turn we own. Any OTHER human
@@ -152,8 +217,10 @@ function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, o
 
         const replies = fresh.filter(isBotReply);
 
-        // Ping on new replies. If several land in one tick (a chatty burst),
-        // ping only the newest so one turn can't fire a stack of pills at once.
+        // ONE silent pill per send: "<bot> replied." with Open / Close. It never
+        // quotes the reply, and once it's up we stop watching, so a bot that
+        // posts three messages still gives one pill. The next VoiceOS send
+        // starts a new watch, which can ping again.
         if (replies.length) {
           sawActivity = true;
           // The screen card is on screen and shows this reply itself (its message
@@ -162,11 +229,12 @@ function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, o
             if (!busy) return;
             continue;
           }
-          const summary = summarize(entryText(replies[replies.length - 1]));
-          const msg = me?.awaitingUserResponse
-            ? `${bot.name} needs an answer: ${summary}`
-            : `${bot.name}: ${summary}`;
-          await triggerReminder(msg, { speak: true });
+          await triggerReminder(`${bot.name} replied.`, {
+            speak: false,
+            actions: REPLY_BUTTONS,
+            data: { botId: bot.id },
+          });
+          return;
         }
 
         // Turn is over: it engaged, it's idle, and nothing fresh is left.
@@ -255,7 +323,7 @@ function startAutomationWatch(): void {
             const body = text
               ? `${bot} · ${e.automation.name}: ${summarize(text)}`
               : `${bot} · ${e.automation.name} ran.`;
-            await triggerReminder(body, { speak: true });
+            await triggerReminder(body, { speak: false });
           }
         }
         baselined = true;
@@ -328,8 +396,17 @@ async function runTool(
 function statusWord(a: Agent): string {
   if (a.awaitingUserResponse) return "waiting for you";
   if (a.isComposingMessage) return "typing";
-  if (a.isRunningTurn || a.isRunning) return "working";
+  if (a.isRunning ?? a.isRunningTurn) return "working";
   return "idle";
+}
+
+/** The live conversation card for one transcript page: a group opens in the
+ * thread card's existing-group mode, a bot in its 1:1 mode. */
+function conversationCard(bot: Agent, agents: Agent[], tail: { entries?: TranscriptEntry[]; nextBeforeSeq?: number }) {
+  const entries = tail.entries ?? [];
+  return bot.isGroup
+    ? groupThreadCard(agents, { id: bot.id, name: bot.name, members: bot.memberIds ?? [] }, entries, "", tail.nextBeforeSeq)
+    : threadCard(bot, entries, "", agents, tail.nextBeforeSeq);
 }
 
 // ── READ: grokbot_show ───────────────────────────────────────────────────────
@@ -346,46 +423,121 @@ const showTool = server.registerTool(
         .describe("A bot's name as the user said it, e.g. 'Pepper'. Omit to list every bot."),
     },
     annotations: { readOnlyHint: true },
+    _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: [] } },
   },
   async (args: { bot?: string }) =>
     handle("grokbot_show", async () => {
       const agents = await listAgents();
-      publishBotChoices(agents); // free refresh: the roster is already in hand
-      // Recent messages per bot, so the in-card chat pane opens populated when a
-      // bot is tapped. Fetched in parallel; a per-bot failure just leaves that
-      // pane empty (best-effort), never fails the roster.
-      const roster = agents.filter((a) => !a.isGroup);
-      const tails = await Promise.all(
-        roster.map(async (b) => {
+      const focus = args.bot?.trim();
+      // One short transcript page per bot and group. On the roster it fills the
+      // show card's chat panes, so a tapped bot opens populated (showCard drops
+      // these if they would push the card over the glance cap). On older
+      // gateways that omit the authoritative awaitingUserResponse flag, the same
+      // page infers it from a pending request or question.
+      const recent: Record<string, CardItem[]> = {};
+      const cursors: Record<string, number | undefined> = {};
+      await Promise.all(
+        agents.filter((b) => !focus || b.awaitingUserResponse === undefined).map(async (b) => {
           try {
             const tail = await transcriptTail(b.id, 6);
-            return [b.id, toThread(tail.entries ?? [])] as const;
+            const thread = toCardThread(tail.entries ?? []);
+            if (b.awaitingUserResponse === undefined && needsAttention(thread)) b.awaitingUserResponse = true;
+            recent[b.id] = thread;
+            cursors[b.id] = tail.nextBeforeSeq;
           } catch {
-            return [b.id, [] as ReturnType<typeof toThread>] as const;
+            // One unreachable transcript must not hide the entire roster.
           }
         }),
       );
-      const threads = Object.fromEntries(tails);
-      const card = showCard(agents, undefined, threads);
-      if (args.bot?.trim()) {
-        // Narrate the one bot the user named; the card is the live roster.
-        const bot = await resolveAgent(args.bot.trim(), agents);
+      if (focus) {
+        // Open the requested conversation directly, in the thread card.
+        const bot = await resolveAgent(focus, agents);
+        // Best-effort, like the roster's panes: a just-created bot or a slow
+        // gateway still opens the conversation (its live refresh fills it in).
+        let tail: Awaited<ReturnType<typeof transcriptTail>> = {};
+        let historyUnavailable = false;
+        try { tail = await transcriptTail(bot.id, 30); }
+        catch (error) { historyUnavailable = true; log("grokbot_show transcript read failed:", error); }
         return result(
-          { focus: bot.name, status: statusWord(bot), task: (bot.lastMessagePreview ?? "").trim() || null, message: `${bot.name} is ${statusWord(bot)}.` },
-          card,
+          { focus: bot.name, status: statusWord(bot), task: (bot.lastMessagePreview ?? "").trim() || null,
+            ...(historyUnavailable ? { historyUnavailable: true } : {}), message: `${bot.name} is ${statusWord(bot)}.` },
+          conversationCard(bot, agents, tail),
         );
       }
+      const card = showCard(agents, undefined, recent, cursors);
       const bots = agents.filter((a) => !a.isGroup);
+      const groups = agents.filter((a) => a.isGroup);
       return result(
         {
           count: bots.length,
           bots: bots.map((b) => ({ name: b.name, status: statusWord(b) })),
-          message: bots.length === 0 ? "You don't have any Grok bots yet." : `You have ${bots.length} bot${bots.length === 1 ? "" : "s"}.`,
+          groups: groups.map(g => ({ name: g.name, members: g.memberIds ?? [] })),
+          message: bots.length === 0 && groups.length === 0 ? "You don't have any Grok bots or group chats yet." : `You have ${bots.length} bot${bots.length === 1 ? "" : "s"} and ${groups.length} group chat${groups.length === 1 ? "" : "s"}.`,
         },
         card,
       );
     }),
 );
+
+// Card-origin operations share the existing host grant and serialized transport.
+// Read results contain data only, so refreshing never replaces an edited card.
+async function cardRequest(tool: string, run: () => Promise<Record<string, unknown>>) {
+  return handle(tool, async () => {
+    try { return result(await run()); }
+    catch (error) { return result({ ok: false, message: error instanceof Error ? error.message : "The request failed." }); }
+  });
+}
+
+const composerFiles = new ComposerFiles(undefined, async (botId, message) => {
+  const bot = (await listAgents()).find(b => b.id === botId);
+  if (!bot || bot.isGroup) return;
+  const baseline = (await transcriptTail(botId, 12)).entries ?? [];
+  return () => watchThreadThenNotify(bot, baseline.map(e => e.id), message);
+});
+// Staged copies are private user files: remove them on every exit (host gone,
+// SIGINT/SIGTERM), and sweep what a killed or crashed server left behind.
+process.once("exit", () => composerFiles.cleanupSync());
+void sweepStaleAttachments().catch(error => log("attachment sweep failed:", error));
+server.registerTool("grokbot_card_files", {
+  title: "Attach files from the bot card",
+  description: "Internal — only for explicit attachment picker, removal, send, and status actions in the Grok Bot card. Never call from a voice or model request.",
+  inputSchema: { bot: z.string(), action: z.enum(["pick", "status", "remove", "send"]), jobId: z.string().optional(), attachmentId: z.string().optional(), attachments: z.array(z.string()).max(20).optional(), message: z.string().max(12000).optional(), clientNonce: z.string().max(128).optional() },
+}, (args: ComposerArgs) => cardRequest("grokbot_card_files", () => composerFiles.handle(args)));
+server.registerTool("grokbot_card_teach", {
+  title: "Teach a task from the bot card",
+  description: "Internal — only for the user's Teach a task controls in the Grok Bot card. Prepare the computer without recording; start, save, or discard only on the user's corresponding click. Never call from voice or model requests.",
+  inputSchema: { bot: z.string(), action: z.enum(["prepare", "status", "start", "save", "discard"]) },
+}, (args: { bot: string; action: TeachAction }) => cardRequest("grokbot_card_teach", () => teachTask(args.bot, args.action)));
+
+server.registerTool("grokbot_card_snapshot", {
+  title: "Refresh conversation",
+  description: "Internal read-only tool for the visible Grok Bot conversation card. Use grokbot_thread for spoken requests.",
+  inputSchema: { bot: z.string().optional(), beforeSeq: z.number().int().optional() },
+  annotations: { readOnlyHint: true },
+}, (args: { bot?: string; beforeSeq?: number }) => cardRequest("grokbot_card_snapshot", async () => {
+  const snapshot = await conversationSnapshot(args.bot, args.beforeSeq);
+  return { ok: true, bots: snapshot.agents.filter(a => !a.isGroup).map(toBot), groups: snapshot.agents.filter(a => a.isGroup).map(toGroup), thread: snapshot.thread, nextBeforeSeq: snapshot.nextBeforeSeq };
+}));
+
+server.registerTool("grokbot_card_entry", {
+  title: "Load complete conversation message",
+  description: "Internal read-only loader for complete Grok Bot messages. The card automatically reads bounded chunks; no user action or native-app handoff is needed.",
+  inputSchema: { bot: z.string(), entryId: z.string(), offset: z.number().int().min(0).optional(), version: z.string().optional() },
+  annotations: { readOnlyHint: true },
+}, (args: { bot: string; entryId: string; offset?: number; version?: string }) => cardRequest("grokbot_card_entry", () => conversationEntry(args.bot, args.entryId, args.offset, args.version)));
+
+server.registerTool("grokbot_card_image", {
+  title: "Load conversation image",
+  description: "Internal read-only image loader for Grok Bot cards. Resolves only an image belonging to the specified transcript entry.",
+  inputSchema: { bot: z.string(), entryId: z.string(), index: z.number().int().min(0) },
+  annotations: { readOnlyHint: true },
+}, (args: { bot: string; entryId: string; index: number }) => cardRequest("grokbot_card_image", () => conversationImage(args.bot, args.entryId, args.index)));
+
+server.registerTool("grokbot_card_action", {
+  title: "Respond to a conversation card",
+  description: "Internal — only invoke from a user's click on a Grok Bot card. Never select or dismiss an answer on the user's behalf. Handles the exact selected options or opens Grok Bot's native authentication and approval flow.",
+  inputSchema: { bot: z.string(), entryId: z.string().optional(), action: z.enum(["answer", "dismiss", "open"]), values: z.array(z.string()).optional(), custom: z.string().max(12000).optional() },
+}, (args: { bot: string; entryId?: string; action: "answer" | "dismiss" | "open"; values?: string[]; custom?: string }) => cardRequest("grokbot_card_action", () => performConversationAction(args)));
 
 // ── READ: grokbot_thread ─────────────────────────────────────────────────────
 const threadTool = server.registerTool(
@@ -417,7 +569,7 @@ const threadTool = server.registerTool(
           truncated,
           message: thread.length ? `Latest from ${bot.name}.` : `No recent messages from ${bot.name}.`,
         },
-        args.show ? threadCard(bot, entries, "", agents) : undefined,
+        args.show ? conversationCard(bot, agents, tail) : undefined,
       );
     }),
 );
@@ -452,12 +604,14 @@ server.registerTool("grokbot_prepare_message", {
     }
     resolved = { ...args, ...(existing ? { group: existing.id } : {}), members: memberIds };
   }
-  const threads: Record<string, ReturnType<typeof toThread>> = {};
+  const threads: Record<string, ConfirmRow[]> = {};
   if (target) {
-    try { threads[target.id] = toThread((await transcriptTail(target.id, 6)).entries ?? []); }
+    try { threads[target.id] = await recentRows(target.id); }
     catch { /* Registration can precede the first transcript. */ }
   }
-  const confirmationContext = JSON.stringify({ bots: agents.filter(a => !a.isGroup).map(toBot), groups: agents.filter(a => a.isGroup).map(toGroup), threads });
+  const send = args.bot !== undefined;
+  const keep = [...(target ? [target.id, ...(target.memberIds ?? [])] : []), ...(Array.isArray(resolved.members) ? resolved.members : [])];
+  const context = confirmationContext(send ? agents.filter(a => !a.isGroup) : agents, threads, keep, send);
   // NO glance here, on purpose. A tool result that carries _voiceos_glance makes
   // the notch present it as the turn's result (the host snapshots it as the
   // answer), and the grokbot_send confirmation that follows a moment later is
@@ -465,7 +619,7 @@ server.registerTool("grokbot_prepare_message", {
   // card. Plain JSON keeps the notch in its thinking state until the
   // confirmation opens.
   return result({ ready: true, nextTool: args.bot !== undefined ? "grokbot_send" : "grokbot_group",
-    args: { ...resolved, confirmationContext }, message: "Recipients verified. Use the returned args to open the message confirmation." });
+    args: { ...resolved, confirmationContext: context }, message: "Recipients verified. Use the returned args to open the message confirmation." });
 }));
 
 // The "Sent to group" receipt (sent-group.html): a RECEIPT like the 1:1 send,
@@ -484,10 +638,10 @@ function groupReceipt(agents: Agent[], group: { id: string; name: string; member
 // Resolves the recipient by exact identity, sends once, starts the reply
 // watch, and returns the "sent" glance card. Both tools below call this so a
 // change here (e.g. the reply ping) can never drift between voice and card.
-async function performSend(botRef: string, rawMessage: string | undefined, { allowGroup = false } = {}) {
+async function performSend(botRef: string, rawMessage: string | undefined, { allowGroup = false, verifyApproval = false, recipientId = undefined as string | undefined } = {}) {
   const message = rawMessage?.trim() ?? "";
   const agents = await listAgents();
-  const bot = resolveMessageRecipient(botRef, agents);
+  const bot = verifyApproval ? resolveApprovedRecipient(botRef, recipientId, agents) : resolveMessageRecipient(botRef, agents);
   if (bot.isGroup && !allowGroup) throw new IntegrationError("not_found", "Use the group message tool for this conversation.");
   if (!message) throw new IntegrationError("not_found", "What should I send?");
 
@@ -534,14 +688,15 @@ async function performSend(botRef: string, rawMessage: string | undefined, { all
 }
 
 // ── WRITE: VoiceOS shows the manifest thread BEFORE calling this handler ──
-server.registerTool(
+const sendTool = server.registerTool(
   "grokbot_send",
   {
     title: "Send to a bot",
     description: SEND_DESCRIPTION,
     inputSchema: {
       confirmationContext: z.string().optional().describe(CONTEXT_DESCRIPTION),
-      bot: z.string().describe("The exact bot ID returned by grokbot_prepare_message for this request. Do not guess or substitute a recipient."),
+      bot: z.string().describe("One Grok Bot's name as spoken, or its exact ID from grokbot_prepare_message. The SDK hook verifies the recipient before confirmation."),
+      recipientId: z.string().optional().describe("Internal: recipient ID pinned by the preparation hook. Never compose or change this value."),
       message: z
         .string()
         .optional()
@@ -554,9 +709,10 @@ server.registerTool(
         .optional()
         .describe("Internal — leave unset on voice calls. Card-origin metadata only; VoiceOS approval is required before execution."),
     },
+    _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: [] } },
   },
-  async (args: { bot: string; message?: string; via?: string }) =>
-    handle("grokbot_send", () => performSend(args.bot, args.message)),
+  async (args: { bot: string; message?: string; via?: string; recipientId?: string }) =>
+    handle("grokbot_send", () => performSend(args.bot, args.message, { verifyApproval: true, recipientId: args.recipientId })),
 );
 
 // ── WRITE: grokbot_card_send — the card composer's send, NO host confirmation ──
@@ -619,7 +775,7 @@ server.registerTool(
       });
       // Show the refreshed roster with the new bot in it.
       const agents = await listAgents();
-      publishBotChoices(agents); // the new bot becomes a fast-intent choice
+
       const readyToMessage = !!created?.id && agents.some(a => a.id === created.id);
       return result({ created: true, name, botId: created?.id, readyToMessage,
         message: readyToMessage ? `Created ${name}. Check the live recipient before messaging it.`
@@ -713,7 +869,7 @@ const screenTool = server.registerTool(
     }),
 );
 
-// ── CARD: grokbot_open_computer_window (larger native view-only screen) ──────
+// ── CARD: grokbot_open_computer_window (larger native interactive screen) ──────
 // Card-only: opened when the user TAPS the live screen card; no voice intent.
 server.registerTool(
   "grokbot_open_computer_window",
@@ -753,8 +909,8 @@ server.registerTool(
         opened: true,
         bot: bot.name,
         live: true,
-        viewOnly: true,
-        message: `Opened ${bot.name}'s computer in a view-only window.`,
+        viewOnly: false,
+        message: `Opened ${bot.name}'s computer in an interactive window.`,
       });
     }),
 );
@@ -825,56 +981,20 @@ server.registerTool(
     }),
 );
 
-// ── Fast intents: live choices for the `bot` slot ────────────────────────────
-// The manifest's intents declare `bot` as an enum with valuesFrom:"tool", so
-// the host reads the allowed names from each tool's tools/list `_meta`. No list
-// (Grok Bot closed, no bots) makes those intents ineligible and the normal
-// agent answers instead — never a guess. Names go to the selector provider, so
-// names only. Handlers still resolve the bot again: this list can be stale.
-const INTENT_SLOT_VALUES_META_KEY = "voiceos/intent-slot-values";
-const INTENT_REFRESH_NOTIFICATION_METHOD = "notifications/voiceos/refresh_intent_values";
-const BOT_SLOT_TOOLS = [showTool, threadTool, screenTool];
-let _publishedBots = "";
-
-function publishBotChoices(agents: Agent[]): void {
-  const names = [...new Set(agents.filter((a) => !a.isGroup).map((a) => a.name.trim()))]
-    .filter((n) => n && n.length <= 200)
-    .slice(0, 30);
-  const key = JSON.stringify(names);
-  if (key === _publishedBots) return;
-  _publishedBots = key;
-  const meta = names.length ? { [INTENT_SLOT_VALUES_META_KEY]: { bot: names } } : undefined;
-  // Set _meta directly, then notify once — update() would notify per tool.
-  for (const tool of BOT_SLOT_TOOLS) tool._meta = meta;
-  server.sendToolListChanged();
-  log(`intent choices: published ${names.length} bot name(s)`);
-}
-
-async function refreshBotChoices(): Promise<void> {
-  try {
-    publishBotChoices(await listAgents());
-  } catch (error) {
-    log("intent choices: refresh failed:", error);
-  }
-}
-
-// The host sends this when Agent recording starts. Read-only, fire-and-forget.
-server.server.setNotificationHandler(
-  z.object({ method: z.literal(INTENT_REFRESH_NOTIFICATION_METHOD) }).passthrough(),
-  async () => void refreshBotChoices(),
-);
-
+const intentSupport = registerIntentSupport(server, [showTool, sendTool, threadTool, screenTool], intentRoster, error => log("Intent roster refresh failed:", error));
 await server.connect(new StdioServerTransport());
 
 // Exit when the host goes away. The background loops below (automation watch,
-// thread watches) keep the event loop alive forever, so without this every
-// VoiceOS quit left an orphaned server (PPID 1) polling the gateway. The SDK's
-// StdioServerTransport never listens for stdin EOF — its onclose fires only on
-// an explicit close() — so watch stdin directly, plus onclose for that case.
+// thread watches, intent roster refresh) keep the event loop alive forever, so
+// without this every VoiceOS quit left an orphaned server (PPID 1) polling the
+// gateway. The SDK's StdioServerTransport never listens for stdin EOF — its
+// onclose fires only on an explicit close() — so watch stdin directly, plus
+// onclose for that case. One onclose handler: a second assignment would replace it.
 let exiting = false;
 function exitOnHostGone(reason: string): void {
   if (exiting) return;
   exiting = true;
+  intentSupport.stop();
   log(`${reason}; exiting`);
   process.exit(0);
 }
@@ -882,7 +1002,7 @@ process.stdin.once("end", () => exitOnHostGone("stdin ended"));
 process.stdin.once("close", () => exitOnHostGone("stdin closed"));
 server.server.onclose = () => exitOnHostGone("MCP transport closed");
 
-void refreshBotChoices();
+intentSupport.start();
 log("server started, awaiting MCP requests on stdio");
 
 // Background: ping when a scheduled task (automation) finishes. Fire-and-forget;

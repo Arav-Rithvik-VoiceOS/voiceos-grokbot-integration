@@ -4,6 +4,9 @@
  * Messaging HTML/CSS/JS in widgets/thread.html, sent.html, and sent-group.html
  * is copied byte-for-byte from the user's handoff. The separate messaging
  * adapter supplies live data, host tool calls, and frame bounds at render time.
+ * The live conversation (widgets/live-chat.js) and the composer's attach/teach
+ * menu (widgets/composer-kit.js) are injected the same way, into the thread
+ * card and the show card's chat pane only — never into receipts.
  *
  * This file runs in the UNSANDBOXED server process, so it may read the widget
  * files from disk; only the card iframe itself is network/fs-restricted.
@@ -15,8 +18,13 @@ import type { Agent, TranscriptEntry } from "./client.ts";
 // broke every shared build (the widgets/ folder never ships). Regenerate with
 // `node scripts/inline-assets.mjs` after changing any widget; build-publish runs
 // it automatically. The mark is a data: URI because the card sandbox blocks the
-// network; the 64px PNG keeps two marks under the 96k glance cap.
-import { WIDGETS, MESSAGING_ADAPTER, CONFIRMATION_ADAPTER, MESSAGING_CSS, MARK_DATA_URI, RFB_B64 } from "./assets.generated.ts";
+// network; it is a 32px copy (the mark draws at 16px), embedded once per card.
+import {
+  WIDGETS, MESSAGING_ADAPTER, CONFIRMATION_ADAPTER, MESSAGING_CSS, MARK_DATA_URI, RFB_B64,
+  LIVE_CHAT_JS, LIVE_CHAT_CSS, MARKDOWN_CSS, COMPOSER_KIT_JS, COMPOSER_KIT_CSS, SHOW_ADAPTER,
+} from "./assets.generated.ts";
+import { toCardThread, boundThread, type CardItem } from "./conversation.ts";
+import { renderMarkdown } from "./markdown.ts";
 
 type CardName = "connect" | "show" | "sent-group" | "sent" | "create" | "thread" | "screen";
 
@@ -25,10 +33,17 @@ type CardName = "connect" | "show" | "sent-group" | "sent" | "create" | "thread"
  * `.mark` element may carry its own attributes (e.g. screen.html's inline
  * `style`), so match the open tag with any attributes and replace just the inner
  * `<i></i>` placeholder, keeping the element (and its attributes) intact. A plain
- * `class="mark"><i></i>` string match missed those and left the empty glyph. */
+ * `class="mark"><i></i>` string match missed those and left the empty glyph.
+ * The logo is ONE CSS background per card, not an inline <img> per mark: the
+ * thread card writes its mark three times (markup + two header templates), and
+ * three copies of the data URI cost ~12KB of the glance cap. A <b>, not an
+ * <i>, so the handoff's `.mark i` placeholder styles never apply to it. */
+const MARK_CSS = `.voiceos-mk{display:inline-block;flex:none;width:16px;height:16px;border-radius:5px;vertical-align:middle;background:url(${MARK_DATA_URI}) center/contain no-repeat}`;
 export function injectMark(html: string): string {
-  const img = `<img class="voiceos-mk" style="width:16px;height:16px;border-radius:5px;object-fit:contain;display:inline-block;vertical-align:middle" src="${MARK_DATA_URI}" alt="Grok Bot">`;
-  return html.replace(/(class="mark"[^>]*>)<i><\/i>/g, (_, open: string) => open + img);
+  let marks = 0;
+  const out = html.replace(/(class="mark"[^>]*>)<i><\/i>/g, (_, open: string) =>
+    (marks++, `${open}<b class="voiceos-mk" role="img" aria-label="Grok Bot"></b>`));
+  return marks ? out.replace("<style>", () => `<style>${MARK_CSS}\n`) : out;
 }
 
 // The in-card VNC viewer (noVNC RFB, gzip+base64), built by `bun run build-rfb`.
@@ -39,14 +54,19 @@ export function injectMark(html: string): string {
 
 /**
  * The cap that actually gates a glance: VoiceOS accepts a widget glance only
- * when JSON.stringify({ blocks }).length <= 96 000 (validateGlancePayload,
- * verified on 0.2.27). Over it, the card is silently dropped and the notch
- * shows the raw tool JSON. WIDGET_CAPS.htmlChars (131072) is a second, looser
- * check on the html alone.
+ * when JSON.stringify({ blocks }).length <= INTEGRATION_UI_LIMITS.widgetGlanceChars
+ * (validateGlancePayload). 0.2.41 ships { glanceChars: 32e3, widgetGlanceChars: 3e5,
+ * widgetHtmlChars: 3e5, hookViewChars: 3e5 } (0.2.27 had 96 000). Over it, the
+ * card is silently dropped and the notch shows the raw tool JSON, so cards keep
+ * a margin under 300 000. Card-invoked tool RESULTS have their own, tighter cap
+ * (WIDGET_TOOL_LIMITS.resultChars 131072): snapshots and entry chunks never grow
+ * with this one.
  */
-const MAX_GLANCE_CHARS = 96_000;
+export const MAX_GLANCE_CHARS = 280_000;
 export const glanceChars = (card: { _voiceos_glance: { blocks: unknown[] } }) =>
   JSON.stringify({ blocks: card._voiceos_glance.blocks }).length;
+
+const STRIP_COMMENTS = new Set<CardName>(["screen", "thread", "show"]);
 
 /** The widget HTML with the real mark + real {data, args} injected. `fills`
  * replaces extra `__VOICEOS_<KEY>__` tokens (today: RFB on the screen card);
@@ -59,31 +79,89 @@ export function renderCard(
   const json = JSON.stringify({ data: payload.data ?? {}, args: payload.args ?? {} })
     .replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   // Function replacers so `$` in the data can't be read as a replacement pattern.
-  // The live screen card sits near the 96k glance cap, so its source comments are
-  // dropped at render time (before any data/viewer fill, so only our own template
-  // is touched). screen.html has no "/*" inside a string — check-screen guards that.
-  const template = name === "screen" ? WIDGETS[name].replace(/\/\*[\s\S]*?\*\/\n?/g, "") : WIDGETS[name];
+  // The live screen, thread and show cards carry the most bytes, so their
+  // source comments are dropped at render time (before any data/viewer/asset
+  // fill, so only the template is touched). None of these templates has "/*"
+  // inside a string — check-screen and tests/cards.test.ts guard that.
+  const template = STRIP_COMMENTS.has(name) ? WIDGETS[name].replace(/\/\*[\s\S]*?\*\/\n?/g, "") : WIDGETS[name];
   let html = injectMark(template).replace(/__VOICEOS_([A-Z]+)__/g, (token, key: string) => key === "DEMO" ? token : fills[key] ?? "");
+  const confirmation = Boolean((payload.data as { confirmation?: boolean })?.confirmation);
   if (["thread", "sent", "sent-group"].includes(name)) {
     html = html.replace(/^const DEMO=.*;$/m, () => `const DEMO=${json};`);
+    // The live conversation (refresh, older messages, markdown, media, requests,
+    // attach/teach) rides only on a real thread card. A confirmation is a
+    // host-approved draft, and a sent receipt is a receipt: both keep their
+    // original adapter, and receipts get none of the extra bytes. The new-group
+    // mode (args.members, no args.group) has no conversation yet and no + menu,
+    // so it skips the ~40KB of live code too.
+    const args = payload.args as { group?: string; members?: unknown } | undefined;
+    const newGroup = !args?.group && Array.isArray(args?.members);
+    const live = name === "thread" && !confirmation && !newGroup;
+    const script = confirmation ? `${pinnedConfirmationAdapter()}\n${CONFIRM_EXTRAS}`
+      : live ? `${LIVE_CHAT_JS}\n${COMPOSER_KIT_JS}\n${MESSAGING_ADAPTER}` : MESSAGING_ADAPTER;
+    const css = confirmation ? `${MESSAGING_CSS}\n${MARKDOWN_CSS}`
+      : live ? `${MESSAGING_CSS}\n${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${COMPOSER_KIT_CSS}` : MESSAGING_CSS;
     // One lexical scope per document, including after the in-place sent transition.
     // Original source files stay intact; the adapter overrides only live wiring.
     html = html.replace("<script>", "<script>\n(()=>{\n")
-      .replace("</script>", () => `\n${(payload.data as { confirmation?: boolean })?.confirmation ? CONFIRMATION_ADAPTER : MESSAGING_ADAPTER}\n})();\n</script>`);
-    html = html.replace("<script>", () => `<style>${MESSAGING_CSS}</style>\n<script>`);
-  } else html = html.replace("__VOICEOS_DEMO__", () => json);
+      .replace("</script>", () => `\n${script}\n})();\n</script>`);
+    html = html.replace("<script>", () => `<style>${css}</style>\n<script>`);
+  } else {
+    html = html.replace("__VOICEOS_DEMO__", () => json);
+    if (name === "show") {
+      // show.html's top-level functions (openChat, invoke, CAN_INVOKE, D, …) are
+      // script-global, so the glue in its own IIFE can wrap them without the
+      // assets' helpers leaking into (or colliding with) the handoff's scope.
+      // Anchor on <script>, not </style>: show.html has several style blocks.
+      // After the data fill, so no asset text is ever read as a token.
+      html = html.replace("</script>", () => `\n(()=>{\n${LIVE_CHAT_JS}\n${COMPOSER_KIT_JS}\n${SHOW_ADAPTER}\n})();\n</script>`)
+        .replace("<script>", () => `<style>${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${COMPOSER_KIT_CSS}</style>\n<script>`);
+    }
+  }
   return pruneShapeCss(name, payload.data, html);
 }
+
+/** The confirmation adapter stages the resolved bot ID for `bot`. A fast intent
+ * approves an enum NAME, and the host re-validates the edited args against that
+ * enum — an ID there fails the approval. So a grokbot_send confirmation pins
+ * the name it was opened with (the server re-resolves it with recipientId).
+ * Built lazily: it only renders at freeze-confirms/test time, where a missing
+ * anchor must fail the build instead of silently shipping an unpinned card. */
+let _pinned: string | undefined;
+export function pinnedConfirmationAdapter(adapter = CONFIRMATION_ADAPTER): string {
+  if (adapter === CONFIRMATION_ADAPTER && _pinned) return _pinned;
+  const stageAnchor = "stage = function(key, value) {";
+  const bootAnchor = "confirmationBooted = true;";
+  if (!adapter.includes(stageAnchor) || !adapter.includes(bootAnchor))
+    throw new Error("confirmation-adapter.js changed: the recipient-pin anchors are missing");
+  const out = `let confirmationBotRef;\n${adapter}`
+    .replace(stageAnchor, () => `${stageAnchor}\n  if (key === 'bot' && typeof confirmationBotRef === 'string') value = confirmationBotRef;`)
+    .replace(bootAnchor, () => `${bootAnchor}\n  if (DEMO.data.tool === 'grokbot_send') confirmationBotRef = event.data.args?.bot;`);
+  if (adapter === CONFIRMATION_ADAPTER) _pinned = out;
+  return out;
+}
+
+/** Confirmation-only, after the adapter: no live chat runs in a confirmation,
+ * so thread.html's own msgHtml draws every row. A notice has no bot, and
+ * msgHtml would give it a grey orb and a blank name; it is a plain line here.
+ * Markdown links would navigate the confirmation iframe away from the draft
+ * (the host's approve arrow stays over whatever loaded), so a click hands
+ * https links to the host and goes nowhere else. Kept out of the adapter
+ * itself: its tests run it without a DOM. */
+export const CONFIRM_EXTRAS = "const confirmRow=msgHtml;msgHtml=m=>m.sys!=null&&!m.bot?(m.sys?'<div class=\"sys\">'+esc(m.sys)+'</div>':''):confirmRow(m);\n"
+  + "document.addEventListener('click',e=>{const a=e.target.closest&&e.target.closest('a[href]');if(!a)return;e.preventDefault();if(/^https:\\/\\//i.test(a.href))parent.postMessage({type:'voiceos:openUrl',url:a.href},'*')},true);";
 
 /** Every widget ships clip-path polygons for all 8 Grok avatar shapes (~6.5KB).
  * A read card only needs the shapes its bots actually use, and the screen card
  * in particular must stay under MAX_GLANCE_CHARS with the 57KB viewer bundle on
  * board — so drop the unused rules. The create card keeps all 8 (its picker
  * shows every shape); `blob` always stays because adapters use it as the
- * placeholder shape for unresolved recipients. */
+ * placeholder shape for unresolved recipients. A confirmation keeps all 8 too:
+ * it is frozen into the manifest with an empty sample roster, and its real
+ * bots arrive later over voiceos:init (pruning it left them as squares). */
 function pruneShapeCss(name: CardName, data: unknown, html: string): string {
   const bots = (data as { bots?: { shape?: string }[] } | undefined)?.bots;
-  if (name === "create" || !Array.isArray(bots)) return html;
+  if (name === "create" || (data as { confirmation?: boolean } | undefined)?.confirmation || !Array.isArray(bots)) return html;
   const used = new Set<string>(["blob", ...bots.map((b) => b.shape ?? "blob")]);
   return html.replace(/\.av\.([a-z]+),\.shapes button\.\1\{clip-path:polygon\([^)]*\)\}/g, (rule, shape: string) =>
     used.has(shape) ? rule : "");
@@ -185,11 +263,15 @@ export function normalizeShapeId(input?: string): GrokShape | undefined {
 function statusOf(a: Agent): "working" | "idle" | "thinking" | "waiting" {
   if (a.awaitingUserResponse) return "waiting";
   if (a.isComposingMessage) return "thinking";
-  if (a.isRunningTurn || a.isRunning) return "working";
+  // The gateway's isRunning is authoritative when present; isRunningTurn is the
+  // older field and can stay set after the turn has ended.
+  if (a.isRunning ?? a.isRunningTurn) return "working";
   return "idle";
 }
 
-function relTime(ms?: number): string {
+/** Relative time label ("now", "5m", "3h", "Yesterday", "Mon", "Sep 3").
+ * widgets/live-chat.js carries an exact port of this for refreshed items. */
+export function relTime(ms?: number): string {
   if (!ms) return "";
   const min = Math.floor((Date.now() - ms) / 60000);
   if (min < 1) return "now";
@@ -202,6 +284,13 @@ function relTime(ms?: number): string {
   return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+/** A latest-message line is one ellipsized row on screen; the gateway's preview
+ * can be a whole reply, and every roster (cards, snapshots) carries one per bot. */
+const preview = (s?: string) => {
+  const one = (s ?? "").trim();
+  return one.length > 120 ? `${one.slice(0, 119).trimEnd()}…` : one;
+};
+
 /** One bot in the card's `data.bots` shape. */
 export function toBot(a: Agent) {
   return {
@@ -211,7 +300,7 @@ export function toBot(a: Agent) {
     color: colorHex(a.avatarColor),
     shape: shapeKind(a.avatarShape),
     status: statusOf(a),
-    task: (a.lastMessagePreview ?? "").trim(),
+    task: preview(a.lastMessagePreview),
     time: relTime(a.lastActivityAt),
   };
 }
@@ -222,75 +311,191 @@ export function toGroup(a: Agent) {
     id: a.id,
     name: a.name,
     members: a.memberIds ?? [],
-    last: (a.lastMessagePreview ?? "").trim(),
+    last: preview(a.lastMessagePreview),
     time: relTime(a.lastActivityAt),
   };
 }
 
-/** Minimal, safe markdown → the card's inline HTML (bold + line breaks). */
-function mdToHtml(s: string): string {
-  const esc = s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return esc.replace(/\*\*([^*]+?)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
-}
+/** A message as baked into a card: the CardItem plus `t`, its relative-time
+ * label. `t` is presentation only — it is added here, at render time, and never
+ * to snapshot/entry results (it would change their version hashes); the live
+ * chat recomputes it with its port of relTime. */
+export type BakedItem = CardItem & { t?: string };
+const withTime = (items: CardItem[]): BakedItem[] =>
+  items.map((item) => {
+    const t = relTime(item.timestampMs);
+    return t ? { ...item, t } : item;
+  });
 
 /**
- * transcript entries → the card's `thread` shape.
- * "me" is the human: a `kind:"message"` turn with role "user" and NO fromAgent.
- * The bot's own outgoing turns are `kind:"send-message"` ({type,content}); a
- * `role:"assistant"` or an agent-authored `role:"user"` (fromAgent set) is bot /
- * inter-agent chatter — all shown on the bot side.
+ * transcript entries → the card's `thread` shape (every user-facing message:
+ * text as sanitized markdown `html`, media by name/index only, choices,
+ * requests, notices, "Messaged" rows). "me" is the human; bot and inter-agent
+ * turns sit on the bot side with `bot` = the sending bot. `maxChars` bounds
+ * the serialized thread (oversized messages become 160-char previews).
  */
-export function toThread(entries: TranscriptEntry[]) {
-  const out: Array<Record<string, unknown>> = [];
-  for (const e of entries) {
-    let text = "";
-    let from: "me" | "bot" = "bot";
-    if (e.kind === "send-message") {
-      const m = e.message;
-      text = typeof m === "string" ? m : String((m as Record<string, unknown> | null)?.content ?? "");
-    } else if (e.kind === "message") {
-      text = String(e.content ?? "");
-      from = String(e.role ?? "").toLowerCase() === "user" && !e.fromAgent ? "me" : "bot";
-    } else {
-      continue;
-    }
-    text = text.trim();
-    if (!text) continue;
-    // Which bot sent it: group + inter-agent messages carry `author` (on a
-    // send-message) or `fromAgent` (on a message). Drives the sender orb + name.
-    const sender = from === "bot" ? (e.author?.id ?? e.fromAgent?.id) : undefined;
-    out.push({ from, ...(sender ? { bot: sender } : {}), html: mdToHtml(text), t: e.timestampMs ? relTime(e.timestampMs) : undefined });
+export function toThread(entries: TranscriptEntry[], maxChars?: number): BakedItem[] {
+  const items = toCardThread(entries);
+  return withTime(maxChars === undefined ? items : boundThread(items, maxChars));
+}
+
+// ── Confirmation cards ───────────────────────────────────────────────────────
+
+/** A row a send/group confirmation can draw. No live chat runs there, so
+ * thread.html's own msgHtml draws `html || esc(text)` and nothing else. */
+export type ConfirmRow = { id: string; from: "me" | "bot"; bot?: string; sys?: string; t?: string; text?: string; html?: string };
+
+/** Card items (or a model's copy of these rows) → rows msgHtml can draw. A
+ * question, a request or an attachment has no text of its own, so it shows its
+ * prompt, title or file names instead of an empty bubble; a deferred preview
+ * ends in "…"; a notice keeps no bot (CONFIRM_EXTRAS draws it without an orb).
+ * Only listed fields survive, and `from` is one of two words, because msgHtml
+ * puts it in a class attribute unescaped. `untrusted` rows come back through
+ * the model: their markup is rebuilt from their text, never taken as given,
+ * and only as many as prepare ever writes are read (the hook has 2 s). */
+export function confirmationRows(items: unknown, untrusted = false): ConfirmRow[] {
+  if (!Array.isArray(items)) return [];
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  return (untrusted ? items.slice(-12) : items).flatMap((raw): ConfirmRow[] => {
+    if (!raw || typeof raw !== "object") return [];
+    const i = raw as Record<string, any>;
+    const row: ConfirmRow = { id: str(i.id), from: i.from === "me" ? "me" : "bot" };
+    if (str(i.bot)) row.bot = i.bot;
+    if (str(i.t)) row.t = i.t;
+    if (typeof i.sys === "string") return i.sys || row.bot ? [{ ...row, sys: i.sys }] : [];
+    const text = str(i.text).trim().slice(0, untrusted ? 16_000 : undefined);
+    if (text && str(i.html) && !i.deferred) return [{ ...row, text, html: untrusted ? renderMarkdown(text) : i.html }];
+    const names = Array.isArray(i.media) ? i.media.map((m: any) => str(m?.name)) : [];
+    const alt = text ? (i.deferred ? `${text}…` : text)
+      : [str(i.choice?.prompt), str(i.request?.title), ...names].map((s) => s.trim()).filter(Boolean).join(" · ");
+    return alt ? [{ ...row, text: alt }] : [];
+  });
+}
+
+/** Budget for a confirmation's context: the model copies prepare's verbatim
+ * into the send call, and the preToolUse hook returns it in its result. The
+ * rows are already bounded (toThread at 12 000); the roster gives way first. */
+export const CONFIRMATION_CONTEXT_CHARS = 48_000;
+
+/** The `confirmationContext` a send/group confirmation renders: roster for
+ * names, orbs and member edits, plus each target's rows. The handoff never
+ * shows a bot's or group's latest-message line here, so neither ships. Over
+ * budget, bots the confirmation does not show (`keep`: recipient, members,
+ * row authors) lose their subtitle, then — for a `send`, whose adapter looks
+ * up the recipient alone and has no Members view — drop out. */
+export function confirmationContext(agents: Agent[], threads: Record<string, ConfirmRow[]>, keep: string[] = [], send = false): string {
+  const shown = new Set([...keep, ...Object.values(threads).flat().map((r) => r.bot ?? "")]);
+  const groups = agents.filter((a) => a.isGroup).map((a) => ({ ...toGroup(a), last: "" }));
+  for (const g of groups) if (threads[g.id]) g.members.forEach((id) => shown.add(id));
+  const bots = agents.filter((a) => !a.isGroup).map((a) => ({ ...toBot(a), task: "" }));
+  const json = (roster: object[]) => JSON.stringify({ bots: roster, groups, threads });
+  let out = json(bots);
+  if (out.length <= CONFIRMATION_CONTEXT_CHARS) return out;
+  const slim = slimRoster(bots, shown);
+  out = json(slim);
+  return out.length <= CONFIRMATION_CONTEXT_CHARS || !send ? out : json(slim.filter((b) => shown.has(b.id)));
+}
+
+type Glance = ReturnType<typeof glance>;
+const fits = (card: Glance) => glanceChars(card) <= MAX_GLANCE_CHARS;
+
+/** Roster entries the card does not draw in full keep only what an orb and a
+ * name need (the Members "Add" list loses its subtitles; esc() reads a missing
+ * field as ""). */
+const slimRoster = (bots: ReturnType<typeof toBot>[], whole: Set<string>) =>
+  bots.map((b) => (whole.has(b.id) ? b : { id: b.id, name: b.name, color: b.color, shape: b.shape, status: b.status }));
+
+/** Bake as much history as the glance cap allows. Oversized messages become
+ * deferred previews first (boundThread halves its budget until the card fits;
+ * the live chat loads them in full). The first budget is the snapshot's own
+ * (boundThread's default, held down by the 131072-char card tool result cap),
+ * never more: a message baked whole that the first live refresh turns back
+ * into a preview would collapse on screen and re-read its chunks. The rest of
+ * the glance room goes to the roster. Too many short messages to defer: keep
+ * only the newest, and tell `render` the history is incomplete so it omits
+ * nextBeforeSeq (that cursor would skip the dropped ones; the first refresh
+ * brings a fresh one). A roster too big for even that renders `slim`; a card
+ * that still cannot fit is logged, never silently shipped as if it did. */
+function fitThread(items: CardItem[], render: (thread: BakedItem[], complete: boolean, slim: boolean) => Glance): Glance {
+  let card!: Glance;
+  for (const slim of [false, true]) {
+    for (const budget of [48_000, 24_000, 12_000, 6_000, 4_000])
+      if (fits(card = render(withTime(boundThread(items, budget)), true, slim))) return card;
+    for (let keep = items.length >> 1; keep > 0; keep >>= 1)
+      if (fits(card = render(withTime(boundThread(items.slice(-keep), 4_000)), false, slim))) return card;
+    if (fits(card = render([], false, slim))) return card;
   }
-  return out;
+  console.error(`thread card is ${glanceChars(card)} glance chars with no history (cap ${MAX_GLANCE_CHARS}); VoiceOS will drop it`);
+  return card;
 }
 
 // ── Card builders per tool ───────────────────────────────────────────────────
 
 /** show.html — roster (+ groups). `threads` is an optional per-bot recent-message
- * map (botId → toThread output) so the in-card chat pane opens populated instead
- * of empty; omit it and the pane opens with just the composer. */
+ * map (id → CardItems, bots and groups) so the in-card chat pane opens
+ * populated; `nextBeforeSeqs` are their "Earlier messages" cursors. Histories
+ * are a nicety (the pane refreshes as it opens), so they shrink, then drop —
+ * the roster itself always fits. */
 export function showCard(
   agents: Agent[],
   me?: string,
-  threads?: Record<string, ReturnType<typeof toThread>>,
+  threads: Record<string, CardItem[]> = {},
+  nextBeforeSeqs: Record<string, number | undefined> = {},
 ) {
   const bots = agents.filter((a) => !a.isGroup).map(toBot);
   const groups = agents.filter((a) => a.isGroup).map(toGroup);
-  return glance("show", { data: { bots, groups, me: me ?? "", threads: threads ?? {} }, args: {} }, 320, "Grok Bot");
+  const card = (ids: string[], perThread: number) => {
+    const baked = Object.fromEntries(ids.map((id) => [id, withTime(boundThread(threads[id], perThread))]));
+    const seqs = Object.fromEntries(ids.filter((id) => typeof nextBeforeSeqs[id] === "number").map((id) => [id, nextBeforeSeqs[id]]));
+    return glance("show", { data: { bots, groups, me: me ?? "", threads: baked, nextBeforeSeqs: seqs }, args: {} }, 320, "Grok Bot");
+  };
+  // Roster order: the first rows are the ones on screen, so they keep theirs longest.
+  const ids = agents.map((a) => a.id).filter((id) => threads[id]?.length);
+  for (let perThread = 16_000; perThread >= 1_000; perThread /= 2) {
+    const c = card(ids, perThread);
+    if (fits(c)) return c;
+  }
+  for (let keep = ids.length >> 1; keep > 0; keep >>= 1) {
+    const c = card(ids.slice(0, keep), 1_000);
+    if (fits(c)) return c;
+  }
+  const bare = card([], 0);
+  if (fits(bare)) return bare;
+  // The roster is the content here, so every bot stays — as a name and a status.
+  const slim = glance("show", { data: { bots: slimRoster(bots, new Set()), groups: groups.map((g) => ({ ...g, last: "" })), me: me ?? "", threads: {}, nextBeforeSeqs: {} }, args: {} }, 320, "Grok Bot");
+  if (!fits(slim)) console.error(`show card is ${glanceChars(slim)} glance chars with a bare roster (cap ${MAX_GLANCE_CHARS}); VoiceOS will drop it`);
+  return slim;
 }
+
+/** The thread card's roster, for orbs, names and the Members view. It never
+ * shows a bot's latest-message line (`task`, the show card's row text), and
+ * those lines would crowd real messages out of the glance budget, so it is
+ * left empty here. */
+const threadRoster = (agents: Agent[]) =>
+  agents.filter((a) => !a.isGroup).map((a) => ({ ...toBot(a), task: "" }));
+const authors = (items: CardItem[]) => new Set(items.map((i) => i.bot).filter((id): id is string => !!id));
 
 /** thread.html 1:1 mode — one bot + its recent messages (`args.bot`). Pass
  * `agents` (the roster) so a message from ANOTHER bot resolves that bot's orb +
- * name for the "Message from …" line; without it, only the thread bot is known. */
-export function threadCard(bot: Agent, entries: TranscriptEntry[], message = "", agents?: Agent[]) {
-  const bots = agents ? agents.filter((a) => !a.isGroup).map(toBot) : [toBot(bot)];
-  if (!bots.some((b) => b.id === bot.id)) bots.unshift(toBot(bot));
-  return glance(
-    "thread",
-    { data: { bots, thread: toThread(entries), me: "" }, args: { bot: bot.id, message } },
-    360,
-    "Grok Bot",
-  );
+ * name for the "Message from …" line; without it, only the thread bot is known.
+ * Only the bots the baked rows draw ship (1:1 mode has no Members view); the
+ * first live refresh hands the card the whole roster.
+ * `nextBeforeSeq` (from the same transcript page) enables "Earlier messages". */
+export function threadCard(bot: Agent, entries: TranscriptEntry[], message = "", agents?: Agent[], nextBeforeSeq?: number) {
+  const items = toCardThread(entries);
+  const refs = authors(items);
+  const bots = threadRoster((agents ?? [bot]).filter((a) => a.id === bot.id || refs.has(a.id)));
+  if (!bots.some((b) => b.id === bot.id)) bots.unshift({ ...toBot(bot), task: "" });
+  return fitThread(items, (thread, complete, slim) =>
+    glance(
+      "thread",
+      {
+        data: { bots: slim ? slimRoster(bots, new Set([bot.id])) : bots, thread, me: "", ...(complete && typeof nextBeforeSeq === "number" ? { nextBeforeSeq } : {}) },
+        args: { bot: bot.id, message },
+      },
+      360,
+      "Grok Bot",
+    ));
 }
 
 /**
@@ -300,7 +505,7 @@ export function threadCard(bot: Agent, entries: TranscriptEntry[], message = "",
  * created until the card's composer invokes grokbot_group with a message.
  */
 export function groupComposeCard(agents: Agent[], memberIds: string[], name?: string, message = "") {
-  const roster = agents.filter((a) => !a.isGroup).map(toBot);
+  const roster = threadRoster(agents);
   return glance(
     "thread",
     { data: { bots: roster, groups: [], thread: [], me: "" }, args: { members: memberIds, groupName: name ?? "", message } },
@@ -320,21 +525,26 @@ export function groupThreadCard(
   group: { id: string; name: string; members: string[] },
   entries: TranscriptEntry[],
   message = "",
+  nextBeforeSeq?: number,
 ) {
-  const roster = agents.filter((a) => !a.isGroup).map(toBot);
-  return glance(
-    "thread",
-    {
-      data: {
-        bots: roster,
-        groups: [{ id: group.id, name: group.name, members: group.members, time: relTime(Date.now()), thread: toThread(entries) }],
-        me: "",
+  const roster = threadRoster(agents);
+  const items = toCardThread(entries);
+  const whole = new Set([...group.members, ...authors(items)]);
+  return fitThread(items, (thread, complete, slim) =>
+    glance(
+      "thread",
+      {
+        data: {
+          bots: slim ? slimRoster(roster, whole) : roster,
+          groups: [{ id: group.id, name: group.name, members: group.members, time: relTime(Date.now()), thread }],
+          me: "",
+          ...(complete && typeof nextBeforeSeq === "number" ? { nextBeforeSeq } : {}),
+        },
+        args: { group: group.id, groupName: group.name, members: group.members, message },
       },
-      args: { group: group.id, groupName: group.name, members: group.members, message },
-    },
-    380,
-    "Grok Bot",
-  );
+      380,
+      "Grok Bot",
+    ));
 }
 
 /** sent.html — post-send receipt for one bot. The card reads `args.bot` (id into
