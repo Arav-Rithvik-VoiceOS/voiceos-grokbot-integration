@@ -9,11 +9,6 @@ import {
   listAgents,
   uploadAttachmentChunk,
   sendPrompt,
-  ensureAgentComputer,
-  getTeachRecordingStatus,
-  startTeachRecording,
-  stopTeachRecording,
-  agentScreen,
 } from "./client.ts";
 
 const runFile = promisify(execFile);
@@ -400,61 +395,4 @@ export class ComposerFiles {
     this.jobs.clear();
     this.sends.clear();
   }
-}
-
-export const teachTransport = {
-  listAgents,
-  ensureAgentComputer,
-  getTeachRecordingStatus,
-  startTeachRecording,
-  stopTeachRecording,
-  agentScreen,
-};
-export type TeachAction = "prepare" | "status" | "start" | "save" | "discard";
-export async function teachTask(
-  bot: string,
-  action: TeachAction,
-  transport = teachTransport,
-) {
-  const agent = (await transport.listAgents()).find((a) => a.id === bot);
-  if (!agent || agent.isGroup)
-    throw Error("Teach a task is available for an individual bot.");
-  const status = await transport.getTeachRecordingStatus();
-  if (action === "status") return { ok: true, recording: status };
-  if (status.state !== "idle" && status.agentId !== bot)
-    throw Error("Another bot is recording. Finish that recording first.");
-  if (action === "prepare") {
-    await transport.ensureAgentComputer(bot);
-    const screen = await transport.agentScreen(bot);
-    if (!screen.live || !screen.wsUrl)
-      throw Error(
-        "The bot’s computer is starting. Try Teach a task again in a moment.",
-      );
-    // Ready only: the card hands the user the native interactive computer
-    // window (grokbot_open_computer_window), so no socket URL or in-card
-    // viewer bundle rides in this result.
-    return { ok: true, recording: status };
-  }
-  if (action === "start") {
-    const recording =
-      status.state === "recording"
-        ? status
-        : await transport.startTeachRecording(bot);
-    if (recording.state !== "recording" || recording.agentId !== bot)
-      throw Error("Recording did not start. Please try again.");
-    return { ok: true, recording };
-  }
-  // Grok itself attaches the saved demonstration and asks the bot to learn it.
-  // Sending a second synthetic prompt here would duplicate the native action.
-  const recording =
-    status.state === "idle"
-      ? status
-      : await transport.stopTeachRecording(bot, action === "save");
-  if (recording.state === "recording")
-    throw Error("Recording is still active. Try Stop again.");
-  return {
-    ok: true,
-    recording,
-    saved: action === "save" && status.state !== "idle",
-  };
 }

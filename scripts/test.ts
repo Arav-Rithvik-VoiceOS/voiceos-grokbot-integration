@@ -1,6 +1,6 @@
 import { Glob } from "bun";
 const files = Array.from(new Glob("**/*.test.ts").scanSync({ cwd: new URL("..", import.meta.url).pathname }))
-  .filter(path => !path.startsWith("node_modules/")).sort();
+  .filter(path => !/^(node_modules|archive|\.claude)\//.test(path)).sort();
 for (const file of files) {
   const child = Bun.spawn([process.execPath, "test", "./" + file, "--timeout", "30000"], {
     cwd: new URL("..", import.meta.url).pathname, stdout: "inherit", stderr: "inherit",

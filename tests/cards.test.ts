@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { runInNewContext } from "node:vm";
 import { toCardItem, toCardThread, toThread as threadItems, boundThread, type CardItem } from "../conversation.ts";
 import { conversationSnapshot, conversationEntry, conversationTransport } from "../conversationService.ts";
 import {
-  renderCard, threadCard, groupThreadCard, groupComposeCard, showCard, sentCard, sentGroupCard, connectCard, glanceChars,
-  pinnedConfirmationAdapter, relTime, toThread, toBot, MAX_GLANCE_CHARS, CONFIRM_EXTRAS, confirmationContext, CONFIRMATION_CONTEXT_CHARS,
+  renderCard, threadCard, groupThreadCard, groupComposeCard, showCard, connectCard, glanceChars,
+  relTime, toThread, toBot, MAX_GLANCE_CHARS, confirmationContext, CONFIRMATION_CONTEXT_CHARS,
 } from "../cards.ts";
 import {
   MESSAGING_ADAPTER, MESSAGING_CSS, LIVE_CHAT_JS, LIVE_CHAT_CSS, MARKDOWN_CSS,
@@ -266,43 +265,6 @@ describe("renderCard asset injection", () => {
     expect(html).toContain(`<style>${MESSAGING_CSS}\n${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${COMPOSER_KIT_CSS}</style>\n<script>`);
     expect(() => new Function(script)).not.toThrow();
   });
-  test("a confirmation keeps its adapter (recipient-pinned) and gains only the markdown CSS", () => {
-    const html = renderCard("thread", { data: { confirmation: true, tool: "grokbot_send", bots: [], groups: [], threads: {}, me: "" }, args: {} });
-    const [script] = scripts(html);
-    expect(script).toContain(pinnedConfirmationAdapter());
-    expect(html).toContain(`<style>${MESSAGING_CSS}\n${MARKDOWN_CSS}</style>\n<script>`);
-    for (const marker of ["const LiveChat", "const ComposerKit", "voiceos:invokeTool"]) expect(html).not.toContain(marker);
-    if (MESSAGING_ADAPTER) expect(html).not.toContain(MESSAGING_ADAPTER);
-    // A frozen confirmation has an empty sample roster; its live bots arrive
-    // over init, so every avatar shape must survive.
-    expect(html).toContain(".av.teardrop");
-    expect(() => new Function(script)).not.toThrow();
-  });
-  test("a confirmation draws notices without an orb and hands links to the host", () => {
-    const html = renderCard("thread", { data: { confirmation: true, tool: "grokbot_group", bots: [], groups: [], threads: {}, me: "" }, args: {} });
-    expect(scripts(html)[0]).toContain(`${pinnedConfirmationAdapter()}\n${CONFIRM_EXTRAS}\n})();`);
-    let click: any;
-    const posts: any[] = [];
-    const sandbox: any = {
-      msgHtml: () => "ORB", esc: (s: string) => String(s).replace(/</g, "&lt;"),
-      document: { addEventListener: (type: string, fn: any, capture: boolean) => { if (type === "click" && capture) click = fn; } },
-      parent: { postMessage: (m: any) => posts.push(m) },
-    };
-    runInNewContext(`${CONFIRM_EXTRAS}\nthis.draw=msgHtml;`, sandbox);
-    expect(sandbox.draw({ id: "n", from: "bot", sys: "Titus <b>finished</b>" })).toBe('<div class="sys">Titus &lt;b>finished&lt;/b></div>');
-    expect(sandbox.draw({ id: "e", from: "bot", sys: "" })).toBe("");
-    expect(sandbox.draw({ id: "m", from: "bot", bot: "p", sys: "Messaged" })).toBe("ORB");
-    expect(sandbox.draw({ id: "x", from: "bot", text: "Hi" })).toBe("ORB");
-    const press = (href: string) => {
-      let prevented = false;
-      const a = { href };
-      click({ target: { closest: (sel: string) => (sel === "a[href]" ? a : null) }, preventDefault: () => { prevented = true; } });
-      return prevented;
-    };
-    expect(press("https://example.com/report")).toBe(true);
-    expect(press("http://example.com/")).toBe(true);
-    expect(posts).toEqual([{ type: "voiceos:openUrl", url: "https://example.com/report" }]);
-  });
   test("a confirmation context over budget keeps the bots it draws whole", () => {
     const agents = bigRoster(400);
     const keep = agents[5].id;
@@ -316,18 +278,6 @@ describe("renderCard asset injection", () => {
     expect(group.bots).toHaveLength(200);
     expect(group.bots[1].label).toBe("Executive assistant for the research team");
     expect(group.groups[0]).toMatchObject({ id: "g", last: "" });
-  });
-  test("sent receipts are unchanged: the messaging adapter and its CSS only", () => {
-    for (const card of [sentCard({ id: "b0", name: "Bot 0" }, "Hello $& $'"), sentGroupCard(roster(2), { id: "g", name: "Crew", members: ["b0", "b1"] }, "Hello")]) {
-      const html = htmlOf(card);
-      const [script, ...rest] = scripts(html);
-      expect(rest).toHaveLength(0);
-      expect(script.endsWith(`\n${MESSAGING_ADAPTER}\n})();\n`)).toBe(true);
-      expect(html).toContain(`<style>${MESSAGING_CSS}</style>\n<script>`);
-      for (const marker of ["const LiveChat", "const ComposerKit"]) expect(html).not.toContain(marker);
-      expect(demo(html).args.message).toStartWith("Hello");
-    }
-    expect(demo(htmlOf(sentCard({ id: "b0", name: "Bot 0" }, "Hello $& $'"))).args.message).toBe("Hello $& $'");
   });
   test("the show card appends the live chat glue in its own scope after its data", () => {
     const html = htmlOf(showCard(roster(3), undefined, { b0: toCardThread([picture]) }));
@@ -356,12 +306,18 @@ describe("renderCard asset injection", () => {
       for (const marker of ["const LiveChat", "const ComposerKit"]) expect(html).not.toContain(marker);
   });
   test("the logo is embedded once per card, however many marks it draws", () => {
-    const cards = [threadCard({ id: "b0", name: "Bot 0" }, []), showCard(roster(2)), sentCard({ id: "b0", name: "Bot 0" }, "Hi"), connectCard()];
+    const cards = [showCard(roster(2)), connectCard()];
     for (const html of cards.map(htmlOf)) {
       expect(html.split(MARK_DATA_URI).length - 1).toBe(1);
       expect(html).not.toContain('class="mark"><i></i>');
     }
-    expect(htmlOf(cards[0]).match(/class="voiceos-mk"/g)).toHaveLength(3);
+  });
+  test("chat headers have no wordmark, so the computer button sits at the far right", () => {
+    for (const card of [threadCard({ id: "b0", name: "Bot 0" }, []), groupComposeCard(roster(2), ["b0", "b1"], "Crew", "Hi")]) {
+      const html = htmlOf(card);
+      expect(html).not.toContain(MARK_DATA_URI);
+      expect(html).not.toContain('class="mark"');
+    }
   });
   test("stripped template comments are real comments, never \"/*\" inside a string", () => {
     for (const name of ["thread", "show", "screen"]) {

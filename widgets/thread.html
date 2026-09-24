@@ -54,8 +54,8 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 .bubble.me{background:var(--fill-3);border-bottom-right-radius:6px;align-self:flex-end}
 .bubble b{font-weight:650}
 .sys{align-self:center;color:var(--ink-3);font-size:11.5px;display:flex;align-items:center;gap:5px;padding:2px 0}
-.msgs{display:flex;flex-direction:column;gap:6px;padding:4px 14px 8px;overflow-y:auto}
-.compose{display:flex;align-items:center;gap:8px;margin:4px 7px 12px;background:var(--fill-1);border:1px solid var(--line);border-radius:22px;padding:5px 5px 5px 6px}
+.msgs{display:flex;flex-direction:column;gap:6px;padding:4px 14px 30px;overflow-y:auto;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent)}
+.compose{display:flex;align-items:center;gap:8px;margin:0 7px 12px;background:var(--fill-1);border:1px solid transparent;border-radius:22px;padding:5px 5px 5px 6px}
 .compose input{background:none;border:0;padding:6px 4px;flex:1;min-width:0}
 .compose .plus{width:30px;height:30px;min-width:30px;flex:0 0 30px;aspect-ratio:1;border-radius:50%;background:var(--fill-2);color:var(--ink-2);font-size:18px;line-height:30px;text-align:center}
 .compose .send{width:30px;height:30px;min-width:30px;flex:0 0 30px;aspect-ratio:1;border-radius:50%;background:var(--ink-1);color:#000;display:grid;place-items:center;transition:transform .12s,opacity .15s}
@@ -91,7 +91,7 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 <div id="c"></div>
 </div>
 <div id="v-members" hidden>
-<div class="hd"><button class="back" id="back" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button><div class="grow"><div class="t2">Members</div><div class="t3" id="mcount"></div></div><span class="mark"><i></i>Grok Bot</span></div>
+<div class="hd"><button class="back" id="back" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button><div class="grow"><div class="t2">Members</div><div class="t3" id="mcount"></div></div></div>
 <div id="mlist"></div>
 <div class="lbl sec">Add</div>
 <div id="alist"></div>
@@ -179,10 +179,10 @@ function stackHtml(){return '<button class="stack" id="stack" aria-label="Member
 function refreshHeader(){const s=$('#stack');if(s)s.outerHTML=stackHtml();$('#stack').onclick=()=>{$$('#stack .av').forEach(a=>Motion.react(a));show('members')};$('#sub').textContent=members.length?namesOf(members):'No Bots yet';const i=$('#msg');if(i&&!i.value)i.placeholder='Message '+(members.length?namesOf(members):'the group');const e=$('#msgs .empty');if(e)e.innerHTML=emptyHtml()}
 function emptyHtml(){return members.length?'New group with '+esc(namesOf(members))+'.<br>Your first message starts the thread.':'Add Bots to this group to get started.'}
 function drawThread(){const hd=$('#hd'),m=$('#msgs');
- if(isGroup){hd.innerHTML=stackHtml()+'<div class="grow"><input class="gname" id="gname" data-voiceos-key="groupName" placeholder="Name this group" autocomplete="off" value="'+esc(A.groupName||'')+'"><div class="t3" id="sub"></div></div><span class="mark"><i></i>Grok Bot</span>';
+ if(isGroup){hd.innerHTML=stackHtml()+'<div class="grow"><input class="gname" id="gname" data-voiceos-key="groupName" placeholder="Name this group" autocomplete="off" value="'+esc(A.groupName||'')+'"><div class="t3" id="sub"></div></div>';
   const th=(G&&G.thread)||A.thread||[];m.innerHTML=th.length?th.map(msgHtml).join(''):'<div class="empty">'+emptyHtml()+'</div>';
   $('#c').innerHTML=composer(null,'Message '+namesOf(members));refreshHeader()}
- else{const b=botById(D,A.bot||'pepper');SELF=b.id;hd.innerHTML=avb(b)+'<div class="grow"><div class="t2">'+esc(b.name)+'</div><div class="st"><span class="dot '+dotCls(b)+'"></span>'+statusText(b)+' · '+esc(b.label)+'</div></div><span class="mark"><i></i>Grok Bot</span>';m.innerHTML=(D.thread||[]).map(msgHtml).join('');$('#c').innerHTML=composer(b.name)}
+ else{const b=botById(D,A.bot||'pepper');SELF=b.id;hd.innerHTML=avb(b)+'<div class="grow"><div class="t2">'+esc(b.name)+'</div><div class="st"><span class="dot '+dotCls(b)+'"></span>'+statusText(b)+' · '+esc(b.label)+'</div></div>';m.innerHTML=(D.thread||[]).map(msgHtml).join('');$('#c').innerHTML=composer(b.name)}
  const inp=$('#msg');inp.dataset.voiceosKey='message';if(A.message)inp.value=A.message;
  wireComposer(document,v=>{const e=$('#msgs .empty');if(e)e.remove();appendMe(m,v);stage('message','');const avs=$$('#hd .av');avs.forEach(a=>{Motion.react(a);Motion.set(a,'thinking')});setTimeout(()=>avs.forEach(a=>Motion.set(a,botById(D,a.dataset.bot).status||'idle')),2600)});
  $('.compose .send').disabled=!inp.value.trim();m.scrollTop=m.scrollHeight}

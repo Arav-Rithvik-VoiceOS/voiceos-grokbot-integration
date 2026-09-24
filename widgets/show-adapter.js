@@ -56,7 +56,7 @@ function lcMount(b){const c=$('#chat'),list=$('#msgs',c),hd=$('.hd',c),form=$('#
   renderItem:m=>lcItem(m,id,!!b.group),onBots:(bots,gs)=>lcBots(bots,gs,p,!!b.group),statusLine:say});
  if(!b.group){
   p.kit=ComposerKit.mount({bridge:lcBridge,form,input,sendButton:sb,bot:{id,name:b.name},status:line(),
-   onSent:()=>p.live.refresh(),openComputer:()=>p.live.openComputer()});
+   onSent:()=>p.live.refresh()});
   // The + needs tools; it appears once the host says they are ready.
   const plus=()=>{const x=$('.plus',form);if(x)x.hidden=!lcBridge.canInvoke};plus();p.off=lcBridge.onReady(plus)}
  const back=$('#back',c),goBack=back.onclick;back.onclick=()=>{lcClose();if(goBack)goBack.call(back)};

@@ -1,7 +1,8 @@
 /** Push voiceos.integration.json into VoiceOS's manifest cache.
  *
  * VoiceOS caches the whole manifest (tools + confirm HTML) under
- * config.json → installedIntegrations[].manifest and does NOT refresh it on a
+ * config.json → installedIntegrations[].manifest, plus customMcpServers[].confirmTools,
+ * and does NOT refresh them on a
  * plain restart, even on a version bump. The host validates card invokeTool
  * args against this cache, so a tool the cache lacks (e.g. grokbot_card_send)
  * fails with "unknown tool" / schema errors until the cache is replaced.
@@ -35,6 +36,12 @@ const before = entry.manifest?.version;
 const backup = `${configPath}.bak-${Date.now()}`;
 copyFileSync(configPath, backup);
 entry.manifest = manifest;
+// The runtime server descriptor keeps its own copy of which tools ask first
+// (confirmTools = tools with a `confirmation`). It is written only at install,
+// so a manifest that adds or drops a confirmation must refresh it too.
+const server = config.customMcpServers?.find((e: any) => e.id === entry.serverId);
+if (!server) { console.error(`No MCP server ${entry.serverId} for ${manifest.id}. Reinstall it via the app.`); process.exit(1); }
+server.confirmTools = manifest.tools.filter((t: any) => t.confirmation).map((t: any) => t.name);
 writeFileSync(configPath, JSON.stringify(config, null, 2));
-console.log(`Pushed manifest ${before} → ${manifest.version} (${manifest.tools.length} tools). Backup: ${backup}`);
+console.log(`Pushed manifest ${before} → ${manifest.version} (${manifest.tools.length} tools; asks first: ${server.confirmTools.join(", ") || "none"}). Backup: ${backup}`);
 console.log("Relaunch VoiceOS, then run: bun run check:installed");

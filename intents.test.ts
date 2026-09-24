@@ -20,10 +20,12 @@ const hook = (args: Record<string, unknown>): PreToolUseHookInput => ({
   hookApiVersion: 1, event: "preToolUse", toolName: "grokbot_send", args,
 });
 
-test("shipped show and send intents use the SDK contract and retain approval", () => {
+test("shipped show and send intents use the SDK contract; only create asks first", () => {
   expect<unknown>(manifest.intents).toEqual(intents);
   expect(intentErrors(intents, manifest.tools)).toEqual([]);
-  expect(manifest.tools.find(t => t.name === "grokbot_send")?.confirmation).toBeDefined();
+  // grokbot_send / grokbot_group only open the card with a draft; the card's
+  // send arrow sends. Create keeps its card and the hook forces it on.
+  expect(manifest.tools.filter(t => t.confirmation).map(t => t.name)).toEqual(["grokbot_create"]);
   expect(manifest.hooks).toEqual({ preToolUse: { scope: "own" } });
   expect(matchIntentTemplate(intents[0], "show my Grok bots")).toEqual({});
   expect(matchIntentTemplate(intents[0], "Grok Bot show")).toEqual({});
@@ -224,4 +226,9 @@ test("upstream screen, chat and create shortcuts coexist with verified sends", (
   expect(intents.some(intent => intent.tool === "grokbot_open_computer_window")).toBe(false);
   const create = manifest.tools.find(tool => tool.name === "grokbot_create");
   expect(create?.confirmation).toBeDefined();
+});
+
+test("create always asks first, even if the user turns its ask switch off", async () => {
+  const roster = new IntentRoster(async () => agents);
+  expect(await roster.beforeTool({ ...hook({ name: "Scout", description: "Research" }), toolName: "grokbot_create" })).toEqual({ requireConfirmation: true });
 });

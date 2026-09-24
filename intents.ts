@@ -23,13 +23,13 @@ export const intents: IntentDefinition[] = [
   },
   {
     name: "send_message", tool: "grokbot_send",
-    description: "Prepare one message to one known Grok Bot for the user's approval. Copy the message without the command lead-in, preserving its meaning. Multiple questions inside that message are one send. Reject unknown bots, groups, multiple recipients, or separate actions outside the message.",
+    description: "Open one known Grok Bot's live chat with the message typed in its box; the user presses send. Copy the message without the command lead-in, preserving its meaning. Multiple questions inside that message are one send. Reject unknown bots, groups, multiple recipients, or separate actions outside the message.",
     utterances: { en: ["Send a message to {bot} asking {message}", "Ask {bot} to {message}", "Message {bot} saying {message}", "Send {bot} a message saying {message}", "Tell Grok bot {bot} to {message}", "Grok Bot send {bot} {message}"] },
     slots: {
       bot: { type: "enum", valuesFrom: "tool", required: true },
       message: { type: "string", required: true, examples: ["summarize today's updates", "check the latest build"] },
     },
-    response: { en: "Sending your message to {bot}." },
+    response: { en: "Your message to {bot} is ready to send." },
   },
   {
   "name": "view_screen",
@@ -183,6 +183,10 @@ export class IntentRoster {
    * that arrives without prepared rows waits, briefly, to read them. The
    * confirmation's roster and rows are rebuilt here, never passed through. */
   async beforeTool(input: PreToolUseHookInput): Promise<HookResult> {
+    // Creating a bot always shows its card. The manifest `confirmation` only
+    // sets the default of the user's ask switch, and no manifest field locks
+    // it; a hook's requireConfirmation adds a confirmation the switch cannot remove.
+    if (input.toolName === "grokbot_create") return { requireConfirmation: true };
     if (input.toolName === "grokbot_group") return this.beforeGroup(input);
     if (input.toolName !== "grokbot_send") return {};
     try {

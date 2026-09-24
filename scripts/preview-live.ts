@@ -279,18 +279,18 @@ type Scenario = {
 const scenarios: Scenario[] = [
   { slug: "thread-1to1-dark", title: "1:1 thread · dark", theme: "dark", invoke: true, html: htmlOf(thread1to1), glance: cards.glanceChars(thread1to1), initArgs: demoArgs(htmlOf(thread1to1)),
     blurb: "Pepper's conversation with every message type: formatted text, images, files, requests, choices, a Messaged row, a notice and a deferred huge message.",
-    hint: "Scroll up to load the huge note and the images. Try Earlier messages at the top, answer the choices, open the + menu (Attach files, Teach a task) and the Open computer button. A new message arrives every 15 s; use Timer speed to hit the 30-refresh cap fast." },
+    hint: "Scroll up to load the huge note and the images. Try Earlier messages at the top, answer the choices, use the + button (Attach files) and the Open computer button. A new message arrives every 15 s; use Timer speed to hit the 30-refresh cap fast." },
   { slug: "thread-1to1-light", title: "1:1 thread · light", theme: "light", invoke: true, html: htmlOf(thread1to1Draft), glance: cards.glanceChars(thread1to1Draft), initArgs: demoArgs(htmlOf(thread1to1Draft)),
     blurb: "The same conversation in the light theme, with a draft already in the composer.",
     hint: "Watch the draft while the chat refreshes: it must stay exactly as typed. Check tables, code colors and math in the light theme." },
   { slug: "thread-group", title: "Existing group thread", theme: "dark", invoke: true, html: htmlOf(threadGroup), glance: cards.glanceChars(threadGroup), initArgs: demoArgs(htmlOf(threadGroup)),
     blurb: "The Homework crew group: sender names on bot messages, a table, code, an image, a Messaged row and a pending choice.",
-    hint: "Groups get live refresh and older messages, but NO + menu and NO Open computer button." },
+    hint: "Groups get live refresh and older messages, but NO + button and NO Open computer button." },
   { slug: "show-roster", title: "Roster → chat pane", theme: "dark", invoke: true, html: htmlOf(show), glance: cards.glanceChars(show), initArgs: demoArgs(htmlOf(show)),
     blurb: "The show card. Pepper has a baked thread; Friday, Jerome and Titus load theirs from the first refresh when you open them.",
     hint: "Click a bot inside the card to open its chat pane (it refreshes once at once). Type a draft, go Back, open another bot, come back: the draft must return. Back must stop the timers. show.html reads init data as-is: a CARD ERROR on the {} init means the roster would be blank in VoiceOS (set Init data to omitted to keep testing)." },
   { slug: "confirmation-send", title: "Send confirmation", theme: "dark", invoke: true, confirmation: true, html: confirmHtml, initArgs: { bot: "Pepper", message: "Reply pong." },
-    blurb: "The grokbot_send confirmation card (host-approved draft). It only gains markdown styling: no live refresh, no + menu, no tool calls.",
+    blurb: "The grokbot_send confirmation card (host-approved draft). It only gains markdown styling: no live refresh, no + button, no tool calls.",
     hint: "Edits show as updateInput lines. Approve only logs what VoiceOS would run. Any invokeTool here is a bug." },
   { slug: "no-invoke", title: "Host without invokeTool", theme: "dark", invoke: false, html: htmlOf(thread1to1), glance: cards.glanceChars(thread1to1), initArgs: demoArgs(htmlOf(thread1to1)),
     blurb: "The 1:1 thread on a host whose capabilities.invokeTool is false.",
@@ -306,7 +306,7 @@ const jsonForScript = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c")
 function warningsFor(s: Scenario): string[] {
   const w: string[] = [];
   if (!s.confirmation && !s.html.includes("LiveChat")) w.push("live-chat.js is not in this card yet (rerun inline-assets, or cards.ts does not inject it): refresh, older messages, media, requests and deferred loading will not run.");
-  if (!s.confirmation && s.slug !== "thread-group" && !s.html.includes("ComposerKit")) w.push("composer-kit.js is not in this card yet: no Attach files / Teach a task menu.");
+  if (!s.confirmation && s.slug !== "thread-group" && !s.html.includes("ComposerKit")) w.push("composer-kit.js is not in this card yet: no Attach files button.");
   if (s.confirmation && /LiveChat|ComposerKit/.test(s.html)) w.push("The confirmation card carries live-chat/composer code. SPEC: confirmation cards get only MARKDOWN_CSS.");
   if (s.glance !== undefined && s.glance > cards.MAX_GLANCE_CHARS) w.push(`Glance is ${s.glance.toLocaleString("en-US")} chars, over the ${cards.MAX_GLANCE_CHARS.toLocaleString("en-US")} cap: VoiceOS would drop this card.`);
   return w;
@@ -352,8 +352,7 @@ const FX = JSON.parse(document.getElementById('fx').textContent);
 const $ = s => document.querySelector(s);
 const frame = $('#card'), logEl = $('#log'), countsEl = $('#counts'), metaEl = $('#meta');
 const UI_CALLABLE = new Set(FX.uiCallable);
-const CARD_REQUEST = new Set(['grokbot_card_snapshot', 'grokbot_card_entry', 'grokbot_card_image', 'grokbot_card_action', 'grokbot_card_files', 'grokbot_card_teach']);
-const DELAY = { 'grokbot_card_teach:prepare': 1800 };
+const CARD_REQUEST = new Set(['grokbot_card_snapshot', 'grokbot_card_entry', 'grokbot_card_image', 'grokbot_card_action', 'grokbot_card_files']);
 const clone = v => JSON.parse(JSON.stringify(v));
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -361,9 +360,7 @@ const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(
 let t0 = performance.now(), gen = 0, loadedGen = 0, lastHeight = 0, S, edits = {};
 const waiters = [];
 
-const idle = () => ({ state: 'idle', agentId: null, startedAtMs: null, maxDurationMs: 600000 });
-const fresh = () => ({ targets: clone(FX.targets), live: 0, mine: 0, requests: 0, refreshes: 0, byTool: {}, inFlight: new Set(), jobs: {}, files: {}, sends: {}, entryCalls: {}, picks: 0, teach: $('#otherRec').checked ? otherRecording() : idle() });
-const otherRecording = () => ({ state: 'recording', agentId: 'jerome', startedAtMs: Date.now() - 60000, maxDurationMs: 600000 });
+const fresh = () => ({ targets: clone(FX.targets), live: 0, mine: 0, requests: 0, refreshes: 0, byTool: {}, inFlight: new Set(), jobs: {}, files: {}, sends: {}, entryCalls: {}, picks: 0 });
 
 function log(kind, text, cls) {
   const line = document.createElement('span');
@@ -456,7 +453,7 @@ async function invoke(m) {
   const mode = $('#next').value;
   if (mode !== 'normal') { $('#next').value = 'normal'; log('mock', 'this call is forced to: ' + mode, 'warn'); }
   if (mode === 'silent') { log('← ' + name, 'no reply: the card must time out by itself (60 s)', 'warn'); setTimeout(() => S.inFlight.delete(m.requestId), 60000); return; }
-  await sleep($('#slow').checked ? 3000 : (DELAY[name + ':' + (args.action || '')] || 300));
+  await sleep($('#slow').checked ? 3000 : 300);
   if (mode === 'failed' || mode === 'unknown' || mode === 'cancelled') { log('← ' + name, 'status ' + mode, 'warn'); return reply({ status: mode, error: mode === 'unknown' ? 'The outcome is unknown.' : mode === 'cancelled' ? 'Cancelled.' : 'Simulated host failure.' }); }
   let body, isError = false;
   try {
@@ -632,24 +629,6 @@ const HANDLERS = {
     S.sends[nonce] = j.id;
     return snap(a.bot, j);
   },
-  grokbot_card_teach(a) {
-    const b = FX.bots.find(x => x.id === a.bot);
-    if (!b) throw new Error('Teach a task is available for an individual bot.');
-    const st = S.teach;
-    if (a.action === 'status') return { ok: true, recording: clone(st) };
-    if (st.state !== 'idle' && st.agentId !== a.bot) throw new Error('Another bot is recording. Finish that recording first.');
-    if (a.action === 'prepare') {
-      if ($('#computerOff').checked) throw new Error('The bot\u2019s computer is starting. Try Teach a task again in a moment.');
-      // The real result also carries the 57 KB noVNC viewer; keep its size honest.
-      return { ok: true, recording: clone(st), wsUrl: 'wss://preview.invalid/websockify', viewer: 'x'.repeat(57716) };
-    }
-    if (a.action === 'start') {
-      if (st.state !== 'recording') S.teach = { state: 'recording', agentId: a.bot, startedAtMs: Date.now(), maxDurationMs: 600000 };
-      return { ok: true, recording: clone(S.teach) };
-    }
-    if (a.action === 'save' || a.action === 'discard') { S.teach = idle(); return { ok: true, recording: clone(S.teach), saved: a.action === 'save' && st.state !== 'idle' }; }
-    throw new Error('Unknown action.');
-  },
   grokbot_open_computer_window(a) {
     const b = botNamed(a.bot);
     if (!b) throw new Error('No bot named ' + a.bot + '.');
@@ -673,11 +652,14 @@ const HANDLERS = {
 $('#theme').value = FX.scenario.theme;
 $('#invoke').checked = FX.scenario.invoke;
 ['#theme', '#invoke', '#twostep', '#initData', '#speed', '#cap'].forEach(s => $(s).addEventListener('change', () => { log('host', 'card settings changed: reloading the card', 'dim'); load(); }));
-$('#reload').addEventListener('click', load);
+$('#reload').addEventListener('click', () => { try { Object.keys(localStorage).filter(k => k.startsWith('gb-card:') || k === 'lc-used').forEach(k => localStorage.removeItem(k)); } catch (_) {} load(); });
+// VoiceOS rebuilds a result card from its first html on every notch reopen; the
+// server (mock state) and the card's own storage survive. Grok Bot's cards are
+// networked (own origin, working localStorage), hence allow-same-origin above.
+$('#reopen').addEventListener('click', () => { gen++; lastHeight = 0; frame.srcdoc = FX.card; log('host', 'notch closed and reopened: the card reloads from its first html', 'dim'); });
 $('#visibility').addEventListener('change', () => { frame.contentWindow.postMessage({ type: 'preview:visibility', state: $('#visibility').value }, '*'); log('host', 'card visibility: ' + cardVisibility(), 'dim'); });
 document.addEventListener('visibilitychange', () => { if ($('#visibility').value === 'real') log('host', 'tab ' + document.visibilityState, 'dim'); });
 $('#clear').addEventListener('click', () => { logEl.textContent = ''; });
-$('#otherRec').addEventListener('change', () => { S.teach = $('#otherRec').checked ? otherRecording() : idle(); log('mock', $('#otherRec').checked ? 'Jerome is now recording a task' : 'no recording', 'dim'); });
 const approve = $('#approve');
 if (approve) approve.addEventListener('click', () => log('HOST', 'approved: VoiceOS would now run grokbot_send ' + short(Object.assign({}, FX.initArgs, edits)) + ' (not run in the preview)', 'ok'));
 window.card = {
@@ -709,7 +691,7 @@ function hostPage(s: Scenario): string {
 ${warnings.map((w) => `<div class="warn-box">${escHtml(w)}</div>`).join("\n")}
 <main>
 <section>
-  <div class="notch"><iframe id="card" title="Grok Bot card" sandbox="allow-scripts"></iframe></div>
+  <div class="notch"><iframe id="card" title="Grok Bot card" sandbox="allow-scripts allow-same-origin"></iframe></div>
   <div class="meta" id="meta"></div>
   <p class="hint">${escHtml(s.hint)}</p>
   ${s.confirmation || !s.invoke ? "" : `<p class="hint">Live refresh pauses while the card is hidden: switch tabs, or use Card visibility.</p>`}
@@ -732,8 +714,7 @@ ${warnings.map((w) => `<div class="warn-box">${escHtml(w)}</div>`).join("\n")}
     <label>File send <select id="filesOutcome">${opt([["complete", "completes"], ["failed", "fails"], ["unknown", "unconfirmed"]])}</select></label>
     <label><input type="checkbox" id="pickCancel"> File picker cancelled</label>
     <label><input type="checkbox" id="computerOff"> Bot computer is off</label>
-    <label><input type="checkbox" id="otherRec"> Another bot is recording</label>
-    <div class="btns"><button class="h" id="reload" type="button">Reload card (resets mocks)</button><button class="h" id="clear" type="button">Clear log</button>${s.confirmation ? `<button class="h primary" id="approve" type="button">Approve (host button)</button>` : ""}</div>
+    <div class="btns"><button class="h" id="reload" type="button">Reload card (resets mocks)</button><button class="h" id="reopen" type="button">Close + reopen notch (keeps server)</button><button class="h" id="clear" type="button">Clear log</button>${s.confirmation ? `<button class="h primary" id="approve" type="button">Approve (host button)</button>` : ""}</div>
   </div>
   <div class="counts" id="counts"></div>
   <pre id="log"></pre>
@@ -759,7 +740,7 @@ function indexPage(): string {
     ["Requests", "Sign in to Gmail has “Open in Grok Bot”; the connector and resolved/expired approvals do not. Choices answer, multi-select sends, Dismiss works."],
     ["Deferred message", "The appendix preview loads in full when visible (ends with END OF COMPLETE MESSAGE)."],
     ["Open computer", "Header button on 1:1 only; with “Bot computer is off” the card shows the message."],
-    ["Composer menu", "+ opens Attach files / Teach a task (1:1 only). Chips, ×, send with files, teach start → save."],
+    ["Composer + button", "+ opens the file picker (1:1 only). Chips, ×, send with files."],
   ];
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">

@@ -1,11 +1,12 @@
 /**
  * UI layer: the notch cards.
  *
- * Messaging HTML/CSS/JS in widgets/thread.html, sent.html, and sent-group.html
- * is copied byte-for-byte from the user's handoff. The separate messaging
+ * Messaging HTML/CSS/JS in widgets/thread.html is copied byte-for-byte from the
+ * user's handoff. The old sent receipts and confirmation adapter live in
+ * archive/ — a send now stays on the live thread card. The separate messaging
  * adapter supplies live data, host tool calls, and frame bounds at render time.
- * The live conversation (widgets/live-chat.js) and the composer's attach/teach
- * menu (widgets/composer-kit.js) are injected the same way, into the thread
+ * The live conversation (widgets/live-chat.js) and the composer's attach
+ * button (widgets/composer-kit.js) are injected the same way, into the thread
  * card and the show card's chat pane only — never into receipts.
  *
  * This file runs in the UNSANDBOXED server process, so it may read the widget
@@ -20,13 +21,13 @@ import type { Agent, TranscriptEntry } from "./client.ts";
 // it automatically. The mark is a data: URI because the card sandbox blocks the
 // network; it is a 32px copy (the mark draws at 16px), embedded once per card.
 import {
-  WIDGETS, MESSAGING_ADAPTER, CONFIRMATION_ADAPTER, MESSAGING_CSS, MARK_DATA_URI, RFB_B64,
+  WIDGETS, MESSAGING_ADAPTER, MESSAGING_CSS, MARK_DATA_URI, RFB_B64,
   LIVE_CHAT_JS, LIVE_CHAT_CSS, MARKDOWN_CSS, COMPOSER_KIT_JS, COMPOSER_KIT_CSS, SHOW_ADAPTER,
 } from "./assets.generated.ts";
 import { toCardThread, boundThread, type CardItem } from "./conversation.ts";
 import { renderMarkdown } from "./markdown.ts";
 
-type CardName = "connect" | "show" | "sent-group" | "sent" | "create" | "thread" | "screen";
+type CardName = "connect" | "show" | "create" | "thread" | "screen";
 
 /** Swap the widgets' placeholder glyph (`.mark > i`) for the real logo, bare (no
  * tile), per the design handoff. Only the `.mark` glyph is targeted — but the
@@ -85,23 +86,17 @@ export function renderCard(
   // inside a string — check-screen and tests/cards.test.ts guard that.
   const template = STRIP_COMMENTS.has(name) ? WIDGETS[name].replace(/\/\*[\s\S]*?\*\/\n?/g, "") : WIDGETS[name];
   let html = injectMark(template).replace(/__VOICEOS_([A-Z]+)__/g, (token, key: string) => key === "DEMO" ? token : fills[key] ?? "");
-  const confirmation = Boolean((payload.data as { confirmation?: boolean })?.confirmation);
-  if (["thread", "sent", "sent-group"].includes(name)) {
+  if (name === "thread") {
     html = html.replace(/^const DEMO=.*;$/m, () => `const DEMO=${json};`);
     // The live conversation (refresh, older messages, markdown, media, requests,
-    // attach/teach) rides only on a real thread card. A confirmation is a
-    // host-approved draft, and a sent receipt is a receipt: both keep their
-    // original adapter, and receipts get none of the extra bytes. The new-group
-    // mode (args.members, no args.group) has no conversation yet and no + menu,
-    // so it skips the ~40KB of live code too.
+    // attach) rides on every thread card except the new-group mode
+    // (args.members, no args.group): it has no conversation yet and no + button,
+    // so it skips the ~40KB of live code. Its first send swaps in a live card.
     const args = payload.args as { group?: string; members?: unknown } | undefined;
-    const newGroup = !args?.group && Array.isArray(args?.members);
-    const live = name === "thread" && !confirmation && !newGroup;
-    const script = confirmation ? `${pinnedConfirmationAdapter()}\n${CONFIRM_EXTRAS}`
-      : live ? `${LIVE_CHAT_JS}\n${COMPOSER_KIT_JS}\n${MESSAGING_ADAPTER}` : MESSAGING_ADAPTER;
-    const css = confirmation ? `${MESSAGING_CSS}\n${MARKDOWN_CSS}`
-      : live ? `${MESSAGING_CSS}\n${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${COMPOSER_KIT_CSS}` : MESSAGING_CSS;
-    // One lexical scope per document, including after the in-place sent transition.
+    const live = !(!args?.group && Array.isArray(args?.members));
+    const script = live ? `${LIVE_CHAT_JS}\n${COMPOSER_KIT_JS}\n${MESSAGING_ADAPTER}` : MESSAGING_ADAPTER;
+    const css = live ? `${MESSAGING_CSS}\n${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${COMPOSER_KIT_CSS}` : MESSAGING_CSS;
+    // One lexical scope per document, including after the in-place new-group swap.
     // Original source files stay intact; the adapter overrides only live wiring.
     html = html.replace("<script>", "<script>\n(()=>{\n")
       .replace("</script>", () => `\n${script}\n})();\n</script>`);
@@ -121,47 +116,15 @@ export function renderCard(
   return pruneShapeCss(name, payload.data, html);
 }
 
-/** The confirmation adapter stages the resolved bot ID for `bot`. A fast intent
- * approves an enum NAME, and the host re-validates the edited args against that
- * enum — an ID there fails the approval. So a grokbot_send confirmation pins
- * the name it was opened with (the server re-resolves it with recipientId).
- * Built lazily: it only renders at freeze-confirms/test time, where a missing
- * anchor must fail the build instead of silently shipping an unpinned card. */
-let _pinned: string | undefined;
-export function pinnedConfirmationAdapter(adapter = CONFIRMATION_ADAPTER): string {
-  if (adapter === CONFIRMATION_ADAPTER && _pinned) return _pinned;
-  const stageAnchor = "stage = function(key, value) {";
-  const bootAnchor = "confirmationBooted = true;";
-  if (!adapter.includes(stageAnchor) || !adapter.includes(bootAnchor))
-    throw new Error("confirmation-adapter.js changed: the recipient-pin anchors are missing");
-  const out = `let confirmationBotRef;\n${adapter}`
-    .replace(stageAnchor, () => `${stageAnchor}\n  if (key === 'bot' && typeof confirmationBotRef === 'string') value = confirmationBotRef;`)
-    .replace(bootAnchor, () => `${bootAnchor}\n  if (DEMO.data.tool === 'grokbot_send') confirmationBotRef = event.data.args?.bot;`);
-  if (adapter === CONFIRMATION_ADAPTER) _pinned = out;
-  return out;
-}
-
-/** Confirmation-only, after the adapter: no live chat runs in a confirmation,
- * so thread.html's own msgHtml draws every row. A notice has no bot, and
- * msgHtml would give it a grey orb and a blank name; it is a plain line here.
- * Markdown links would navigate the confirmation iframe away from the draft
- * (the host's approve arrow stays over whatever loaded), so a click hands
- * https links to the host and goes nowhere else. Kept out of the adapter
- * itself: its tests run it without a DOM. */
-export const CONFIRM_EXTRAS = "const confirmRow=msgHtml;msgHtml=m=>m.sys!=null&&!m.bot?(m.sys?'<div class=\"sys\">'+esc(m.sys)+'</div>':''):confirmRow(m);\n"
-  + "document.addEventListener('click',e=>{const a=e.target.closest&&e.target.closest('a[href]');if(!a)return;e.preventDefault();if(/^https:\\/\\//i.test(a.href))parent.postMessage({type:'voiceos:openUrl',url:a.href},'*')},true);";
-
 /** Every widget ships clip-path polygons for all 8 Grok avatar shapes (~6.5KB).
  * A read card only needs the shapes its bots actually use, and the screen card
  * in particular must stay under MAX_GLANCE_CHARS with the 57KB viewer bundle on
  * board — so drop the unused rules. The create card keeps all 8 (its picker
  * shows every shape); `blob` always stays because adapters use it as the
- * placeholder shape for unresolved recipients. A confirmation keeps all 8 too:
- * it is frozen into the manifest with an empty sample roster, and its real
- * bots arrive later over voiceos:init (pruning it left them as squares). */
+ * placeholder shape for unresolved recipients. */
 function pruneShapeCss(name: CardName, data: unknown, html: string): string {
   const bots = (data as { bots?: { shape?: string }[] } | undefined)?.bots;
-  if (name === "create" || (data as { confirmation?: boolean } | undefined)?.confirmation || !Array.isArray(bots)) return html;
+  if (name === "create" || !Array.isArray(bots)) return html;
   const used = new Set<string>(["blob", ...bots.map((b) => b.shape ?? "blob")]);
   return html.replace(/\.av\.([a-z]+),\.shapes button\.\1\{clip-path:polygon\([^)]*\)\}/g, (rule, shape: string) =>
     used.has(shape) ? rule : "");
@@ -545,26 +508,6 @@ export function groupThreadCard(
       380,
       "Grok Bot",
     ));
-}
-
-/** sent.html — post-send receipt for one bot. The card reads `args.bot` (id into
- * `data.bots[]`) and `args.message` (the outgoing bubble), and drives the orb /
- * subtitle off the bot's real `status`. */
-export function sentCard(bot: Agent, message: string) {
-  return glance(
-    "sent",
-    { data: { bots: [toBot(bot)] }, args: { bot: bot.id, message } },
-    260,
-    "Grok Bot",
-  );
-}
-
-/** 1K uses the handoff's dedicated group receipt, including the saved group id. */
-export function sentGroupCard(agents: Agent[], group: { id: string; name: string; members: string[] }, message: string) {
-  return glance("sent-group", {
-    data: { bots: agents.filter(a => !a.isGroup).map(toBot), groups: [group] },
-    args: { group: group.id, groupName: group.name, members: group.members, message },
-  }, 260, "Grok Bot");
 }
 
 /** connect.html — first-run / needs-sign-in status. */

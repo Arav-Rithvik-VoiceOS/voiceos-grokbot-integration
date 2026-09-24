@@ -38,13 +38,13 @@ import {
   agentScreen,
 } from "./client.ts";
 import { recordCardPoll, cardCovers } from "./cardWatch.ts";
-import { connectCard, screenCard, showCard, threadCard, groupThreadCard, sentCard, sentGroupCard, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
+import { connectCard, screenCard, showCard, threadCard, groupThreadCard, groupComposeCard, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
 import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 import { conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
-import { ComposerFiles, sweepStaleAttachments, teachTask, type ComposerArgs, type TeachAction } from "./composerService.ts";
+import { ComposerFiles, sweepStaleAttachments, type ComposerArgs } from "./composerService.ts";
 import { needsAttention, toCardThread, type CardItem } from "./conversation.ts";
-import { IntentRoster, resolveApprovedRecipient, registerIntentSupport } from "./intents.ts";
+import { IntentRoster, registerIntentSupport } from "./intents.ts";
 import { INTENT_SLOT_VALUES_META_KEY } from "./intentSdk.generated.js";
 
 const server = new McpServer({ name: TOOLKIT, version: "1.0.0" });
@@ -71,6 +71,14 @@ function result(payload: Record<string, unknown>, glance?: Record<string, unknow
 // reminder failure must never make the send look failed.
 const ReminderResult = z.object({ notificationId: z.string().min(1) });
 
+/**
+ * The "Show notifications from bots" setup toggle (manifest preference
+ * SHOW_BOT_NOTIFICATIONS, default off). VoiceOS injects preferences as env vars;
+ * a boolean arrives as a string, and an unset var (older install) means off.
+ */
+const notificationsEnabled = (): boolean =>
+  /^(true|1|yes|on)$/i.test((process.env.SHOW_BOT_NOTIFICATIONS ?? "").trim());
+
 /** A reminder button: `id` must match a key in REMINDER_ACTIONS below. */
 type ReminderButton = { id: string; label: string };
 
@@ -78,6 +86,7 @@ async function triggerReminder(
   message: string,
   opts: { speak?: boolean; actions?: ReminderButton[]; data?: Record<string, unknown> } = {},
 ): Promise<string | null> {
+  if (!notificationsEnabled()) return null;
   const text = message.trim().slice(0, 2000);
   if (!text) return null;
   const params: { message: string; speak?: boolean; actions?: ReminderButton[]; data?: Record<string, unknown> } = {
@@ -170,6 +179,7 @@ const summarize = (text: string, max = 140): string => {
  * the thread back and stop: we only ping chats started through VoiceOS.
  */
 function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, ourText: string): void {
+  if (!notificationsEnabled()) return; // nothing to ping, so don't poll
   void (async () => {
     const known = new Set(seen);
     const t0 = Date.now();
@@ -297,6 +307,7 @@ async function automationResultText(agentId: string, run: AutomationRun): Promis
  * successful pull baselines existing runs so old history never pings.
  */
 function startAutomationWatch(): void {
+  if (!notificationsEnabled()) return; // env is fixed at process start; nothing to ping
   void (async () => {
     const pinged = new Set<string>(); // finished run ids already handled
     let baselined = false;
@@ -503,11 +514,6 @@ server.registerTool("grokbot_card_files", {
   description: "Internal — only for explicit attachment picker, removal, send, and status actions in the Grok Bot card. Never call from a voice or model request.",
   inputSchema: { bot: z.string(), action: z.enum(["pick", "status", "remove", "send"]), jobId: z.string().optional(), attachmentId: z.string().optional(), attachments: z.array(z.string()).max(20).optional(), message: z.string().max(12000).optional(), clientNonce: z.string().max(128).optional() },
 }, (args: ComposerArgs) => cardRequest("grokbot_card_files", () => composerFiles.handle(args)));
-server.registerTool("grokbot_card_teach", {
-  title: "Teach a task from the bot card",
-  description: "Internal — only for the user's Teach a task controls in the Grok Bot card. Prepare the computer without recording; start, save, or discard only on the user's corresponding click. Never call from voice or model requests.",
-  inputSchema: { bot: z.string(), action: z.enum(["prepare", "status", "start", "save", "discard"]) },
-}, (args: { bot: string; action: TeachAction }) => cardRequest("grokbot_card_teach", () => teachTask(args.bot, args.action)));
 
 server.registerTool("grokbot_card_snapshot", {
   title: "Refresh conversation",
@@ -612,45 +618,28 @@ server.registerTool("grokbot_prepare_message", {
   const send = args.bot !== undefined;
   const keep = [...(target ? [target.id, ...(target.memberIds ?? [])] : []), ...(Array.isArray(resolved.members) ? resolved.members : [])];
   const context = confirmationContext(send ? agents.filter(a => !a.isGroup) : agents, threads, keep, send);
-  // NO glance here, on purpose. A tool result that carries _voiceos_glance makes
-  // the notch present it as the turn's result (the host snapshots it as the
-  // answer), and the grokbot_send confirmation that follows a moment later is
-  // parked instead of shown: the user sees a bare "Pepper" header and no send
-  // card. Plain JSON keeps the notch in its thinking state until the
-  // confirmation opens.
+  // NO glance here, on purpose: a glance on a pre-step becomes the turn's
+  // result on screen, and the thread card grokbot_send / grokbot_group opens
+  // a moment later must be the one the user sees.
   return result({ ready: true, nextTool: args.bot !== undefined ? "grokbot_send" : "grokbot_group",
-    args: { ...resolved, confirmationContext: context }, message: "Recipients verified. Use the returned args to open the message confirmation." });
+    args: { ...resolved, confirmationContext: context }, message: "Recipients verified. Use the returned args to open the message card." });
 }));
 
-// The "Sent to group" receipt (sent-group.html): a RECEIPT like the 1:1 send,
-// not the group thread view — a send should end on "sent", the same for voice
-// and card. `receipt` carries the block so a card can swap itself to it.
-function groupReceipt(agents: Agent[], group: { id: string; name: string; members: string[] }, message: string) {
-  const card = sentGroupCard(agents, group, message);
-  return result(
-    { sent: true, group: group.id, groupName: group.name, members: group.members, sentMessage: message,
-      message: `Sent your message to ${group.name}.`, receipt: card._voiceos_glance.blocks[0] },
-    card,
-  );
-}
-
-// ── WRITE: the one send path, shared by the voice tool and the card tool ──
-// Resolves the recipient by exact identity, sends once, starts the reply
-// watch, and returns the "sent" glance card. Both tools below call this so a
-// change here (e.g. the reply ping) can never drift between voice and card.
-async function performSend(botRef: string, rawMessage: string | undefined, { allowGroup = false, verifyApproval = false, recipientId = undefined as string | undefined } = {}) {
+// ── WRITE: the one 1:1 send path — only the card's send arrow reaches it ──
+// Resolves the recipient by exact identity, sends once and starts the reply
+// watch. No receipt: the card that sent stays open and its live chat refreshes
+// to show the message and the reply.
+async function performSend(botRef: string, rawMessage: string | undefined) {
   const message = rawMessage?.trim() ?? "";
   const agents = await listAgents();
-  const bot = verifyApproval ? resolveApprovedRecipient(botRef, recipientId, agents) : resolveMessageRecipient(botRef, agents);
-  if (bot.isGroup && !allowGroup) throw new IntegrationError("not_found", "Use the group message tool for this conversation.");
+  const bot = resolveMessageRecipient(botRef, agents);
   if (!message) throw new IntegrationError("not_found", "What should I send?");
 
-  // A group picked on the card: send as-is (no member/name edits here — the
-  // voice tool grokbot_group owns those) and hand back the GROUP receipt, so
-  // the card can swap to the same "Sent to group" view voice sends get.
+  // A group opened on the card: send as-is (member/name edits go through
+  // performGroupSend, which the card uses for its group modes).
   if (bot.isGroup) {
     await sendPrompt(bot.id, message);
-    return groupReceipt(agents, { id: bot.id, name: bot.name, members: bot.memberIds ?? [] }, message);
+    return result({ sent: true, group: bot.id, groupName: bot.name, sentMessage: message, message: `Sent your message to ${bot.name}.` });
   }
 
   // Baseline the transcript BEFORE sending, so we can spot the reply.
@@ -659,35 +648,18 @@ async function performSend(botRef: string, rawMessage: string | undefined, { all
 
   await sendPrompt(bot.id, message);
 
-  // NO send-confirmation pill here. The sent glance card below already shows
-  // "<bot>'s on it" (it carries the bot's live working state), so a reminder
-  // would double it AS A NOTIFICATION — which is not what a send is. Pills are
-  // reserved for the bot's actual REPLY landing later (watchThreadThenNotify).
-
-  // Acknowledge immediately (the card must appear right when the user
-  // speaks), then watch in the background and ping under the notch when the
-  // reply lands. No foreground wait — replies run ~40s, past what VoiceOS
-  // lets a tool block for.
+  // Acknowledge immediately, then watch in the background and ping under the
+  // notch when the reply lands. No foreground wait — replies run ~40s, past
+  // what VoiceOS lets a tool block for.
   watchThreadThenNotify(bot, seen, message);
-
-  // Reflect the bot's real, current status on the card (working / thinking /
-  // …) rather than its pre-send snapshot — best-effort, and never blocks or
-  // fails the send if the refresh doesn't come back.
-  let current = bot;
-  try {
-    const fresh = (await listAgents()).find((x) => x.id === bot.id);
-    if (fresh) current = fresh;
-  } catch {
-    /* keep the pre-send snapshot */
-  }
-  const card = sentCard(current, message);
-  return result(
-    { sent: true, bot: bot.name, sentMessage: message, message: `Sent your message to ${bot.name}.`, receipt: card._voiceos_glance.blocks[0] },
-    card,
-  );
+  return result({ sent: true, bot: bot.name, sentMessage: message, message: `Sent your message to ${bot.name}.` });
 }
 
-// ── WRITE: VoiceOS shows the manifest thread BEFORE calling this handler ──
+// ── READ: grokbot_send — opens the live thread with the draft, never sends ──
+// Voice only prepares the message: the card's composer holds the draft and
+// its send arrow (grokbot_card_send) is the one path that delivers it. So no
+// confirmation card and no "ask before acting" step sits between the user and
+// the live conversation.
 const sendTool = server.registerTool(
   "grokbot_send",
   {
@@ -695,7 +667,7 @@ const sendTool = server.registerTool(
     description: SEND_DESCRIPTION,
     inputSchema: {
       confirmationContext: z.string().optional().describe(CONTEXT_DESCRIPTION),
-      bot: z.string().describe("One Grok Bot's name as spoken, or its exact ID from grokbot_prepare_message. The SDK hook verifies the recipient before confirmation."),
+      bot: z.string().describe("One Grok Bot's name as spoken, or its exact ID from grokbot_prepare_message. The SDK hook verifies the recipient."),
       recipientId: z.string().optional().describe("Internal: recipient ID pinned by the preparation hook. Never compose or change this value."),
       message: z
         .string()
@@ -704,22 +676,29 @@ const sendTool = server.registerTool(
       // Must be declared here too (not just the manifest): the MCP layer parses
       // args against THIS schema and strips anything not listed, so without it
       // the card's via:"card" never reaches the handler.
-      via: z
-        .enum(["card"])
-        .optional()
-        .describe("Internal — leave unset on voice calls. Card-origin metadata only; VoiceOS approval is required before execution."),
     },
+    annotations: { readOnlyHint: true },
     _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: [] } },
   },
-  async (args: { bot: string; message?: string; via?: string; recipientId?: string }) =>
-    handle("grokbot_send", () => performSend(args.bot, args.message, { verifyApproval: true, recipientId: args.recipientId })),
+  async (args: { bot: string; message?: string; recipientId?: string }) =>
+    handle("grokbot_send", async () => {
+      const agents = await listAgents();
+      const bot = resolveMessageRecipient(args.recipientId ?? args.bot, agents.filter((a) => !a.isGroup));
+      const draft = args.message?.trim() ?? "";
+      const tail = await transcriptTail(bot.id, 20);
+      return result(
+        { opened: true, sent: false, bot: bot.name, draft,
+          message: draft ? `Opened ${bot.name}. Your message is in the box — press send to deliver it.` : `Opened ${bot.name}.` },
+        threadCard(bot, tail.entries ?? [], draft, agents, tail.nextBeforeSeq),
+      );
+    }),
 );
 
 // ── WRITE: grokbot_card_send — the card composer's send, NO host confirmation ──
-// Same handler as grokbot_send, but the manifest entry has no `confirmation`
-// block, so VoiceOS never floats its "Confirm action" JSON dialog over the
-// card. The user's own keystrokes + send click in the card ARE the approval.
-// Guarded like grokbot_send: exact recipient identity, empty text refused.
+// The one tool that sends. The manifest entry has no `confirmation` block, so
+// VoiceOS never floats its "Confirm action" dialog over the card: the user's
+// own keystrokes + send click in the card ARE the approval. Exact recipient
+// identity, empty text refused.
 server.registerTool(
   "grokbot_card_send",
   {
@@ -736,7 +715,7 @@ server.registerTool(
   async (args: { bot?: string; group?: string; members?: string | string[]; groupName?: string; message: string }) =>
     handle("grokbot_card_send", () =>
       args.bot !== undefined
-        ? performSend(args.bot, args.message, { allowGroup: true })
+        ? performSend(args.bot, args.message)
         : performGroupSend(args)),
 );
 
@@ -783,9 +762,11 @@ server.registerTool(
     }),
 );
 
-// ── WRITE: the one GROUP send path, shared by grokbot_group and the card tool ──
-// Saves member/name edits (or creates the group on first send), sends once,
-// and ends on the "Sent to group" receipt.
+// ── WRITE: the one GROUP send path — only the card's send arrow reaches it ──
+// Saves member/name edits (or creates the group on first send) and sends once.
+// An existing group's card stays open and refreshes. A NEW group's card had no
+// conversation to follow, so it gets `receipt`: the live thread of the group it
+// just created, which the card swaps in place of itself.
 async function performGroupSend(args: { group?: string; members?: string | string[]; groupName?: string; message?: string }) {
   const agents = await listAgents();
   const { existing, memberIds, bots, sameSet } = resolveMessageGroup(args, agents);
@@ -803,13 +784,17 @@ async function performGroupSend(args: { group?: string; members?: string | strin
     if (!target?.id) throw new IntegrationError("upstream", "The group was not created.");
   }
   await sendPrompt(target.id, message);
-  // End on the "Sent to group" RECEIPT, exactly like a 1:1 send ends on
-  // "Message sent" — not the thread view, which reads as "catch up on a
-  // bot" and leaves the user thinking the conversation lives in the notch.
-  return groupReceipt(agents, { id: target.id, name: savedName, members: memberIds }, message);
+  const payload = { sent: true, group: target.id, groupName: savedName, members: memberIds, sentMessage: message,
+    message: `Sent your message to ${savedName}.` };
+  if (existing) return result(payload);
+  const tail = await transcriptTail(target.id, 20).catch(() => ({ entries: [] as TranscriptEntry[], nextBeforeSeq: undefined }));
+  const card = groupThreadCard(agents, { id: target.id, name: savedName, members: memberIds }, tail.entries ?? [], "", tail.nextBeforeSeq);
+  return result({ ...payload, receipt: card._voiceos_glance.blocks[0] });
 }
 
-// ── GROUP: one live thread for existing and new groups ────────────────────
+// ── READ: grokbot_group — opens the group thread with the draft, never sends ──
+// An existing group (by name, or the same member set) opens its live thread; a
+// new one opens the compose mode, created on the card's first send.
 server.registerTool(
   "grokbot_group",
   {
@@ -822,11 +807,29 @@ server.registerTool(
         .describe("Bots to include, as names the user said or exact ids. Omit to use an existing group's members, or to choose members in the card."),
       groupName: z.string().optional().describe("The new or edited group name, composed as the user would type it. Omit to preserve an existing name; leave empty to name a new group in the card."),
       message: z.string().optional().describe("The drafted message, composed as the user would type it, with lead-in commands removed. The arrow sends the final edited text."),
-      via: z.enum(["card"]).optional().describe("Internal — leave unset on voice calls. Card-origin metadata only; VoiceOS approval is required before execution."),
     },
+    annotations: { readOnlyHint: true },
   },
-  async (args: { group?: string; members?: string | string[]; groupName?: string; message?: string; via?: string }) =>
-    handle("grokbot_group", () => performGroupSend(args)),
+  async (args: { group?: string; members?: string | string[]; groupName?: string; message?: string }) =>
+    handle("grokbot_group", async () => {
+      const agents = await listAgents();
+      const { existing, memberIds } = resolveMessageGroup(args, agents);
+      const draft = args.message?.trim() ?? "";
+      const ready = draft ? " Your message is in the box — press send to deliver it." : "";
+      if (existing) {
+        const tail = await transcriptTail(existing.id, 20);
+        return result(
+          { opened: true, sent: false, group: existing.name, draft, message: `Opened ${existing.name}.${ready}` },
+          groupThreadCard(agents, { id: existing.id, name: existing.name, members: existing.memberIds ?? [] }, tail.entries ?? [], draft, tail.nextBeforeSeq),
+        );
+      }
+      const name = args.groupName?.trim() ?? "";
+      return result(
+        { opened: true, sent: false, newGroup: true, members: memberIds, draft,
+          message: `Opened a new group${name ? ` called ${name}` : ""}. Pick members if needed.${ready}` },
+        groupComposeCard(agents, memberIds, name, draft),
+      );
+    }),
 );
 
 // ── READ: view_bot_desktop_live (live screen of the bot's computer) ──────────
@@ -947,37 +950,6 @@ server.registerTool(
         awaiting: Boolean(me?.awaitingUserResponse),
         reply: last ? { id: last.id, text: summarize(entryText(last), 600) } : null,
       });
-    }),
-);
-
-// ── CARD: grokbot_sent_recent — the sent receipts restore their follow-ups ────
-// A receipt is static HTML: when the notch closes and reopens, the host reloads
-// it and every follow-up the user sent from its message bar is gone from the
-// card. On load the receipt asks for the user's latest messages in this
-// conversation and re-lists the ones after its own. Read-only, plain JSON (no
-// glance). It does NOT record a card poll: receipts show no replies, so the
-// reply pill must keep firing.
-server.registerTool(
-  "grokbot_sent_recent",
-  {
-    title: "List the user's latest messages to a bot",
-    description:
-      "Internal — called once by a sent receipt card when it loads, to re-list the follow-up messages the user sent from that card. Do not call from voice.",
-    inputSchema: {
-      bot: z.string().describe("The exact bot or group ID shown on the card."),
-    },
-    annotations: { readOnlyHint: true },
-  },
-  async (args: { bot: string }) =>
-    handle("grokbot_sent_recent", async () => {
-      const target = resolveMessageRecipient(args.bot, await listAgents());
-      const { entries } = await transcriptTail(target.id, 30);
-      const messages = (entries ?? [])
-        .filter((e) => e.role === "user")
-        .map((e) => entryText(e).trim())
-        .filter(Boolean)
-        .slice(-12);
-      return result({ bot: target.name, messages });
     }),
 );
 

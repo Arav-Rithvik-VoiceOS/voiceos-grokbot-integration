@@ -544,17 +544,6 @@ export const uploadAttachmentChunk = (args: {
   totalSize: number; bytesBase64: string;
 }) => gateway<{ committedPath?: string }>("uploadAttachmentChunk", args, { timeoutMs: WRITE_TIMEOUT_MS });
 
-export interface TeachRecordingStatus {
-  state: "idle" | "recording" | "stopping";
-  agentId: string | null;
-  startedAtMs: number | null;
-  maxDurationMs: number;
-}
-export const ensureAgentComputer = (id: string) => gateway("ensureForeverBox", { id }, { timeoutMs: WRITE_TIMEOUT_MS });
-export const getTeachRecordingStatus = () => gateway<TeachRecordingStatus>("getTeachRecordingStatus");
-export const startTeachRecording = (agentId: string) => gateway<TeachRecordingStatus>("startTeachRecording", { agentId, entryPoint: "composer_menu" }, { timeoutMs: WRITE_TIMEOUT_MS });
-export const stopTeachRecording = (agentId: string, save: boolean) => gateway<TeachRecordingStatus>("stopTeachRecording", { agentId, save }, { timeoutMs: WRITE_TIMEOUT_MS });
-
 export const createAgent = (
   name: string,
   description: string,

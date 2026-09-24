@@ -60,8 +60,8 @@ card** declared in the manifest, which the user can edit and approve.
    tools must NOT declare one. A date arg (ISO `YYYY-MM-DD`, `format:"date"`)
    or a priority arg (`low|medium|high`) needs a control this vocabulary
    lacks (calendar picker; green/yellow/red select), so such a tool's
-   confirmation is a widget from `cards.ts` `confirmCards`, frozen by
-   `bun run freeze-confirms` (BUILD.md R2-006).
+   confirmation is a widget. Grok Bot's messaging tools skip confirmation
+   on purpose (voice only opens a draft; the card sends): see docs/messaging.md.
 5. **Be honest**: throw on failure; never fabricate data or claim success.
    Use `console.error` for debug logging (stdout is the MCP wire).
 6. **Least privilege**: the manifest's network permission lists only domains

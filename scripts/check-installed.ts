@@ -21,32 +21,23 @@ if (!isDeepStrictEqual(actual, expected)) {
   failures.push(`Runtime confirmTools is [${actual.join(", ")}]; expected [${expected.join(", ")}]. Refresh the server descriptor as well as the manifest.`);
 }
 
-// VoiceOS 0.2.29 toolRequiresConfirmation checks mode, then explicit tool
-// override, then server.confirmTools. Having HTML in the manifest alone does
-// not require approval at execution time. These send tools have no annotations.
+// VoiceOS 0.2.41 toolRequiresConfirmation: server mode, then the user's
+// per-tool switch, then server.confirmTools, then annotations. Voice send/group
+// only open a draft, and the card's send arrow is the one path that sends, so
+// NONE of them may ask: a confirmation card is frozen and would break the live
+// chat. Mode "all" forces every tool to ask — a user setting, so report it.
 const mode = config.integrationConfirmModes?.[`custom_mcp:${server.id}`] || "sensitive";
-for (const name of ["grokbot_send", "grokbot_group"]) {
-  const override = config.integrationToolConfirmOverrides?.[`${manifest.id}:${name}`];
-  const requiresConfirmation = mode === "all" ? true : mode === "off" ? false
-    : typeof override === "boolean" ? override : actual.includes(name);
-  console.log(`${name}: effective confirmation = ${requiresConfirmation}`);
-  if (!requiresConfirmation) failures.push(`${name} can execute without confirmation.`);
-}
-
-// The card composer's tool must be the opposite: it may NEVER require a host
-// confirmation, or the "Confirm action" JSON dialog comes back over the card.
-// mode "all" forces confirmation on every tool — that is a user setting, so
-// report it rather than fail.
-{
-  const name = "grokbot_card_send";
+for (const name of ["grokbot_send", "grokbot_group", "grokbot_card_send"]) {
   const override = config.integrationToolConfirmOverrides?.[`${manifest.id}:${name}`];
   const requiresConfirmation = mode === "all" ? true : mode === "off" ? false
     : typeof override === "boolean" ? override : actual.includes(name);
   console.log(`${name}: effective confirmation = ${requiresConfirmation}${mode === "all" ? " (confirm mode is 'all' — user setting)" : ""}`);
-  if (requiresConfirmation && mode !== "all") failures.push(`${name} would show the host confirmation dialog over the card.`);
+  if (requiresConfirmation && mode !== "all") failures.push(`${name} would ask before running and break the live card.`);
 }
+// Create must always ask; its hook forces that, and its manifest card draws it.
+if (!actual.includes("grokbot_create")) failures.push("grokbot_create is missing its confirmation card.");
 
 if (failures.length) {
   for (const failure of failures) console.error(failure);
   process.exitCode = 1;
-} else console.log(`Installed manifest ${manifest.version}, runtime confirmTools, and send approval policy agree.`);
+} else console.log(`Installed manifest ${manifest.version}, runtime confirmTools, and approval policy agree.`);

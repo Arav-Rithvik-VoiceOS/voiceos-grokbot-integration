@@ -62,12 +62,14 @@ const LiveChat=(()=>{
 
  function mount(o){
   const br=o&&o.bridge,list=o&&o.list,T=(o&&o.target)||{},bot=T.id;
-  if(!br||!list||!bot)return {refresh:noop,loadOlder:noop,openComputer:noop,destroy(){},items:()=>[],nextBeforeSeq:()=>null};
+  if(!br||!list||!bot)return {refresh:noop,loadOlder:noop,openComputer:noop,destroy(){},hurry(){},addLocal:()=>'',setLocal(){},dropLocal(){},items:()=>[],nextBeforeSeq:()=>null};
   const say=(m,bad)=>{try{o.statusLine&&o.statusLine(m||'',!!bad)}catch(_){}};
   const rep=()=>{try{typeof report==='function'&&report()}catch(_){}};
   const key=(...a)=>bot+':'+a.join(':'),ui=new Map(),busyK=new Set(),bad=new Set();
   const norm=a=>{const seen=new Set();return (Array.isArray(a)?a:[]).filter(i=>i&&typeof i==='object').map(i=>{const {t,...r}=i;r.id=r.id==null?'lc-anon-'+(++anon):String(r.id);return r}).filter(i=>!seen.has(i.id)&&seen.add(i.id))};
-  let items=norm(o.items),before=num(o.nextBeforeSeq),stick=true,dead=false,timer=0,busy=null,older=false,paused=false,erred=false,said=false,last=0;
+  let items=norm(o.items),before=num(o.nextBeforeSeq),stick=true,dead=false,timer=0,busy=null,older=false,paused=false,erred=false,said=false,last=0,fast=-1;
+  // o.onItems(items, before): the card's own copy for a reopened notch (VoiceOS rebuilds the card from its first HTML).
+  const saved=()=>{try{o.onItems&&o.onItems(items.slice(),before)}catch(_){}};
   const el=(tag,cls,text)=>{const e=document.createElement(tag);e.className=cls;if(text)e.textContent=text;return e};
   const top=el('button','sys lc-older','Earlier messages'),end=el('div','sys lc-paused','Live updates paused. Open this conversation again to continue.');
   let pc=null;
@@ -172,21 +174,37 @@ const LiveChat=(()=>{
   function bots(b){if(o.onBots&&(Array.isArray(b.bots)||Array.isArray(b.groups)))try{o.onBots(b.bots||[],b.groups||[])}catch(_){}}
   const spent=()=>br.count>=AUTO,over=()=>br.refreshes>=CAP||spent();
   function pause(){if(paused||dead)return;paused=true;clearTimeout(timer);timer=0;draw();try{o.paused&&o.paused()}catch(_){}}
-  function schedule(){clearTimeout(timer);timer=0;if(!dead&&!paused&&br.canInvoke&&document.visibilityState!=='hidden')timer=setTimeout(()=>{timer=0;refresh()},GAP)}
+  // After a send, look sooner for the reply (3 s, then ×1.5 up to GAP); otherwise every GAP. Each look spends the card's budget.
+  const gap=()=>fast>=0&&fast<6?Math.min(GAP,3000*Math.pow(1.5,fast)):GAP;
+  function schedule(){clearTimeout(timer);timer=0;if(!dead&&!paused&&br.canInvoke&&document.visibilityState!=='hidden')timer=setTimeout(()=>{timer=0;refresh()},gap())}
+  // A send is the user's own action: it may wake a card paused by the refresh cap (never one out of budget).
+  function hurry(){if(dead)return;fast=0;if(!spent()){if(br.refreshes>CAP-6)br.refreshes=CAP-6;if(paused){paused=false;draw()}}if(!busy)schedule()}
+  // Optimistic rows for the user's sends: 'sending' (in flight here), 'sent' (host confirmed), 'orphan' (from a
+  // reloaded card; its request state is lost). A snapshot that has the same text drops the copy; one that still
+  // lacks an orphan 30 s on means it never arrived (o.onLost), and a 'sent' copy is let go after 3 min.
+  function reconcile(fresh,locals){const used=new Set(),now=Date.now(),same=(a,b)=>String(a||'').trim()===String(b||'').trim();
+   for(const l of locals){const hit=fresh.find(f=>f.from==='me'&&!used.has(f.id)&&same(f.text,l.text)&&(+f.timestampMs||now)>=l.timestampMs-15e3);
+    if(hit){used.add(hit.id);continue}
+    if(l.local!=='sending'&&now-l.timestampMs>(l.local==='sent'?18e4:3e4)){if(l.local!=='sent')try{o.onLost&&o.onLost(l)}catch(_){}continue}
+    items.push(l)}}
+  function addLocal(text){const it={id:'lc-local-'+Date.now().toString(36)+'-'+(++anon),from:'me',text:String(text),timestampMs:Date.now(),local:'sending'};
+   items.push(it);stick=true;draw('bottom');saved();return it.id}
+  function setLocal(id,state){const it=items.find(i=>i.id===id);if(!it||!it.local)return;items=items.map(i=>i.id===id?{...i,local:state}:i);draw();saved()}
+  function dropLocal(id){items=items.filter(i=>i.id!==id);draw();saved()}
   function refresh(){if(dead)return noop();if(!list.isConnected){destroy();return noop()}
    if(busy)return busy;if(!br.canInvoke)return noop();if(over()){pause();return noop()}
-   clearTimeout(timer);timer=0;br.refreshes++;last=Date.now();
+   clearTimeout(timer);timer=0;br.refreshes++;last=Date.now();if(fast>=0&&++fast>=6)fast=-1;
    busy=br.call('grokbot_card_snapshot',{bot},{auto:1}).then(b=>{if(dead)return;const fresh=norm(b.thread),ids=new Set(fresh.map(i=>i.id)),at=items.findIndex(i=>ids.has(i.id));
      // Loaded older rows stay above the newest page; a page with no overlap replaces them (the gap is "Earlier messages").
-     const kept=at<0?[]:items.slice(0,at).filter(i=>!ids.has(i.id)&&!i.id.startsWith('lc-anon-'));
-     items=[...kept,...fresh];if(!kept.length)before=num(b.nextBeforeSeq);
-     bots(b);if(erred){erred=false;say('')}draw()})
+     const locals=items.filter(i=>i.local),kept=at<0?[]:items.slice(0,at).filter(i=>!ids.has(i.id)&&!i.local&&!i.id.startsWith('lc-anon-'));
+     items=[...kept,...fresh];if(!kept.length)before=num(b.nextBeforeSeq);reconcile(fresh,locals);
+     bots(b);if(erred){erred=false;say('')}draw();saved()})
     .catch(e=>{if(!dead&&e.refused!=='auto'){erred=true;say(e.message,true)}}) // out of automatic requests: just pause
     .finally(()=>{busy=null;if(!dead)over()?pause():schedule()});
    return busy}
   function loadOlder(){if(dead||older||before==null||!br.canInvoke)return noop();older=top.disabled=true;top.textContent='Loading…';
    return br.call('grokbot_card_snapshot',{bot,beforeSeq:before}).then(b=>{if(dead)return;const have=new Set(items.map(i=>i.id));
-     items=[...norm(b.thread).filter(i=>!have.has(i.id)),...items];before=num(b.nextBeforeSeq);bots(b);draw('older')})
+     items=[...norm(b.thread).filter(i=>!have.has(i.id)),...items];before=num(b.nextBeforeSeq);bots(b);draw('older');saved()})
     .catch(e=>{if(!dead)say(e.message,true)})
     .finally(()=>{older=top.disabled=false;top.textContent='Earlier messages'})}
 
@@ -234,7 +252,7 @@ const LiveChat=(()=>{
   [...list.childNodes].forEach(n=>{if(!(n.classList&&n.classList.contains('empty')&&!items.length))n.remove()});
   list.classList.add('lc-list');ro();if(pc)pc.hidden=!br.canInvoke;wire();if(rsz)rsz.observe(list);
   draw('bottom');schedule();
-  return {refresh,loadOlder,destroy,openComputer,items:()=>items.map(view),nextBeforeSeq:()=>before}}
+  return {refresh,loadOlder,destroy,openComputer,hurry,addLocal,setLocal,dropLocal,items:()=>items.map(view),nextBeforeSeq:()=>before}}
 
  return {bridge,relTime,mount};
 })();

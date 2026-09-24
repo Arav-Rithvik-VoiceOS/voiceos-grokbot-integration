@@ -54,8 +54,8 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 .bubble.me{background:var(--fill-3);border-bottom-right-radius:6px;align-self:flex-end}
 .bubble b{font-weight:650}
 .sys{align-self:center;color:var(--ink-3);font-size:11.5px;display:flex;align-items:center;gap:5px;padding:2px 0}
-.msgs{display:flex;flex-direction:column;gap:6px;padding:4px 14px 8px;overflow-y:auto}
-.compose{display:flex;align-items:center;gap:8px;margin:4px 12px 12px;background:var(--fill-1);border:1px solid var(--line);border-radius:22px;padding:5px 5px 5px 6px}
+.msgs{display:flex;flex-direction:column;gap:6px;padding:4px 14px 30px;overflow-y:auto;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent)}
+.compose{display:flex;align-items:center;gap:8px;margin:0 12px 12px;background:var(--fill-1);border:1px solid transparent;border-radius:22px;padding:5px 5px 5px 6px}
 .compose input{background:none;border:0;padding:6px 4px;flex:1;min-width:0}
 .compose .plus{width:30px;height:30px;border-radius:50%;background:var(--fill-2);color:var(--ink-2);font-size:18px;line-height:30px;text-align:center;flex:none}
 .compose .send{width:30px;height:30px;border-radius:50%;background:var(--ink-1);color:#000;flex:none;display:grid;place-items:center;transition:transform .12s,opacity .15s}
@@ -191,11 +191,11 @@ function render(d){D=d;const w=d.bots.filter(b=>['working','thinking'].includes(
  $$('.row[data-group]').forEach(r=>r.onclick=()=>openChat({name:d.groups.find(g=>g.id===r.dataset.group).name,color:'#888',shape:'blob',status:'working',group:true,members:d.groups.find(g=>g.id===r.dataset.group).members}));
 }
 /* The chat pane is the 1F thread card (thread.html) rendered in-place: same
-   36px avatar, same "Grok Bot" wordmark, same 268px message area. The only
+   36px avatar, no wordmark, same 268px message area. The only
    addition is the back button, which a two-pane card needs to return to the
    roster. Keep this header in sync with thread.html's render(). */
 function openChat(b){const c=$('#chat');
- c.innerHTML='<div class="hd"><button class="back" id="back" aria-label="Back"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>'+(b.group?'<span class="stack">'+b.members.map(id=>av(botById(D,id),'small')).join('')+'</span>':av(b))+'<div class="grow"><div class="t2">'+esc(b.name)+'</div><div class="st"><span class="dot '+dotCls(b)+'"></span>'+statusText(b)+(b.label?' · '+esc(b.label):'')+'</div></div><span class="mark"><i></i>Grok Bot</span></div>'
+ c.innerHTML='<div class="hd"><button class="back" id="back" aria-label="Back"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>'+(b.group?'<span class="stack">'+b.members.map(id=>av(botById(D,id),'small')).join('')+'</span>':av(b))+'<div class="grow"><div class="t2">'+esc(b.name)+'</div><div class="st"><span class="dot '+dotCls(b)+'"></span>'+statusText(b)+(b.label?' · '+esc(b.label):'')+'</div></div></div>'
  +'<div class="msgs" id="msgs" style="max-height:268px">'+thread(D,b.id)+'</div>'+composer(b.name);
  $('#panes').classList.add('open');$('#back').onclick=()=>$('#panes').classList.remove('open');
  const m=$('#msgs');m.scrollTop=m.scrollHeight;wireComposer(c,v=>{const a=$('.hd .av',c);Motion.react(a);

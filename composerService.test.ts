@@ -5,9 +5,7 @@ import { join } from "node:path";
 import {
   ComposerFiles,
   sweepStaleAttachments,
-  teachTask,
   type ComposerTransport,
-  type teachTransport,
 } from "./composerService.ts";
 import {
   LIVE_CHAT_JS,
@@ -247,119 +245,25 @@ test("invalid selection fails as a batch without retaining partial attachments",
   expect(r.job?.state).toBe("failed");
   expect(r.attachments).toHaveLength(0);
 });
-function teaching() {
-  let recording = {
-    state: "idle" as "idle" | "recording" | "stopping",
-    agentId: null as string | null,
-    startedAtMs: null as number | null,
-    maxDurationMs: 600000,
-  };
-  const calls: any[] = [];
-  const transport: typeof teachTransport = {
-    listAgents: async () => [
-      { id: "a", name: "Picasso" },
-      { id: "b", name: "B" },
-      { id: "group", name: "Group", isGroup: true },
-    ],
-    getTeachRecordingStatus: async () => ({ ...recording }),
-    ensureAgentComputer: async (id) => {
-      calls.push(["prepare", id]);
-      return {};
-    },
-    agentScreen: async () => ({
-      live: true,
-      wsUrl: "wss://example.cursorvm.com/vnc",
-    }),
-    startTeachRecording: async (id) => {
-      calls.push(["start", id]);
-      return (recording = {
-        ...recording,
-        state: "recording",
-        agentId: id,
-        startedAtMs: Date.now(),
-      });
-    },
-    stopTeachRecording: async (id, save) => {
-      calls.push(["stop", id, save]);
-      return (recording = {
-        ...recording,
-        state: "idle",
-        agentId: null,
-        startedAtMs: null,
-      });
-    },
-  };
-  return { transport, calls, set: (r: typeof recording) => (recording = r) };
-}
-test("preparing teaches nothing until the explicit Start recording action", async () => {
-  const f = teaching();
-  const r = await teachTask("a", "prepare", f.transport);
-  expect(f.calls).toEqual([["prepare", "a"]]);
-  expect(r.recording.state).toBe("idle");
-  // The card demonstrates in the native computer window: no socket URL or
-  // in-card viewer bundle travels through the (logged) tool bridge.
-  expect(r).toEqual({ ok: true, recording: expect.objectContaining({ state: "idle" }) });
-  expect(JSON.stringify(r)).not.toContain("cursorvm");
-});
-test("preparing fails honestly while the bot's computer is still starting", async () => {
-  const f = teaching();
-  f.transport.agentScreen = async () => ({ live: false });
-  await expect(teachTask("a", "prepare", f.transport)).rejects.toThrow("starting");
-});
-test("start is idempotent; save uses native stop-and-save with no extra message", async () => {
-  const f = teaching();
-  await teachTask("a", "start", f.transport);
-  await teachTask("a", "start", f.transport);
-  const r = await teachTask("a", "save", f.transport);
-  expect(f.calls).toEqual([
-    ["start", "a"],
-    ["stop", "a", true],
-  ]);
-  expect("saved" in r && r.saved).toBe(true);
-});
-test("discard uses native stop without saving", async () => {
-  const f = teaching();
-  await teachTask("a", "start", f.transport);
-  await teachTask("a", "discard", f.transport);
-  expect(f.calls).toEqual([
-    ["start", "a"],
-    ["stop", "a", false],
-  ]);
-});
-test("another bot cannot take over or stop an active recording", async () => {
-  const f = teaching();
-  await teachTask("a", "start", f.transport);
-  await expect(teachTask("b", "start", f.transport)).rejects.toThrow(
-    "Another bot",
-  );
-  await expect(teachTask("b", "discard", f.transport)).rejects.toThrow(
-    "Another bot",
-  );
-  await expect(teachTask("group", "prepare", f.transport)).rejects.toThrow(
-    "individual",
-  );
-  expect(f.calls).toEqual([["start", "a"]]);
-});
 test("every tool the card scripts invoke has an explicit UI grant", () => {
   // The live chat, the composer kit and both glue scripts are what a card runs;
   // any grokbot_* tool they name must be card-callable in the manifest.
   const runtime = [LIVE_CHAT_JS, COMPOSER_KIT_JS, MESSAGING_ADAPTER, SHOW_ADAPTER].join("\n");
   const names = [...new Set([...runtime.matchAll(/['"`](grokbot_[a-z_]+)['"`]/g)].map((m) => m[1]))];
-  for (const name of ["grokbot_card_files", "grokbot_card_teach", "grokbot_card_snapshot", "grokbot_open_computer_window"])
+  for (const name of ["grokbot_card_files", "grokbot_card_snapshot", "grokbot_open_computer_window"])
     expect(names).toContain(name);
   for (const name of names)
     expect(manifest.tools.find((t) => t.name === name)?.uiCallable, name).toBe(true);
+  expect(names).not.toContain("grokbot_card_teach");
   for (const src of [LIVE_CHAT_JS, COMPOSER_KIT_JS, MESSAGING_ADAPTER, SHOW_ADAPTER]) new Function(src);
 });
 
-test("sent receipts keep the plain receipt: the sent text, no live chat or composer kit", async () => {
-  const { sentCard, sentGroupCard } = await import("./cards.ts");
-  for (const card of [sentCard({ id: "a", name: "Picasso" }, "Already sent"), sentGroupCard([], { id: "group", name: "Team", members: [] }, "Already sent")]) {
-    const html = card._voiceos_glance.blocks[0].html;
-    const data = JSON.parse(html.match(/^const DEMO=(.*);$/m)![1]);
-    expect(data.args.message).toBe("Already sent");
-    expect(html).toContain(MESSAGING_ADAPTER);
-    expect(html).not.toContain("const LiveChat");
-    expect(html).not.toContain("const ComposerKit");
-  }
+test("the new-group compose card stays plain; its first send swaps in a live group thread", async () => {
+  const { groupComposeCard, groupThreadCard } = await import("./cards.ts");
+  const compose = groupComposeCard([], ["a", "b"], "Team", "Hi")._voiceos_glance.blocks[0].html;
+  expect(JSON.parse(compose.match(/^const DEMO=(.*);$/m)![1]).args.message).toBe("Hi");
+  expect(compose).toContain(MESSAGING_ADAPTER);
+  expect(compose).not.toContain("const LiveChat");
+  const live = groupThreadCard([], { id: "g", name: "Team", members: ["a", "b"] }, [])._voiceos_glance.blocks[0].html;
+  expect(live).toContain("const LiveChat");
 });
