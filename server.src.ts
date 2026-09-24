@@ -38,7 +38,7 @@ import {
   agentScreen,
 } from "./client.ts";
 import { recordCardPoll, cardCovers } from "./cardWatch.ts";
-import { connectCard, screenCard, showCard, threadCard, groupThreadCard, groupComposeCard, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
+import { connectCard, screenCard, showCard, type ShowOpen, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
 import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 import { conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
@@ -411,14 +411,39 @@ function statusWord(a: Agent): string {
   return "idle";
 }
 
-/** The live conversation card for one transcript page: a group opens in the
- * thread card's existing-group mode, a bot in its 1:1 mode. */
-function conversationCard(bot: Agent, agents: Agent[], tail: { entries?: TranscriptEntry[]; nextBeforeSeq?: number }) {
-  const entries = tail.entries ?? [];
-  return bot.isGroup
-    ? groupThreadCard(agents, { id: bot.id, name: bot.name, members: bot.memberIds ?? [] }, entries, "", tail.nextBeforeSeq)
-    : threadCard(bot, entries, "", agents, tail.nextBeforeSeq);
+/** One short transcript page per bot and group, for the roster card's chat
+ * panes (showCard drops them if they would push the card over the glance cap).
+ * On older gateways that omit the authoritative awaitingUserResponse flag, the
+ * same page infers it from a pending request or question. */
+async function rosterThreads(agents: Agent[], skip?: string) {
+  const recent: Record<string, CardItem[]> = {};
+  const cursors: Record<string, number | undefined> = {};
+  await Promise.all(agents.filter((b) => b.id !== skip).map(async (b) => {
+    try {
+      const tail = await transcriptTail(b.id, 6);
+      const thread = toCardThread(tail.entries ?? []);
+      if (b.awaitingUserResponse === undefined && needsAttention(thread)) b.awaitingUserResponse = true;
+      recent[b.id] = thread;
+      cursors[b.id] = tail.nextBeforeSeq;
+    } catch {
+      // One unreachable transcript must not hide the entire roster.
+    }
+  }));
+  return { recent, cursors };
 }
+
+/** The roster card opened on one conversation — the same card "Show my bots"
+ * shows, so voice and taps land on one surface with one back button. `tail` is
+ * the opened conversation's longer page; `message` is its draft in the box.
+ * A new group (`members`) has no conversation yet: the card opens its
+ * new-group pane, and the first send creates it. */
+async function conversationCard(agents: Agent[], open: ShowOpen, tail: { entries?: TranscriptEntry[]; nextBeforeSeq?: number } = {}, message = "") {
+  const focus = "bot" in open ? open.bot : "group" in open ? open.group : undefined;
+  const { recent, cursors } = await rosterThreads(agents, focus);
+  if (focus) { recent[focus] = toCardThread(tail.entries ?? []); cursors[focus] = tail.nextBeforeSeq; }
+  return showCard(agents, undefined, recent, cursors, { open, message });
+}
+const openOf = (bot: Agent): ShowOpen => (bot.isGroup ? { group: bot.id } : { bot: bot.id });
 
 // ── READ: grokbot_show ───────────────────────────────────────────────────────
 const showTool = server.registerTool(
@@ -440,28 +465,8 @@ const showTool = server.registerTool(
     handle("grokbot_show", async () => {
       const agents = await listAgents();
       const focus = args.bot?.trim();
-      // One short transcript page per bot and group. On the roster it fills the
-      // show card's chat panes, so a tapped bot opens populated (showCard drops
-      // these if they would push the card over the glance cap). On older
-      // gateways that omit the authoritative awaitingUserResponse flag, the same
-      // page infers it from a pending request or question.
-      const recent: Record<string, CardItem[]> = {};
-      const cursors: Record<string, number | undefined> = {};
-      await Promise.all(
-        agents.filter((b) => !focus || b.awaitingUserResponse === undefined).map(async (b) => {
-          try {
-            const tail = await transcriptTail(b.id, 6);
-            const thread = toCardThread(tail.entries ?? []);
-            if (b.awaitingUserResponse === undefined && needsAttention(thread)) b.awaitingUserResponse = true;
-            recent[b.id] = thread;
-            cursors[b.id] = tail.nextBeforeSeq;
-          } catch {
-            // One unreachable transcript must not hide the entire roster.
-          }
-        }),
-      );
       if (focus) {
-        // Open the requested conversation directly, in the thread card.
+        // Open the requested conversation directly, on the roster card's chat pane.
         const bot = await resolveAgent(focus, agents);
         // Best-effort, like the roster's panes: a just-created bot or a slow
         // gateway still opens the conversation (its live refresh fills it in).
@@ -472,9 +477,10 @@ const showTool = server.registerTool(
         return result(
           { focus: bot.name, status: statusWord(bot), task: (bot.lastMessagePreview ?? "").trim() || null,
             ...(historyUnavailable ? { historyUnavailable: true } : {}), message: `${bot.name} is ${statusWord(bot)}.` },
-          conversationCard(bot, agents, tail),
+          await conversationCard(agents, openOf(bot), tail),
         );
       }
+      const { recent, cursors } = await rosterThreads(agents);
       const card = showCard(agents, undefined, recent, cursors);
       const bots = agents.filter((a) => !a.isGroup);
       const groups = agents.filter((a) => a.isGroup);
@@ -575,7 +581,7 @@ const threadTool = server.registerTool(
           truncated,
           message: thread.length ? `Latest from ${bot.name}.` : `No recent messages from ${bot.name}.`,
         },
-        args.show ? conversationCard(bot, agents, tail) : undefined,
+        args.show ? await conversationCard(agents, openOf(bot), tail) : undefined,
       );
     }),
 );
@@ -619,7 +625,7 @@ server.registerTool("grokbot_prepare_message", {
   const keep = [...(target ? [target.id, ...(target.memberIds ?? [])] : []), ...(Array.isArray(resolved.members) ? resolved.members : [])];
   const context = confirmationContext(send ? agents.filter(a => !a.isGroup) : agents, threads, keep, send);
   // NO glance here, on purpose: a glance on a pre-step becomes the turn's
-  // result on screen, and the thread card grokbot_send / grokbot_group opens
+  // result on screen, and the chat card grokbot_send / grokbot_group opens
   // a moment later must be the one the user sees.
   return result({ ready: true, nextTool: args.bot !== undefined ? "grokbot_send" : "grokbot_group",
     args: { ...resolved, confirmationContext: context }, message: "Recipients verified. Use the returned args to open the message card." });
@@ -655,7 +661,7 @@ async function performSend(botRef: string, rawMessage: string | undefined) {
   return result({ sent: true, bot: bot.name, sentMessage: message, message: `Sent your message to ${bot.name}.` });
 }
 
-// ── READ: grokbot_send — opens the live thread with the draft, never sends ──
+// ── READ: grokbot_send — opens the bot's chat with the draft, never sends ──
 // Voice only prepares the message: the card's composer holds the draft and
 // its send arrow (grokbot_card_send) is the one path that delivers it. So no
 // confirmation card and no "ask before acting" step sits between the user and
@@ -689,7 +695,7 @@ const sendTool = server.registerTool(
       return result(
         { opened: true, sent: false, bot: bot.name, draft,
           message: draft ? `Opened ${bot.name}. Your message is in the box — press send to deliver it.` : `Opened ${bot.name}.` },
-        threadCard(bot, tail.entries ?? [], draft, agents, tail.nextBeforeSeq),
+        await conversationCard(agents, { bot: bot.id }, tail, draft),
       );
     }),
 );
@@ -764,9 +770,8 @@ server.registerTool(
 
 // ── WRITE: the one GROUP send path — only the card's send arrow reaches it ──
 // Saves member/name edits (or creates the group on first send) and sends once.
-// An existing group's card stays open and refreshes. A NEW group's card had no
-// conversation to follow, so it gets `receipt`: the live thread of the group it
-// just created, which the card swaps in place of itself.
+// The card that sent stays open: an existing group's chat refreshes, and a new
+// group's pane becomes that group's chat from the returned id.
 async function performGroupSend(args: { group?: string; members?: string | string[]; groupName?: string; message?: string }) {
   const agents = await listAgents();
   const { existing, memberIds, bots, sameSet } = resolveMessageGroup(args, agents);
@@ -784,17 +789,15 @@ async function performGroupSend(args: { group?: string; members?: string | strin
     if (!target?.id) throw new IntegrationError("upstream", "The group was not created.");
   }
   await sendPrompt(target.id, message);
-  const payload = { sent: true, group: target.id, groupName: savedName, members: memberIds, sentMessage: message,
-    message: `Sent your message to ${savedName}.` };
-  if (existing) return result(payload);
-  const tail = await transcriptTail(target.id, 20).catch(() => ({ entries: [] as TranscriptEntry[], nextBeforeSeq: undefined }));
-  const card = groupThreadCard(agents, { id: target.id, name: savedName, members: memberIds }, tail.entries ?? [], "", tail.nextBeforeSeq);
-  return result({ ...payload, receipt: card._voiceos_glance.blocks[0] });
+  // The card that sent keeps going: a new group's pane turns into that group's
+  // chat from the returned id, name and members.
+  return result({ sent: true, group: target.id, groupName: savedName, members: memberIds, created: !existing,
+    sentMessage: message, message: `Sent your message to ${savedName}.` });
 }
 
-// ── READ: grokbot_group — opens the group thread with the draft, never sends ──
-// An existing group (by name, or the same member set) opens its live thread; a
-// new one opens the compose mode, created on the card's first send.
+// ── READ: grokbot_group — opens the group chat with the draft, never sends ──
+// An existing group (by name, or the same member set) opens its chat pane on the
+// roster card; a new one opens the new-group pane, created on the card's first send.
 server.registerTool(
   "grokbot_group",
   {
@@ -820,14 +823,14 @@ server.registerTool(
         const tail = await transcriptTail(existing.id, 20);
         return result(
           { opened: true, sent: false, group: existing.name, draft, message: `Opened ${existing.name}.${ready}` },
-          groupThreadCard(agents, { id: existing.id, name: existing.name, members: existing.memberIds ?? [] }, tail.entries ?? [], draft, tail.nextBeforeSeq),
+          await conversationCard(agents, { group: existing.id }, tail, draft),
         );
       }
       const name = args.groupName?.trim() ?? "";
       return result(
         { opened: true, sent: false, newGroup: true, members: memberIds, draft,
           message: `Opened a new group${name ? ` called ${name}` : ""}. Pick members if needed.${ready}` },
-        groupComposeCard(agents, memberIds, name, draft),
+        await conversationCard(agents, { members: memberIds, ...(name ? { groupName: name } : {}) }, {}, draft),
       );
     }),
 );

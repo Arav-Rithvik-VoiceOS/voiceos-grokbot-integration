@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { toCardItem, toCardThread, toThread as threadItems, boundThread, type CardItem } from "../conversation.ts";
 import { conversationSnapshot, conversationEntry, conversationTransport } from "../conversationService.ts";
 import {
-  renderCard, threadCard, groupThreadCard, groupComposeCard, showCard, connectCard, glanceChars,
+  renderCard, showCard, connectCard, glanceChars,
   relTime, toThread, toBot, MAX_GLANCE_CHARS, confirmationContext, CONFIRMATION_CONTEXT_CHARS,
 } from "../cards.ts";
 import {
-  MESSAGING_ADAPTER, MESSAGING_CSS, LIVE_CHAT_JS, LIVE_CHAT_CSS, MARKDOWN_CSS,
-  COMPOSER_KIT_JS, COMPOSER_KIT_CSS, SHOW_ADAPTER, MARK_DATA_URI, WIDGETS,
+  LIVE_CHAT_JS, LIVE_CHAT_CSS, MARKDOWN_CSS,
+  COMPOSER_KIT_JS, COMPOSER_KIT_CSS, SHOW_ADAPTER, SHOW_CSS, MARK_DATA_URI, WIDGETS,
 } from "../assets.generated.ts";
 import type { Agent, TranscriptEntry } from "../client.ts";
 
@@ -152,46 +152,6 @@ describe("snapshot and entry reader", () => {
 });
 
 describe("baked cards stay under the glance cap", () => {
-  test("a 1:1 thread of huge messages defers them and keeps its older-messages cursor", () => {
-    const entries = Array.from({ length: 30 }, (_, i) => huge(`h${i}`));
-    const card = threadCard({ id: "b0", name: "Bot 0" }, entries, "", roster(3), 42);
-    expect(glanceChars(card)).toBeLessThanOrEqual(MAX_GLANCE);
-    const data = demo(htmlOf(card)).data;
-    expect(data.thread.map((i: { id: string }) => i.id)).toEqual(entries.map((e) => e.id));
-    expect(data.thread.some((i: { deferred?: unknown }) => i.deferred)).toBe(true);
-    expect(data.nextBeforeSeq).toBe(42);
-    expect(data.thread[0].t).toBe("1m");
-    // A 30-bot roster leaves less room: still under the cap, newest kept.
-    const crowded = threadCard({ id: "b0", name: "Bot 0" }, entries, "", roster(30), 42);
-    expect(glanceChars(crowded)).toBeLessThanOrEqual(MAX_GLANCE);
-    expect(demo(htmlOf(crowded)).data.thread.at(-1).id).toBe("h29");
-  });
-  test("too many short messages keep the newest and drop the stale cursor", () => {
-    const entries = Array.from({ length: 900 }, (_, i) => short(i));
-    const card = threadCard({ id: "b0", name: "Bot 0" }, entries, "", roster(3), 42);
-    expect(glanceChars(card)).toBeLessThanOrEqual(MAX_GLANCE);
-    const data = demo(htmlOf(card)).data;
-    expect(data.thread.length).toBeGreaterThan(0);
-    expect(data.thread.length).toBeLessThan(entries.length);
-    expect(data.thread.at(-1).id).toBe("short-899");
-    expect(data.nextBeforeSeq).toBeUndefined();
-  });
-  test("an ordinary thread is baked whole", () => {
-    const entries = Array.from({ length: 10 }, (_, i) => short(i));
-    const data = demo(htmlOf(threadCard({ id: "b0", name: "Bot 0" }, entries, "", roster(3), 9))).data;
-    expect(data.thread).toHaveLength(10);
-    expect(data.thread.every((i: { deferred?: unknown }) => !i.deferred)).toBe(true);
-    expect(data.nextBeforeSeq).toBe(9);
-  });
-  test("an existing group thread of huge messages fits", () => {
-    const entries = Array.from({ length: 30 }, (_, i) => huge(`g${i}`));
-    const card = groupThreadCard(roster(20), { id: "g", name: "Crew", members: ["b0", "b1"] }, entries, "", 5);
-    expect(glanceChars(card)).toBeLessThanOrEqual(MAX_GLANCE);
-    const data = demo(htmlOf(card)).data;
-    expect(data.groups[0].thread).toHaveLength(30);
-    expect(data.nextBeforeSeq).toBe(5);
-    expect(demo(htmlOf(card)).args.group).toBe("g");
-  });
   test("the show card shrinks, then drops, prefetched panes; the roster always stays", () => {
     const agents = roster(30);
     const threads = Object.fromEntries(agents.map((a) => [a.id, Array.from({ length: 6 }, (_, i) => bigItem(`${a.id}-${i}`))]));
@@ -203,12 +163,6 @@ describe("baked cards stay under the glance cap", () => {
     // A pane that lost its history also loses its cursor (it would skip messages).
     for (const id of Object.keys(data.nextBeforeSeqs)) expect(data.threads[id]).toBeDefined();
   });
-  test("a 1:1 card bakes only the bots its rows draw; the live refresh brings the rest", () => {
-    const agents = roster(40);
-    const fromOther: TranscriptEntry = { id: "other", kind: "message", role: "user", fromAgent: { id: "b7", name: "Bot 7" }, content: "Hi" };
-    const data = demo(htmlOf(threadCard(agents[0], [short(1), fromOther], "", agents))).data;
-    expect(data.bots.map((b: { id: string }) => b.id)).toEqual(["b0", "b7"]);
-  });
   test("an ordinary roster opens every chat pane prefetched", () => {
     const agents = roster(12);
     const threads = Object.fromEntries(agents.map((a) => [a.id, toCardThread(Array.from({ length: 6 }, (_, i) => ({ ...short(i), id: `${a.id}-${i}` })))]));
@@ -217,18 +171,12 @@ describe("baked cards stay under the glance cap", () => {
     for (const a of agents) expect(data.threads[a.id].every((i: { deferred?: unknown }) => !i.deferred)).toBe(true);
   });
   for (const n of [60, 100, 200]) {
-    test(`${n} long-named bots: thread, group and show cards stay under the cap and keep history`, () => {
+    test(`${n} long-named bots: the show card stays under the cap and keeps history`, () => {
       const agents = bigRoster(n);
       const entries = Array.from({ length: 30 }, (_, i) => short(i));
-      const members = agents.slice(0, 3).map((a) => a.id);
-      const one = threadCard(agents[0], entries, "", agents, 3);
-      const group = groupThreadCard(agents, { id: "g", name: "Crew", members }, entries, "", 3);
       const threads = Object.fromEntries(agents.map((a) => [a.id, toCardThread(entries.slice(0, 6))]));
       const show = showCard(agents, undefined, threads);
-      for (const card of [one, group, show]) expect(glanceChars(card)).toBeLessThanOrEqual(MAX_GLANCE);
-      expect(demo(htmlOf(one)).data.thread).toHaveLength(30);
-      expect(demo(htmlOf(group)).data.groups[0].thread).toHaveLength(30);
-      expect(demo(htmlOf(group)).data.bots).toHaveLength(n);
+      expect(glanceChars(show)).toBeLessThanOrEqual(MAX_GLANCE);
       expect(demo(htmlOf(show)).data.bots).toHaveLength(n);
       // Every roster row is one ellipsized line.
       for (const b of demo(htmlOf(show)).data.bots) expect(b.task.length).toBeLessThanOrEqual(120);
@@ -236,13 +184,8 @@ describe("baked cards stay under the glance cap", () => {
   }
   test("a roster too big for any history degrades to a slim roster, never an over-cap card", () => {
     const agents = bigRoster(1_000);
-    const group = groupThreadCard(agents, { id: "g", name: "Crew", members: [agents[0].id] }, [short(1)]);
     const show = showCard(agents, undefined, { [agents[0].id]: toCardThread([short(1)]) });
-    for (const card of [group, show]) expect(glanceChars(card)).toBeLessThanOrEqual(MAX_GLANCE);
-    const bots = demo(htmlOf(group)).data.bots;
-    expect(bots).toHaveLength(1_000);
-    expect(bots[0].label).toBe("Executive assistant for the research team");
-    expect(bots[1].label).toBeUndefined();
+    expect(glanceChars(show)).toBeLessThanOrEqual(MAX_GLANCE);
     expect(demo(htmlOf(show)).data.bots).toHaveLength(1_000);
   });
   test("small prefetched panes are kept whole with their cursors and time labels", () => {
@@ -253,18 +196,35 @@ describe("baked cards stay under the glance cap", () => {
     expect(data.threads.b1).toBeUndefined();
     expect(data.nextBeforeSeqs).toEqual({ b0: 3 });
   });
+  test("a huge opened conversation fits the cap and keeps its history ahead of other bots", () => {
+    const agents = roster(3);
+    const entries = Array.from({ length: 30 }, (_, i) => huge(`h${i}`));
+    const threads = {
+      b0: toCardThread(entries),
+      b1: [bigItem("b1-0")],
+      b2: [bigItem("b2-0")],
+    };
+    const card = showCard(agents, undefined, threads, { b0: 42 }, { open: { bot: "b0" } });
+    expect(glanceChars(card)).toBeLessThanOrEqual(MAX_GLANCE);
+    const data = demo(htmlOf(card)).data;
+    expect(data.threads.b0.map((i: { id: string }) => i.id)).toEqual(entries.map((e) => e.id));
+    expect(data.threads.b0.some((i: { deferred?: unknown }) => i.deferred)).toBe(true);
+    expect(data.nextBeforeSeqs.b0).toBe(42);
+  });
+  test("the opened conversation is baked first, ahead of roster order", () => {
+    const agents = roster(4); // b0, b1, b2, b3
+    const threads = {
+      b2: [bigItem("b2-0")],
+      b0: [bigItem("b0-0")],
+      b1: [bigItem("b1-0")],
+    };
+    const card = showCard(agents, undefined, threads, {}, { open: { bot: "b2" } });
+    const data = demo(htmlOf(card)).data;
+    expect(Object.keys(data.threads)[0]).toBe("b2");
+  });
 });
 
 describe("renderCard asset injection", () => {
-  test("the thread card carries the live chat and composer kit inside its one script", () => {
-    const html = htmlOf(threadCard({ id: "b0", name: "Bot 0" }, [picture]));
-    const [script, ...rest] = scripts(html);
-    expect(rest).toHaveLength(0);
-    expect(script.endsWith(`\n${LIVE_CHAT_JS}\n${COMPOSER_KIT_JS}\n${MESSAGING_ADAPTER}\n})();\n`)).toBe(true);
-    expect(script.startsWith("\n(()=>{\n")).toBe(true);
-    expect(html).toContain(`<style>${MESSAGING_CSS}\n${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${COMPOSER_KIT_CSS}</style>\n<script>`);
-    expect(() => new Function(script)).not.toThrow();
-  });
   test("a confirmation context over budget keeps the bots it draws whole", () => {
     const agents = bigRoster(400);
     const keep = agents[5].id;
@@ -284,22 +244,27 @@ describe("renderCard asset injection", () => {
     const [script, ...rest] = scripts(html);
     expect(rest).toHaveLength(0);
     expect(script.endsWith(`\n(()=>{\n${LIVE_CHAT_JS}\n${COMPOSER_KIT_JS}\n${SHOW_ADAPTER}\n})();\n`)).toBe(true);
-    expect(html).toContain(`<style>${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${COMPOSER_KIT_CSS}</style>\n<script>`);
+    expect(html).toContain(`<style>${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${COMPOSER_KIT_CSS}\n${SHOW_CSS}</style>\n<script>`);
     expect(demo(html).data.threads.b0[0].id).toBe("picture");
     expect(html).not.toContain("__VOICEOS_DEMO__");
-    if (MESSAGING_ADAPTER) expect(html).not.toContain(MESSAGING_ADAPTER);
     expect(() => new Function(script)).not.toThrow();
   });
-  test("the new-group compose mode keeps the plain adapter; an existing group gets the live chat", () => {
-    const newGroup = htmlOf(groupComposeCard(roster(3), ["b0", "b1"], "Crew"));
-    const [script, ...rest] = scripts(newGroup);
-    expect(rest).toHaveLength(0);
-    expect(script.endsWith(`\n${MESSAGING_ADAPTER}\n})();\n`)).toBe(true);
-    expect(newGroup).toContain(`<style>${MESSAGING_CSS}</style>\n<script>`);
-    for (const marker of ["const LiveChat", "const ComposerKit"]) expect(newGroup).not.toContain(marker);
-    expect(() => new Function(script)).not.toThrow();
-    const existing = htmlOf(groupThreadCard(roster(3), { id: "g", name: "Crew", members: ["b0", "b1"] }, [picture]));
-    expect(scripts(existing)[0].endsWith(`\n${LIVE_CHAT_JS}\n${COMPOSER_KIT_JS}\n${MESSAGING_ADAPTER}\n})();\n`)).toBe(true);
+  test("open.bot bakes args.open and the pane's draft message", () => {
+    const html = htmlOf(showCard(roster(3), undefined, {}, {}, { open: { bot: "b0" }, message: "Hi" }));
+    const baked = demo(html);
+    expect(baked.args.open).toEqual({ bot: "b0" });
+    expect(baked.args.message).toBe("Hi");
+  });
+  test("open.members bakes the args but focuses no single conversation", () => {
+    const agents = roster(3);
+    // Same-size threads on both bots: if either were "focused" it would get a much
+    // larger budget and stay whole while the other truncates. Neither should here.
+    const threads = { b0: [bigItem("b0-huge")], b1: [bigItem("b1-huge")] };
+    const html = htmlOf(showCard(agents, undefined, threads, {}, { open: { members: ["b0", "b1"] } }));
+    const baked = demo(html);
+    expect(baked.args.open).toEqual({ members: ["b0", "b1"] });
+    expect(baked.args.message).toBeUndefined();
+    expect(!!baked.data.threads.b0[0].deferred).toBe(!!baked.data.threads.b1[0].deferred);
   });
   test("other cards carry none of it", () => {
     for (const html of [htmlOf(connectCard()), renderCard("create", { data: {}, args: {} })])
@@ -312,15 +277,8 @@ describe("renderCard asset injection", () => {
       expect(html).not.toContain('class="mark"><i></i>');
     }
   });
-  test("chat headers have no wordmark, so the computer button sits at the far right", () => {
-    for (const card of [threadCard({ id: "b0", name: "Bot 0" }, []), groupComposeCard(roster(2), ["b0", "b1"], "Crew", "Hi")]) {
-      const html = htmlOf(card);
-      expect(html).not.toContain(MARK_DATA_URI);
-      expect(html).not.toContain('class="mark"');
-    }
-  });
   test("stripped template comments are real comments, never \"/*\" inside a string", () => {
-    for (const name of ["thread", "show", "screen"]) {
+    for (const name of ["show", "screen"]) {
       const src = WIDGETS[name];
       for (const m of src.matchAll(/\/\*[\s\S]*?\*\//g)) {
         const before = src.slice(src.lastIndexOf("\n", m.index!) + 1, m.index);
@@ -330,12 +288,12 @@ describe("renderCard asset injection", () => {
     }
   });
   test("injected assets cannot close their own script or style element", () => {
-    for (const js of [LIVE_CHAT_JS, COMPOSER_KIT_JS, SHOW_ADAPTER, MESSAGING_ADAPTER]) expect(js).not.toMatch(/<\/script/i);
-    for (const css of [LIVE_CHAT_CSS, COMPOSER_KIT_CSS, MARKDOWN_CSS, MESSAGING_CSS]) expect(css).not.toMatch(/<\/style/i);
+    for (const js of [LIVE_CHAT_JS, COMPOSER_KIT_JS, SHOW_ADAPTER]) expect(js).not.toMatch(/<\/script/i);
+    for (const css of [LIVE_CHAT_CSS, COMPOSER_KIT_CSS, MARKDOWN_CSS, SHOW_CSS]) expect(css).not.toMatch(/<\/style/i);
   });
   test("transcript text cannot end the payload script of a live card", () => {
     const hostile: TranscriptEntry = { id: "x", kind: "message", content: '</script><script>parent.postMessage("pwn")</script> $& __VOICEOS_DEMO__' };
-    for (const card of [threadCard({ id: "b0", name: "Bot 0" }, [hostile]), showCard(roster(1), undefined, { b0: toCardThread([hostile]) })]) {
+    for (const card of [showCard(roster(1), undefined, { b0: toCardThread([hostile]) }), showCard(roster(1), undefined, { b0: toCardThread([hostile]) }, {}, { open: { bot: "b0" } })]) {
       const html = htmlOf(card);
       expect(scripts(html)).toHaveLength(1);
       expect(() => new Function(scripts(html)[0])).not.toThrow();

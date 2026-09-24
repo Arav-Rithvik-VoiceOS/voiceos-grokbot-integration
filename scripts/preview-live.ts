@@ -257,43 +257,39 @@ const htmlOf = (card: Card) => card._voiceos_glance.blocks[0].html;
 // Cursors: 300 → the first older page. The show card bakes 6-entry tails (like
 // grokbot_show), so its cursor 350 points at the rest of the newest page.
 const OLDER_CURSOR = 300, SHOW_CURSOR = 350, SHOW_TAIL = 6;
-const thread1to1 = cards.threadCard(pepper, pepperEntries, "", agents, OLDER_CURSOR) as Card;
-const thread1to1Draft = cards.threadCard(pepper, pepperEntries, "Keep this draft while the chat refreshes", agents, OLDER_CURSOR) as Card;
-const threadGroup = cards.groupThreadCard(agents, group, groupEntries, "", OLDER_CURSOR) as Card;
 const showEntries: Record<string, TranscriptEntry[]> = { pepper: pepperEntries, friday: fridayEntries, jerome: [], titus: titusEntries, g1: groupEntries };
-const show = cards.showCard(
+// The roster card as grokbot_show bakes it (6-entry tails); `open` bakes the opened conversation's
+// longer page first, the way voice (grokbot_send / grokbot_group / grokbot_thread show) opens it.
+const showOf = (open?: Parameters<typeof cards.showCard>[4], full?: string) => cards.showCard(
   agents, "",
-  Object.fromEntries(Object.entries(showEntries).map(([id, e]) => [id, conv.toCardThread(e.slice(-SHOW_TAIL))])),
-  Object.fromEntries(Object.entries(showEntries).filter(([, e]) => e.length > SHOW_TAIL).map(([id]) => [id, SHOW_CURSOR])),
+  Object.fromEntries(Object.entries(showEntries).map(([id, e]) => [id, conv.toCardThread(id === full ? e : e.slice(-SHOW_TAIL))])),
+  Object.fromEntries(Object.entries(showEntries).filter(([id, e]) => id === full || e.length > SHOW_TAIL).map(([id]) => [id, id === full ? OLDER_CURSOR : SHOW_CURSOR])),
+  open,
 ) as Card;
-// Confirmation: the thread grokbot_prepare_message hands a grokbot_send confirmation.
-const confirmThread = cards.confirmationRows(cards.toThread(pepperEntries.filter((e) => ["p-ask", "p-rich", "p-more", "p-image", "p-file", "p-messaged"].includes(e.id!)), 12_000));
-const confirmHtml = cards.renderCard("thread", {
-  data: { confirmation: true, tool: "grokbot_send", bots: agents.filter((a) => !a.isGroup).map(cards.toBot), groups: agents.filter((a) => a.isGroup).map(cards.toGroup), threads: { pepper: confirmThread }, me: "" },
-});
+const show = showOf();
+const voicePepper = showOf({ open: { bot: "pepper" }, message: "Keep this draft while the chat refreshes" }, "pepper");
+const voiceGroup = showOf({ open: { group: "g1" } }, "g1");
+const voiceNewGroup = showOf({ open: { members: ["pepper", "jerome"], groupName: "" }, message: "Kick off the launch plan" });
 
 type Scenario = {
   slug: string; title: string; blurb: string; hint: string; html: string; glance?: number;
   theme: "dark" | "light"; invoke: boolean; initArgs: Record<string, unknown>; confirmation?: boolean;
 };
 const scenarios: Scenario[] = [
-  { slug: "thread-1to1-dark", title: "1:1 thread · dark", theme: "dark", invoke: true, html: htmlOf(thread1to1), glance: cards.glanceChars(thread1to1), initArgs: demoArgs(htmlOf(thread1to1)),
-    blurb: "Pepper's conversation with every message type: formatted text, images, files, requests, choices, a Messaged row, a notice and a deferred huge message.",
-    hint: "Scroll up to load the huge note and the images. Try Earlier messages at the top, answer the choices, use the + button (Attach files) and the Open computer button. A new message arrives every 15 s; use Timer speed to hit the 30-refresh cap fast." },
-  { slug: "thread-1to1-light", title: "1:1 thread · light", theme: "light", invoke: true, html: htmlOf(thread1to1Draft), glance: cards.glanceChars(thread1to1Draft), initArgs: demoArgs(htmlOf(thread1to1Draft)),
-    blurb: "The same conversation in the light theme, with a draft already in the composer.",
-    hint: "Watch the draft while the chat refreshes: it must stay exactly as typed. Check tables, code colors and math in the light theme." },
-  { slug: "thread-group", title: "Existing group thread", theme: "dark", invoke: true, html: htmlOf(threadGroup), glance: cards.glanceChars(threadGroup), initArgs: demoArgs(htmlOf(threadGroup)),
-    blurb: "The Homework crew group: sender names on bot messages, a table, code, an image, a Messaged row and a pending choice.",
+  { slug: "voice-1to1", title: "Voice → Pepper's chat", theme: "dark", invoke: true, html: htmlOf(voicePepper), glance: cards.glanceChars(voicePepper), initArgs: {},
+    blurb: "What \"Message Pepper…\" opens: the roster card, already on Pepper's chat pane (no slide), with the draft in the box. Every message type: text, images, files, requests, choices, a Messaged row, a notice, a deferred huge message.",
+    hint: "Send: the message flies into Pepper's orb and shows at once. Back slides to the roster. Close + reopen: you come back to the same pane, draft and messages kept, and the voice draft does not return after a send." },
+  { slug: "voice-group", title: "Voice → group chat", theme: "dark", invoke: true, html: htmlOf(voiceGroup), glance: cards.glanceChars(voiceGroup), initArgs: {},
+    blurb: "What \"Message the Homework crew…\" opens: the group's chat pane on the roster card.",
     hint: "Groups get live refresh and older messages, but NO + button and NO Open computer button." },
+  { slug: "voice-new-group", title: "Voice → new group", theme: "dark", invoke: true, html: htmlOf(voiceNewGroup), glance: cards.glanceChars(voiceNewGroup), initArgs: {},
+    blurb: "What \"Message Pepper and Jerome…\" opens when no such group exists: the new-group pane. Tap the avatars to pick bots, name it, and the first send creates the group.",
+    hint: "After the first send the pane turns into the new group's live chat, and the roster behind it lists the group." },
   { slug: "show-roster", title: "Roster → chat pane", theme: "dark", invoke: true, html: htmlOf(show), glance: cards.glanceChars(show), initArgs: demoArgs(htmlOf(show)),
     blurb: "The show card. Pepper has a baked thread; Friday, Jerome and Titus load theirs from the first refresh when you open them.",
-    hint: "Click a bot inside the card to open its chat pane (it refreshes once at once). Type a draft, go Back, open another bot, come back: the draft must return. Back must stop the timers. show.html reads init data as-is: a CARD ERROR on the {} init means the roster would be blank in VoiceOS (set Init data to omitted to keep testing)." },
-  { slug: "confirmation-send", title: "Send confirmation", theme: "dark", invoke: true, confirmation: true, html: confirmHtml, initArgs: { bot: "Pepper", message: "Reply pong." },
-    blurb: "The grokbot_send confirmation card (host-approved draft). It only gains markdown styling: no live refresh, no + button, no tool calls.",
-    hint: "Edits show as updateInput lines. Approve only logs what VoiceOS would run. Any invokeTool here is a bug." },
-  { slug: "no-invoke", title: "Host without invokeTool", theme: "dark", invoke: false, html: htmlOf(thread1to1), glance: cards.glanceChars(thread1to1), initArgs: demoArgs(htmlOf(thread1to1)),
-    blurb: "The 1:1 thread on a host whose capabilities.invokeTool is false.",
+    hint: "Click a bot inside the card to open its chat pane. Type a draft, go Back, open another bot, come back: the draft must return. Close + reopen on the roster stays on the roster." },
+  { slug: "no-invoke", title: "Host without invokeTool", theme: "dark", invoke: false, html: htmlOf(voicePepper), glance: cards.glanceChars(voicePepper), initArgs: {},
+    blurb: "Pepper's chat on a host whose capabilities.invokeTool is false.",
     hint: "The card must not call any tool: no refresh, no image loads. Sending shows its unavailable message. Every invokeTool line here is a bug." },
 ];
 
@@ -306,7 +302,7 @@ const jsonForScript = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c")
 function warningsFor(s: Scenario): string[] {
   const w: string[] = [];
   if (!s.confirmation && !s.html.includes("LiveChat")) w.push("live-chat.js is not in this card yet (rerun inline-assets, or cards.ts does not inject it): refresh, older messages, media, requests and deferred loading will not run.");
-  if (!s.confirmation && s.slug !== "thread-group" && !s.html.includes("ComposerKit")) w.push("composer-kit.js is not in this card yet: no Attach files button.");
+  if (!s.confirmation && s.slug !== "voice-group" && !s.html.includes("ComposerKit")) w.push("composer-kit.js is not in this card yet: no Attach files button.");
   if (s.confirmation && /LiveChat|ComposerKit/.test(s.html)) w.push("The confirmation card carries live-chat/composer code. SPEC: confirmation cards get only MARKDOWN_CSS.");
   if (s.glance !== undefined && s.glance > cards.MAX_GLANCE_CHARS) w.push(`Glance is ${s.glance.toLocaleString("en-US")} chars, over the ${cards.MAX_GLANCE_CHARS.toLocaleString("en-US")} cap: VoiceOS would drop this card.`);
   return w;
@@ -639,7 +635,17 @@ const HANDLERS = {
   grokbot_card_send(a) {
     const message = String(a.message || '').trim();
     if (!message) throw new Error('Type a message first.');
-    if (a.bot === undefined && a.group === undefined) { log('mock', 'new-group send (no mock thread)', 'dim'); return { sent: true }; }
+    if (a.bot === undefined && a.group === undefined) {
+      // A new group: created on its first send, like the gateway's createGroup.
+      const members = Array.isArray(a.members) ? a.members : String(a.members || '').split(',').filter(Boolean);
+      if (members.length < 2) throw new Error('Choose at least two bots for a new group.');
+      const id = 'g-new-' + (++S.mine), name = String(a.groupName || '').trim() || members.map(m => botNamed(m).name).join(' + ');
+      S.targets[id] = { id, name, group: true, members, base: [], live: [], older: [], full: {} };
+      FX.groups.push({ id, name, members, time: 'now', last: message });
+      mine(S.targets[id], message);
+      log('mock', 'created group ' + name, 'dim');
+      return { sent: true, group: id, groupName: name, members, created: true };
+    }
     const ref = a.bot !== undefined ? a.bot : a.group, r = String(ref).trim().toLowerCase();
     const b = botNamed(ref) || FX.groups.find(x => x.id === ref || x.name.toLowerCase() === r);
     if (!b) throw new Error('No bot named ' + ref + '.');
@@ -652,7 +658,10 @@ const HANDLERS = {
 $('#theme').value = FX.scenario.theme;
 $('#invoke').checked = FX.scenario.invoke;
 ['#theme', '#invoke', '#twostep', '#initData', '#speed', '#cap'].forEach(s => $(s).addEventListener('change', () => { log('host', 'card settings changed: reloading the card', 'dim'); load(); }));
-$('#reload').addEventListener('click', () => { try { Object.keys(localStorage).filter(k => k.startsWith('gb-card:') || k === 'lc-used').forEach(k => localStorage.removeItem(k)); } catch (_) {} load(); });
+// Each page (and Reload) is a new tool result: in VoiceOS that is a new origin with empty storage.
+const clearCardStorage = () => { try { Object.keys(localStorage).filter(k => k === 'gb-show' || k.startsWith('gb-card:') || k === 'lc-used').forEach(k => localStorage.removeItem(k)); } catch (_) {} };
+clearCardStorage();
+$('#reload').addEventListener('click', () => { clearCardStorage(); load(); });
 // VoiceOS rebuilds a result card from its first html on every notch reopen; the
 // server (mock state) and the card's own storage survive. Grok Bot's cards are
 // networked (own origin, working localStorage), hence allow-same-origin above.

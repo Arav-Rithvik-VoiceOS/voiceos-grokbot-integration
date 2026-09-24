@@ -13,7 +13,7 @@ import {
   conversationEntry,
   performConversationAction,
 } from "./conversationService.ts";
-import { threadCard, showCard, glanceChars, MAX_GLANCE_CHARS } from "./cards.ts";
+import { showCard, glanceChars, MAX_GLANCE_CHARS } from "./cards.ts";
 import { LIVE_CHAT_JS } from "./assets.generated.ts";
 import type { TranscriptEntry } from "./client.ts";
 
@@ -243,14 +243,24 @@ describe("Grok conversation event parity", () => {
     );
   });
   test("untrusted transcript strings cannot end the payload script", () => {
-    const html = threadCard({ id: "picasso", name: "Picasso" }, [
-      { kind: "message", content: '</script><img src=x onerror="alert(1)">' },
-    ])._voiceos_glance.blocks[0].html;
+    const html = showCard(
+      [{ id: "picasso", name: "Picasso" }],
+      undefined,
+      { picasso: toThread([{ kind: "message", content: '</script><img src=x onerror="alert(1)">' }]) },
+      {},
+      { open: { bot: "picasso" } },
+    )._voiceos_glance.blocks[0].html;
     expect(html).not.toContain("</script><img src=x");
     expect(html).toContain("\\u003c/script>");
     expect(
       glanceChars(
-        threadCard({ id: "picasso", name: "Picasso" }, [image, question]),
+        showCard(
+          [{ id: "picasso", name: "Picasso" }],
+          undefined,
+          { picasso: toThread([image, question]) },
+          {},
+          { open: { bot: "picasso" } },
+        ),
       ),
     ).toBeLessThanOrEqual(MAX_GLANCE_CHARS);
     expect(
@@ -364,9 +374,9 @@ describe("card responses", () => {
 });
 
 test("live conversation refreshes itself: no manual reload control", () => {
-  const html = threadCard({ id: "a", name: "Picasso" }, [])._voiceos_glance
+  const html = showCard([{ id: "a", name: "Picasso" }])._voiceos_glance
     .blocks[0].html;
-  // The live chat rides inside the thread card's own script and polls
+  // The live chat rides inside the show card's own script and polls
   // grokbot_card_snapshot; the handoff UI gains no reload button.
   expect(html).toContain(LIVE_CHAT_JS);
   expect(html).not.toContain("data-refresh");
@@ -496,9 +506,13 @@ test("entry readers reject missing bots, unknown entries, and invalid offsets", 
 
 test("script escaping cannot overflow the initial card for long messages", () => {
   const text = "<".repeat(15000) + "LAST LINE";
-  const card = threadCard({ id: "sam", name: "Sam" }, [
-    { id: "long", kind: "message", content: text },
-  ]);
+  const card = showCard(
+    [{ id: "sam", name: "Sam" }],
+    undefined,
+    { sam: toThread([{ id: "long", kind: "message", content: text }]) },
+    {},
+    { open: { bot: "sam" } },
+  );
   expect(glanceChars(card)).toBeLessThanOrEqual(MAX_GLANCE_CHARS);
   expect(card._voiceos_glance.blocks[0].html).not.toContain(
     "View full message",

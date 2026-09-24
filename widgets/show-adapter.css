@@ -1,0 +1,26 @@
+/* Show-card glue styles. The handoff's own look stays in show.html; these only add what the glue draws. */
+/* Voice opens the card straight on a chat pane: no slide on that first open. */
+.panes.gb-instant .pane{transition:none!important}
+/* A send: the message rides a CSS motion path from the box into the bot's orb (the old sent card's animation). */
+.gb-fly{position:fixed;left:0;top:0;z-index:30;pointer-events:none;offset-path:var(--path);offset-rotate:0deg;offset-anchor:50% 50%;will-change:offset-distance}
+.gb-fly.probe{offset-path:none;visibility:hidden;height:32px;padding:0 12px;font-size:13px;white-space:nowrap}
+.gb-fly.lead{width:var(--w);height:32px;padding:0 12px;border-radius:16px;background:var(--fill-3);backdrop-filter:blur(8px);font-size:13px;line-height:32px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:gb-fly var(--dur) cubic-bezier(.55,0,.3,1) both}
+@keyframes gb-fly{0%{offset-distance:0%;opacity:0;transform:scale(.9)}8%{opacity:1;transform:scale(1.05)}22%{width:var(--w);height:32px;padding:0 12px;color:var(--ink-1);background:var(--fill-3);box-shadow:0 0 0 0 transparent;transform:scale(1)}46%{width:14px;height:14px;padding:0;color:transparent;background:var(--c);box-shadow:0 0 16px 3px var(--c)}92%{opacity:1}100%{offset-distance:100%;width:7px;height:7px;padding:0;color:transparent;background:#fff;box-shadow:0 0 22px 6px var(--c);opacity:0}}
+.gb-fly.ghost{width:var(--s);height:var(--s);border-radius:50%;background:var(--col);box-shadow:0 0 8px var(--col);animation:gb-ghost var(--dur) cubic-bezier(.55,0,.3,1) var(--d) both}
+@keyframes gb-ghost{0%{offset-distance:0%;opacity:0}40%{opacity:0}52%{opacity:var(--o)}100%{offset-distance:100%;opacity:0;transform:scale(.3)}}
+.gb-wave{position:fixed;z-index:29;border-radius:50%;border:2px solid var(--c);opacity:0;pointer-events:none;animation:gb-wave .7s cubic-bezier(.2,.7,.3,1) both}
+@keyframes gb-wave{0%{opacity:.9;transform:scale(.7)}100%{opacity:0;transform:scale(2.1)}}
+.gb-gulp{animation:gb-gulp .55s cubic-bezier(.3,1.5,.5,1)!important}
+@keyframes gb-gulp{0%{transform:scale(1)}25%{transform:scale(1.32,1.22);filter:brightness(1.5)}55%{transform:scale(.88,1.08)}100%{transform:scale(1)}}
+.gb-sending{align-self:flex-end;padding-top:0}
+/* New group pane: tap the avatars to pick bots; the name sits where a chat's title does. */
+.gb-pick{cursor:pointer;min-width:30px;min-height:30px;align-items:center}
+.gb-plus{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--fill-2);color:var(--ink-2);font-size:18px}
+.gb-gname{padding:3px 8px;border-radius:8px;font-size:13.5px;font-weight:600;background:transparent;border-color:transparent}
+.gb-gname:hover{background:var(--fill-1)}
+.gb-members{max-height:190px;overflow-y:auto;padding:0 0 6px}
+.gb-mrow{padding:6px 15px}
+.gb-check{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--fill-2);font-size:12px;color:var(--ink-1)}
+.gb-mrow[aria-pressed=true] .gb-check{background:var(--accent);color:#000}
+.gb-empty{text-align:center;padding:10px 20px}
+@media (prefers-reduced-motion:reduce){.gb-fly,.gb-wave{display:none}}

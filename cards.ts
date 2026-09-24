@@ -1,13 +1,13 @@
 /**
  * UI layer: the notch cards.
  *
- * Messaging HTML/CSS/JS in widgets/thread.html is copied byte-for-byte from the
- * user's handoff. The old sent receipts and confirmation adapter live in
- * archive/ — a send now stays on the live thread card. The separate messaging
- * adapter supplies live data, host tool calls, and frame bounds at render time.
- * The live conversation (widgets/live-chat.js) and the composer's attach
- * button (widgets/composer-kit.js) are injected the same way, into the thread
- * card and the show card's chat pane only — never into receipts.
+ * The widget HTML (widgets/*.html) is the user's design handoff, kept intact.
+ * The roster card (show.html) is the ONE conversation surface: its chat pane
+ * gets the live conversation (widgets/live-chat.js), the composer's attach
+ * button (widgets/composer-kit.js) and the send / new-group / saved-state glue
+ * (widgets/show-adapter.js), injected at render time. Voice opens that same
+ * card on a chat pane through args.open. The old thread card, sent receipts
+ * and confirmation adapter live in archive/.
  *
  * This file runs in the UNSANDBOXED server process, so it may read the widget
  * files from disk; only the card iframe itself is network/fs-restricted.
@@ -21,13 +21,13 @@ import type { Agent, TranscriptEntry } from "./client.ts";
 // it automatically. The mark is a data: URI because the card sandbox blocks the
 // network; it is a 32px copy (the mark draws at 16px), embedded once per card.
 import {
-  WIDGETS, MESSAGING_ADAPTER, MESSAGING_CSS, MARK_DATA_URI, RFB_B64,
-  LIVE_CHAT_JS, LIVE_CHAT_CSS, MARKDOWN_CSS, COMPOSER_KIT_JS, COMPOSER_KIT_CSS, SHOW_ADAPTER,
+  WIDGETS, MARK_DATA_URI, RFB_B64,
+  LIVE_CHAT_JS, LIVE_CHAT_CSS, MARKDOWN_CSS, COMPOSER_KIT_JS, COMPOSER_KIT_CSS, SHOW_ADAPTER, SHOW_CSS,
 } from "./assets.generated.ts";
 import { toCardThread, boundThread, type CardItem } from "./conversation.ts";
 import { renderMarkdown } from "./markdown.ts";
 
-type CardName = "connect" | "show" | "create" | "thread" | "screen";
+type CardName = "connect" | "show" | "create" | "screen";
 
 /** Swap the widgets' placeholder glyph (`.mark > i`) for the real logo, bare (no
  * tile), per the design handoff. Only the `.mark` glyph is targeted — but the
@@ -67,7 +67,7 @@ export const MAX_GLANCE_CHARS = 280_000;
 export const glanceChars = (card: { _voiceos_glance: { blocks: unknown[] } }) =>
   JSON.stringify({ blocks: card._voiceos_glance.blocks }).length;
 
-const STRIP_COMMENTS = new Set<CardName>(["screen", "thread", "show"]);
+const STRIP_COMMENTS = new Set<CardName>(["screen", "show"]);
 
 /** The widget HTML with the real mark + real {data, args} injected. `fills`
  * replaces extra `__VOICEOS_<KEY>__` tokens (today: RFB on the screen card);
@@ -80,38 +80,21 @@ export function renderCard(
   const json = JSON.stringify({ data: payload.data ?? {}, args: payload.args ?? {} })
     .replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   // Function replacers so `$` in the data can't be read as a replacement pattern.
-  // The live screen, thread and show cards carry the most bytes, so their
+  // The live screen and show cards carry the most bytes, so their
   // source comments are dropped at render time (before any data/viewer/asset
   // fill, so only the template is touched). None of these templates has "/*"
   // inside a string — check-screen and tests/cards.test.ts guard that.
   const template = STRIP_COMMENTS.has(name) ? WIDGETS[name].replace(/\/\*[\s\S]*?\*\/\n?/g, "") : WIDGETS[name];
   let html = injectMark(template).replace(/__VOICEOS_([A-Z]+)__/g, (token, key: string) => key === "DEMO" ? token : fills[key] ?? "");
-  if (name === "thread") {
-    html = html.replace(/^const DEMO=.*;$/m, () => `const DEMO=${json};`);
-    // The live conversation (refresh, older messages, markdown, media, requests,
-    // attach) rides on every thread card except the new-group mode
-    // (args.members, no args.group): it has no conversation yet and no + button,
-    // so it skips the ~40KB of live code. Its first send swaps in a live card.
-    const args = payload.args as { group?: string; members?: unknown } | undefined;
-    const live = !(!args?.group && Array.isArray(args?.members));
-    const script = live ? `${LIVE_CHAT_JS}\n${COMPOSER_KIT_JS}\n${MESSAGING_ADAPTER}` : MESSAGING_ADAPTER;
-    const css = live ? `${MESSAGING_CSS}\n${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${COMPOSER_KIT_CSS}` : MESSAGING_CSS;
-    // One lexical scope per document, including after the in-place new-group swap.
-    // Original source files stay intact; the adapter overrides only live wiring.
-    html = html.replace("<script>", "<script>\n(()=>{\n")
-      .replace("</script>", () => `\n${script}\n})();\n</script>`);
-    html = html.replace("<script>", () => `<style>${css}</style>\n<script>`);
-  } else {
-    html = html.replace("__VOICEOS_DEMO__", () => json);
-    if (name === "show") {
-      // show.html's top-level functions (openChat, invoke, CAN_INVOKE, D, …) are
-      // script-global, so the glue in its own IIFE can wrap them without the
-      // assets' helpers leaking into (or colliding with) the handoff's scope.
-      // Anchor on <script>, not </style>: show.html has several style blocks.
-      // After the data fill, so no asset text is ever read as a token.
-      html = html.replace("</script>", () => `\n(()=>{\n${LIVE_CHAT_JS}\n${COMPOSER_KIT_JS}\n${SHOW_ADAPTER}\n})();\n</script>`)
-        .replace("<script>", () => `<style>${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${COMPOSER_KIT_CSS}</style>\n<script>`);
-    }
+  html = html.replace("__VOICEOS_DEMO__", () => json);
+  if (name === "show") {
+    // show.html's top-level functions (openChat, invoke, CAN_INVOKE, D, …) are
+    // script-global, so the glue in its own IIFE can wrap them without the
+    // assets' helpers leaking into (or colliding with) the handoff's scope.
+    // Anchor on <script>, not </style>: show.html has several style blocks.
+    // After the data fill, so no asset text is ever read as a token.
+    html = html.replace("</script>", () => `\n(()=>{\n${LIVE_CHAT_JS}\n${COMPOSER_KIT_JS}\n${SHOW_ADAPTER}\n})();\n</script>`)
+      .replace("<script>", () => `<style>${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${COMPOSER_KIT_CSS}\n${SHOW_CSS}</style>\n<script>`);
   }
   return pruneShapeCss(name, payload.data, html);
 }
@@ -368,146 +351,53 @@ const fits = (card: Glance) => glanceChars(card) <= MAX_GLANCE_CHARS;
 const slimRoster = (bots: ReturnType<typeof toBot>[], whole: Set<string>) =>
   bots.map((b) => (whole.has(b.id) ? b : { id: b.id, name: b.name, color: b.color, shape: b.shape, status: b.status }));
 
-/** Bake as much history as the glance cap allows. Oversized messages become
- * deferred previews first (boundThread halves its budget until the card fits;
- * the live chat loads them in full). The first budget is the snapshot's own
- * (boundThread's default, held down by the 131072-char card tool result cap),
- * never more: a message baked whole that the first live refresh turns back
- * into a preview would collapse on screen and re-read its chunks. The rest of
- * the glance room goes to the roster. Too many short messages to defer: keep
- * only the newest, and tell `render` the history is incomplete so it omits
- * nextBeforeSeq (that cursor would skip the dropped ones; the first refresh
- * brings a fresh one). A roster too big for even that renders `slim`; a card
- * that still cannot fit is logged, never silently shipped as if it did. */
-function fitThread(items: CardItem[], render: (thread: BakedItem[], complete: boolean, slim: boolean) => Glance): Glance {
-  let card!: Glance;
-  for (const slim of [false, true]) {
-    for (const budget of [48_000, 24_000, 12_000, 6_000, 4_000])
-      if (fits(card = render(withTime(boundThread(items, budget)), true, slim))) return card;
-    for (let keep = items.length >> 1; keep > 0; keep >>= 1)
-      if (fits(card = render(withTime(boundThread(items.slice(-keep), 4_000)), false, slim))) return card;
-    if (fits(card = render([], false, slim))) return card;
-  }
-  console.error(`thread card is ${glanceChars(card)} glance chars with no history (cap ${MAX_GLANCE_CHARS}); VoiceOS will drop it`);
-  return card;
-}
-
 // ── Card builders per tool ───────────────────────────────────────────────────
 
-/** show.html — roster (+ groups). `threads` is an optional per-bot recent-message
- * map (id → CardItems, bots and groups) so the in-card chat pane opens
- * populated; `nextBeforeSeqs` are their "Earlier messages" cursors. Histories
- * are a nicety (the pane refreshes as it opens), so they shrink, then drop —
- * the roster itself always fits. */
+/** Where voice opens the roster card: one bot's chat, one group's chat, or the
+ * new-group pane (bots picked, name, first send creates the group). */
+export type ShowOpen = { bot: string } | { group: string } | { members: string[]; groupName?: string };
+
+/** show.html — roster (+ groups), and the one conversation surface. `threads`
+ * is a per-conversation recent-message map (id → CardItems, bots and groups) so
+ * a chat pane opens populated; `nextBeforeSeqs` are their "Earlier messages"
+ * cursors. `open` starts the card on a chat pane instead of the roster, with
+ * `message` as that pane's draft. Histories are a nicety (the pane refreshes as
+ * it opens), so they shrink, then drop — the opened conversation keeps the most,
+ * and the roster itself always fits. */
 export function showCard(
   agents: Agent[],
   me?: string,
   threads: Record<string, CardItem[]> = {},
   nextBeforeSeqs: Record<string, number | undefined> = {},
+  open?: { open: ShowOpen; message?: string },
 ) {
   const bots = agents.filter((a) => !a.isGroup).map(toBot);
   const groups = agents.filter((a) => a.isGroup).map(toGroup);
-  const card = (ids: string[], perThread: number) => {
-    const baked = Object.fromEntries(ids.map((id) => [id, withTime(boundThread(threads[id], perThread))]));
+  const args = open ? { open: open.open, ...(open.message ? { message: open.message } : {}) } : {};
+  const focus = open ? ("bot" in open.open ? open.open.bot : "group" in open.open ? open.open.group : undefined) : undefined;
+  const card = (ids: string[], perThread: number, focusThread = perThread) => {
+    const baked = Object.fromEntries(ids.map((id) => [id, withTime(boundThread(threads[id], id === focus ? focusThread : perThread))]));
     const seqs = Object.fromEntries(ids.filter((id) => typeof nextBeforeSeqs[id] === "number").map((id) => [id, nextBeforeSeqs[id]]));
-    return glance("show", { data: { bots, groups, me: me ?? "", threads: baked, nextBeforeSeqs: seqs }, args: {} }, 320, "Grok Bot");
+    return glance("show", { data: { bots, groups, me: me ?? "", threads: baked, nextBeforeSeqs: seqs }, args }, 320, "Grok Bot");
   };
-  // Roster order: the first rows are the ones on screen, so they keep theirs longest.
-  const ids = agents.map((a) => a.id).filter((id) => threads[id]?.length);
-  for (let perThread = 16_000; perThread >= 1_000; perThread /= 2) {
-    const c = card(ids, perThread);
-    if (fits(c)) return c;
-  }
+  // The opened conversation first, then roster order: the first rows are the ones on screen.
+  const ids = [...(focus && threads[focus]?.length ? [focus] : []),
+    ...agents.map((a) => a.id).filter((id) => id !== focus && threads[id]?.length)];
+  for (const focusThread of [48_000, 24_000, 12_000, 6_000])
+    for (let perThread = 16_000; perThread >= 1_000; perThread /= 2) {
+      const c = card(ids, perThread, Math.max(focusThread, perThread));
+      if (fits(c)) return c;
+    }
   for (let keep = ids.length >> 1; keep > 0; keep >>= 1) {
-    const c = card(ids.slice(0, keep), 1_000);
+    const c = card(ids.slice(0, keep), 1_000, 4_000);
     if (fits(c)) return c;
   }
   const bare = card([], 0);
   if (fits(bare)) return bare;
   // The roster is the content here, so every bot stays — as a name and a status.
-  const slim = glance("show", { data: { bots: slimRoster(bots, new Set()), groups: groups.map((g) => ({ ...g, last: "" })), me: me ?? "", threads: {}, nextBeforeSeqs: {} }, args: {} }, 320, "Grok Bot");
+  const slim = glance("show", { data: { bots: slimRoster(bots, new Set()), groups: groups.map((g) => ({ ...g, last: "" })), me: me ?? "", threads: {}, nextBeforeSeqs: {} }, args }, 320, "Grok Bot");
   if (!fits(slim)) console.error(`show card is ${glanceChars(slim)} glance chars with a bare roster (cap ${MAX_GLANCE_CHARS}); VoiceOS will drop it`);
   return slim;
-}
-
-/** The thread card's roster, for orbs, names and the Members view. It never
- * shows a bot's latest-message line (`task`, the show card's row text), and
- * those lines would crowd real messages out of the glance budget, so it is
- * left empty here. */
-const threadRoster = (agents: Agent[]) =>
-  agents.filter((a) => !a.isGroup).map((a) => ({ ...toBot(a), task: "" }));
-const authors = (items: CardItem[]) => new Set(items.map((i) => i.bot).filter((id): id is string => !!id));
-
-/** thread.html 1:1 mode — one bot + its recent messages (`args.bot`). Pass
- * `agents` (the roster) so a message from ANOTHER bot resolves that bot's orb +
- * name for the "Message from …" line; without it, only the thread bot is known.
- * Only the bots the baked rows draw ship (1:1 mode has no Members view); the
- * first live refresh hands the card the whole roster.
- * `nextBeforeSeq` (from the same transcript page) enables "Earlier messages". */
-export function threadCard(bot: Agent, entries: TranscriptEntry[], message = "", agents?: Agent[], nextBeforeSeq?: number) {
-  const items = toCardThread(entries);
-  const refs = authors(items);
-  const bots = threadRoster((agents ?? [bot]).filter((a) => a.id === bot.id || refs.has(a.id)));
-  if (!bots.some((b) => b.id === bot.id)) bots.unshift({ ...toBot(bot), task: "" });
-  return fitThread(items, (thread, complete, slim) =>
-    glance(
-      "thread",
-      {
-        data: { bots: slim ? slimRoster(bots, new Set([bot.id])) : bots, thread, me: "", ...(complete && typeof nextBeforeSeq === "number" ? { nextBeforeSeq } : {}) },
-        args: { bot: bot.id, message },
-      },
-      360,
-      "Grok Bot",
-    ));
-}
-
-/**
- * thread.html new-group mode — build a group (pick members from the live roster
- * in the Members view, name it), then send. `data.bots` is the full roster the
- * Members view adds from; `args.members` are the preselected bot ids; nothing is
- * created until the card's composer invokes grokbot_group with a message.
- */
-export function groupComposeCard(agents: Agent[], memberIds: string[], name?: string, message = "") {
-  const roster = threadRoster(agents);
-  return glance(
-    "thread",
-    { data: { bots: roster, groups: [], thread: [], me: "" }, args: { members: memberIds, groupName: name ?? "", message } },
-    380,
-    "Grok Bot",
-  );
-}
-
-/**
- * thread.html existing-group mode — a group that already exists, addressed by
- * `args.group` (an id into `data.groups[]`); its history lives on that group's
- * `thread`. `data.bots` stays the full roster so the Members view still renders.
- * The draft stays in the composer until the user clicks its send arrow.
- */
-export function groupThreadCard(
-  agents: Agent[],
-  group: { id: string; name: string; members: string[] },
-  entries: TranscriptEntry[],
-  message = "",
-  nextBeforeSeq?: number,
-) {
-  const roster = threadRoster(agents);
-  const items = toCardThread(entries);
-  const whole = new Set([...group.members, ...authors(items)]);
-  return fitThread(items, (thread, complete, slim) =>
-    glance(
-      "thread",
-      {
-        data: {
-          bots: slim ? slimRoster(roster, whole) : roster,
-          groups: [{ id: group.id, name: group.name, members: group.members, time: relTime(Date.now()), thread }],
-          me: "",
-          ...(complete && typeof nextBeforeSeq === "number" ? { nextBeforeSeq } : {}),
-        },
-        args: { group: group.id, groupName: group.name, members: group.members, message },
-      },
-      380,
-      "Grok Bot",
-    ));
 }
 
 /** connect.html — first-run / needs-sign-in status. */
