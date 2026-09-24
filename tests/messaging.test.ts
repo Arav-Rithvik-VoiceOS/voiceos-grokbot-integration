@@ -219,25 +219,25 @@ test("creation reports pending registration without inventing a roster entry", a
   expect((await call("grokbot_prepare_message", { bot: "James" })).args.bot).toBe("created");
 });
 
-test("voice send opens the bot's thread with the draft typed in and sends nothing", async () => {
+test("voice send opens the bot's chat pane on the roster card with the draft typed in and sends nothing", async () => {
   const r = await call("grokbot_send", { bot: "Pepper", message: "Draft" });
   expect(writes).toEqual([]);
   expect(r).toMatchObject({ opened: true, sent: false, bot: "Pepper", draft: "Draft" });
-  expect(cardData(r).args).toMatchObject({ bot: "p", message: "Draft" });
-  expect(r._voiceos_glance.blocks[0].html).toContain('<title>Thread</title>');
+  expect(cardData(r).args).toMatchObject({ open: { bot: "p" }, message: "Draft" });
+  expect(r._voiceos_glance.blocks[0].html).toContain('<title>Your Bots</title>');
 });
-test("voice group opens an existing group's thread with the draft and sends nothing", async () => {
+test("voice group opens an existing group's chat pane on the roster card with the draft and sends nothing", async () => {
   const r = await call("grokbot_group", { group: "Homework crew", message: "Team draft" });
   expect(writes).toEqual([]);
   expect(r).toMatchObject({ opened: true, sent: false, group: "Homework crew", draft: "Team draft" });
-  expect(cardData(r).args).toMatchObject({ group: "g", message: "Team draft" });
-  expect(r._voiceos_glance.blocks[0].html).toContain('<title>Thread</title>');
+  expect(cardData(r).args).toMatchObject({ open: { group: "g" }, message: "Team draft" });
+  expect(r._voiceos_glance.blocks[0].html).toContain('<title>Your Bots</title>');
 });
 test("voice group with new members opens compose mode and creates nothing", async () => {
   const r = await call("grokbot_group", { members: ["p", "t"], groupName: "Research", message: "Draft" });
   expect(writes).toEqual([]);
   expect(r).toMatchObject({ opened: true, sent: false, newGroup: true, members: ["p", "t"], draft: "Draft" });
-  expect(cardData(r).args).toMatchObject({ members: ["p", "t"], groupName: "Research", message: "Draft" });
+  expect(cardData(r).args).toMatchObject({ open: { members: ["p", "t"], groupName: "Research" }, message: "Draft" });
 });
 test("host string member edits are saved on an existing group before a card send", async () => {
   const r = await call("grokbot_card_send", { group: "g", members: "p,t", groupName: "Research", message: "Draft" });
@@ -276,21 +276,20 @@ test("card send refuses empty text and unknown bots without sending", async () =
   expect((await call("grokbot_card_send", { bot: "Nobody", message: "Hi" })).isError).toBe(true);
   expect(writes).toEqual([]);
 });
-test("a card send on an existing group has no receipt, but a brand-new group's first send returns a live thread receipt", async () => {
+test("a card send on an existing group reports created:false, and a brand-new group's first send reports created:true — neither returns a receipt", async () => {
   const edited = await call("grokbot_card_send", { group: "g", members: ["p", "t"], groupName: "Research", message: "Edited" });
   expect(writes).toEqual([["members", "g", ["p", "t"]], ["name", "g", "Research"], ["send", "g", "Edited"]]);
-  expect(edited.sent).toBe(true);
+  expect(edited).toMatchObject({ sent: true, created: false, group: "g", groupName: "Research", members: ["p", "t"], sentMessage: "Edited" });
   expect(edited.receipt).toBeUndefined();
   writes = [];
   const created = await call("grokbot_card_send", { members: ["p", "f"], groupName: "Study", message: "Start" });
   expect(writes).toEqual([["create", "Study", ["p", "f"]], ["send", "new", "Start"]]);
-  expect(created.sent).toBe(true);
-  expect(created.receipt.html).toContain('<title>Thread</title>');
-  expect(demoOf(created.receipt.html).args).toMatchObject({ group: "new", groupName: "Study" });
+  expect(created).toMatchObject({ sent: true, created: true, group: "new", groupName: "Study", members: ["p", "f"], sentMessage: "Start" });
+  expect(created.receipt).toBeUndefined();
   expect((await call("grokbot_card_send", { message: "no recipient" })).isError).toBe(true);
 });
-test("thread-card adapter sends only through the confirm-less card tool", async () => {
-  const adapter = await Bun.file(new URL("../widgets/messaging-adapter.js", import.meta.url)).text();
+test("the roster card sends only through the confirm-less card tool", async () => {
+  const adapter = await Bun.file(new URL("../widgets/show-adapter.js", import.meta.url)).text();
   const show = await Bun.file(new URL("../widgets/show.html", import.meta.url)).text();
   for (const src of [adapter, show]) {
     expect(src).toContain("'grokbot_card_send'");
@@ -304,18 +303,6 @@ test("card send to a group (picked as bot) sends once with no receipt", async ()
   expect(r).toMatchObject({ sent: true, group: "g", groupName: "Homework crew", sentMessage: "From the card" });
   expect(r.receipt).toBeUndefined();
   expect(r._voiceos_glance).toBeUndefined();
-});
-test("a new group's live-thread receipt still gets the host's invokeTool capability and used budget", async () => {
-  // The adapter's capture listener swallows voiceos:init, and a document written
-  // in place by a card gets no init at all — without this hand-off the swapped-in
-  // live thread card would never learn it can invoke tools, or how much of the
-  // card's action budget the prior document already spent.
-  const adapter = await Bun.file(new URL("../widgets/messaging-adapter.js", import.meta.url)).text();
-  const show = await Bun.file(new URL("../widgets/show.html", import.meta.url)).text();
-  for (const src of [adapter, show]) expect(src).toContain('<meta name="voiceos-receipt-invoke" content="1">');
-  expect(adapter).toContain("liveBridge.count = Math.max(liveBridge.count, receiptUsed)");
-  const created = await call("grokbot_card_send", { members: ["p", "t"], groupName: "Research", message: "Start" });
-  expect(created.receipt.html).toContain('<title>Thread</title>');
 });
 test("a follow-up card send on an existing group leaves members and name alone", async () => {
   const r = await call("grokbot_card_send", { group: "g", message: "One more thing" });
@@ -380,7 +367,7 @@ test("reading a thread gives the model the message text and no card by default",
 });
 test("reading a thread shows the card only when the user asks to see it", async () => {
   const r = await call("grokbot_thread", { bot: "Pepper", show: true });
-  expect(cardData(r).args.bot).toBeDefined();
+  expect(cardData(r).args.open).toEqual({ bot: "p" });
   expect(r.thread).toEqual([{ from: "user", text: "Earlier message" }]);
 });
 test("a long thread keeps the newest messages inside the size limit", async () => {
@@ -437,16 +424,17 @@ test("the roster card opens chat panes populated with card items and their curso
   expect(JSON.stringify(data)).not.toContain("file://");
   expect(r.groups).toEqual([{ name: "Homework crew", members: ["p", "f"] }]);
 });
-test("showing one bot opens its conversation in the thread card; a group opens in group mode", async () => {
+test("showing one bot opens its conversation on the roster card; a group opens in group mode", async () => {
   tailCursor = 8;
   const one = await call("grokbot_show", { bot: "Pepper" });
   expect(one.focus).toBe("Pepper");
-  expect(cardData(one).args.bot).toBe("p");
-  expect(cardData(one).data).toMatchObject({ thread: [{ id: "old", from: "me", text: "Earlier message" }], nextBeforeSeq: 8 });
-  expect(one._voiceos_glance.blocks[0].html).toContain("<title>Thread</title>");
+  expect(cardData(one).args.open).toEqual({ bot: "p" });
+  expect(cardData(one).data.threads.p[0]).toMatchObject({ id: "old", from: "me", text: "Earlier message" });
+  expect(cardData(one).data.nextBeforeSeqs.p).toBe(8);
+  expect(one._voiceos_glance.blocks[0].html).toContain("<title>Your Bots</title>");
   const group = await call("grokbot_show", { bot: "Homework crew" });
-  expect(cardData(group).args).toMatchObject({ group: "g", members: ["p", "f"] });
-  expect(cardData(group).data.groups[0].thread[0].id).toBe("old");
+  expect(cardData(group).args.open).toEqual({ group: "g" });
+  expect(cardData(group).data.threads.g[0]).toMatchObject({ id: "old" });
 });
 test("a pending request on an older gateway still marks its bot as needing you", async () => {
   tail = [{ kind: "send-message", id: "ask", message: { type: "widget", widget: { prompt: "Pick", options: [{ label: "A", value: "A" }] } } }];
@@ -471,7 +459,7 @@ test("the card snapshot returns roster shapes and card items without presentatio
 });
 test("reading a thread with show:true opens a group in group mode", async () => {
   const r = await call("grokbot_thread", { bot: "Homework crew", show: true });
-  expect(cardData(r).args.group).toBe("g");
+  expect(cardData(r).args.open).toEqual({ group: "g" });
 });
 test("the send confirmation context stays small when recent replies are huge", async () => {
   tail = [{ kind: "send-message", id: "big", message: { type: "text", content: "| a | b |\n|---|---|\n" + "| `x` | **y** |\n".repeat(3000) } }];
@@ -537,8 +525,10 @@ test("showing one bot opens its conversation even when its history cannot be rea
   const r = await call("grokbot_show", { bot: "Pepper" });
   expect(r.isError).toBeFalsy();
   expect(r).toMatchObject({ focus: "Pepper", historyUnavailable: true });
-  expect(cardData(r).args.bot).toBe("p");
-  expect(cardData(r).data.thread).toEqual([]);
+  expect(cardData(r).args.open).toEqual({ bot: "p" });
+  // showCard only bakes a conversation into `threads` when it has entries, so
+  // an empty (failed-read) history for the focused bot leaves its key absent.
+  expect(cardData(r).data.threads.p).toBeUndefined();
   tailFails = false;
   expect((await call("grokbot_show", { bot: "Pepper" })).historyUnavailable).toBeUndefined();
 });

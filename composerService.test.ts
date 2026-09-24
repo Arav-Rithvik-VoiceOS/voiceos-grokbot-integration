@@ -10,7 +10,6 @@ import {
 import {
   LIVE_CHAT_JS,
   COMPOSER_KIT_JS,
-  MESSAGING_ADAPTER,
   SHOW_ADAPTER,
 } from "./assets.generated.ts";
 import manifest from "./voiceos.integration.json";
@@ -246,24 +245,28 @@ test("invalid selection fails as a batch without retaining partial attachments",
   expect(r.attachments).toHaveLength(0);
 });
 test("every tool the card scripts invoke has an explicit UI grant", () => {
-  // The live chat, the composer kit and both glue scripts are what a card runs;
+  // The live chat, the composer kit and the show card's glue are what a card runs;
   // any grokbot_* tool they name must be card-callable in the manifest.
-  const runtime = [LIVE_CHAT_JS, COMPOSER_KIT_JS, MESSAGING_ADAPTER, SHOW_ADAPTER].join("\n");
+  const runtime = [LIVE_CHAT_JS, COMPOSER_KIT_JS, SHOW_ADAPTER].join("\n");
   const names = [...new Set([...runtime.matchAll(/['"`](grokbot_[a-z_]+)['"`]/g)].map((m) => m[1]))];
   for (const name of ["grokbot_card_files", "grokbot_card_snapshot", "grokbot_open_computer_window"])
     expect(names).toContain(name);
   for (const name of names)
     expect(manifest.tools.find((t) => t.name === name)?.uiCallable, name).toBe(true);
   expect(names).not.toContain("grokbot_card_teach");
-  for (const src of [LIVE_CHAT_JS, COMPOSER_KIT_JS, MESSAGING_ADAPTER, SHOW_ADAPTER]) new Function(src);
+  for (const src of [LIVE_CHAT_JS, COMPOSER_KIT_JS, SHOW_ADAPTER]) new Function(src);
 });
 
-test("the new-group compose card stays plain; its first send swaps in a live group thread", async () => {
-  const { groupComposeCard, groupThreadCard } = await import("./cards.ts");
-  const compose = groupComposeCard([], ["a", "b"], "Team", "Hi")._voiceos_glance.blocks[0].html;
-  expect(JSON.parse(compose.match(/^const DEMO=(.*);$/m)![1]).args.message).toBe("Hi");
-  expect(compose).toContain(MESSAGING_ADAPTER);
-  expect(compose).not.toContain("const LiveChat");
-  const live = groupThreadCard([], { id: "g", name: "Team", members: ["a", "b"] }, [])._voiceos_glance.blocks[0].html;
-  expect(live).toContain("const LiveChat");
+test("the show card bakes a new-group pane's args and always carries the live chat glue", async () => {
+  // The old separate compose/thread cards (plain vs live) are archived: the one
+  // show card now carries LiveChat/ComposerKit/SHOW_ADAPTER unconditionally, and
+  // the new-group pane (args.open.members) is wired up client-side in show-adapter.js
+  // (gbOpenNew/gbNewSend), not by a server-baked "plain" variant.
+  const { showCard } = await import("./cards.ts");
+  const html = showCard([], undefined, {}, {}, { open: { members: ["a", "b"], groupName: "Team" }, message: "Hi" })
+    ._voiceos_glance.blocks[0].html;
+  const baked = JSON.parse(html.match(/^const DEMO=(.*);$/m)![1]);
+  expect(baked.args.open).toEqual({ members: ["a", "b"], groupName: "Team" });
+  expect(baked.args.message).toBe("Hi");
+  expect(html).toContain("const LiveChat");
 });
