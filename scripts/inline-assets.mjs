@@ -3,7 +3,7 @@
  * inline-assets.mjs — freeze every runtime-read asset into a TS module.
  *
  * cards.ts renders the notch cards from files on disk (widgets/*.html, the
- * adapters, the messaging CSS, the live chat + composer scripts and styles, the
+ * adapters, the messaging CSS, the live chat scripts and styles, the
  * markdown CSS, mark.png, rfb.b64). VoiceOS's Share button ships
  * only server.ts + widgetKit.ts + package.json + manifest + icon — the widgets/
  * folder and mark.png never travel, so a shared build crashes on boot with
@@ -33,13 +33,13 @@ const s = (v) => JSON.stringify(v); // safe for any HTML/JS/CSS content
 // glance cap (cards.ts MAX_GLANCE_CHARS) with the handoff itself, and every byte they spend is a
 // message the card cannot show. Whitespace and comments only (esbuild is a
 // pinned devDependency, so the frozen bytes move only with the lockfile):
-// names, globals (LiveChat, ComposerKit) and behavior are unchanged.
+// names, globals (LiveChat) and behavior are unchanged.
 // The widget HTML is the design handoff and stays verbatim.
 const minified = (rel) => transformSync(text(rel), {
   loader: rel.endsWith(".css") ? "css" : "js", minifyWhitespace: true, charset: "utf8", legalComments: "none",
 }).code.trim();
 
-const NAMES = ["connect", "show", "create", "screen", "computer"];
+const NAMES = ["connect", "show", "create", "computer", "guide"];
 const widgets = Object.fromEntries(NAMES.map((n) => [n, text(`widgets/${n}.html`)]));
 // The mark draws at 16px, so a 32px copy covers a 2x display; the 64px source
 // would spend ~3KB more of every card's glance budget on pixels no screen draws.
@@ -91,10 +91,10 @@ export const WIDGETS: Record<string, string> = ${s(widgets)};
 export const LIVE_CHAT_JS = ${s(minified("widgets/live-chat.js"))};
 export const LIVE_CHAT_CSS = ${s(minified("widgets/live-chat.css"))};
 export const MARKDOWN_CSS = ${s(minified("widgets/markdown.css"))};
-export const COMPOSER_KIT_JS = ${s(minified("widgets/composer-kit.js"))};
-export const COMPOSER_KIT_CSS = ${s(minified("widgets/composer-kit.css"))};
 export const SHOW_ADAPTER = ${s(minified("widgets/show-adapter.js"))};
 export const SHOW_CSS = ${s(minified("widgets/show-adapter.css"))};
+export const SCREEN_PANE_JS = ${s(minified("widgets/screen-pane.js"))};
+export const SCREEN_PANE_CSS = ${s(minified("widgets/screen-pane.css"))};
 export const MARK_DATA_URI = ${s(`data:image/png;base64,${markB64}`)};
 export const RFB_B64 = ${s(text("widgets/rfb.b64").trim())};
 export const RFB_FULL_B64 = ${s(text("widgets/rfb-full.b64").trim())};
@@ -102,4 +102,4 @@ export const COMPUTER_VIEWER_BINARY_B64 = ${s(computerViewerB64)};
 `;
 
 writeFileSync(join(root, "assets.generated.ts"), out);
-console.error(`inline-assets: wrote assets.generated.ts (${(out.length / 1024).toFixed(1)} KB, ${NAMES.length} widgets + adapters + live chat + composer + mark + rfb + native viewer)`);
+console.error(`inline-assets: wrote assets.generated.ts (${(out.length / 1024).toFixed(1)} KB, ${NAMES.length} widgets + adapters + live chat + mark + rfb + native viewer)`);

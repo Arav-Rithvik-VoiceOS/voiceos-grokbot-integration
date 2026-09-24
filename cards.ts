@@ -3,8 +3,8 @@
  *
  * The widget HTML (widgets/*.html) is the user's design handoff, kept intact.
  * The roster card (show.html) is the ONE conversation surface: its chat pane
- * gets the live conversation (widgets/live-chat.js), the composer's attach
- * button (widgets/composer-kit.js) and the send / new-group / saved-state glue
+ * gets the live conversation (widgets/live-chat.js) and the send / new-group /
+ * saved-state glue
  * (widgets/show-adapter.js), injected at render time. Voice opens that same
  * card on a chat pane through args.open. The old thread card, sent receipts
  * and confirmation adapter live in archive/.
@@ -21,18 +21,19 @@ import type { Agent, TranscriptEntry } from "./client.ts";
 // it automatically. The mark is a data: URI because the card sandbox blocks the
 // network; it is a 32px copy (the mark draws at 16px), embedded once per card.
 import {
-  WIDGETS, MARK_DATA_URI, RFB_B64,
-  LIVE_CHAT_JS, LIVE_CHAT_CSS, MARKDOWN_CSS, COMPOSER_KIT_JS, COMPOSER_KIT_CSS, SHOW_ADAPTER, SHOW_CSS,
+  WIDGETS, MARK_DATA_URI,
+  LIVE_CHAT_JS, LIVE_CHAT_CSS, MARKDOWN_CSS, SHOW_ADAPTER, SHOW_CSS,
+  SCREEN_PANE_JS, SCREEN_PANE_CSS,
 } from "./assets.generated.ts";
 import { toCardThread, boundThread, type CardItem } from "./conversation.ts";
 import { renderMarkdown } from "./markdown.ts";
 
-type CardName = "connect" | "show" | "create" | "screen";
+type CardName = "connect" | "show" | "create" | "guide";
 
 /** Swap the widgets' placeholder glyph (`.mark > i`) for the real logo, bare (no
  * tile), per the design handoff. Only the `.mark` glyph is targeted — but the
- * `.mark` element may carry its own attributes (e.g. screen.html's inline
- * `style`), so match the open tag with any attributes and replace just the inner
+ * `.mark` element may carry its own attributes (e.g. an inline `style`), so
+ * match the open tag with any attributes and replace just the inner
  * `<i></i>` placeholder, keeping the element (and its attributes) intact. A plain
  * `class="mark"><i></i>` string match missed those and left the empty glyph.
  * The logo is ONE CSS background per card, not an inline <img> per mark: the
@@ -46,12 +47,6 @@ export function injectMark(html: string): string {
     (marks++, `${open}<b class="voiceos-mk" role="img" aria-label="Grok Bot"></b>`));
   return marks ? out.replace("<style>", () => `<style>${MARK_CSS}\n`) : out;
 }
-
-// The in-card VNC viewer (noVNC RFB, gzip+base64), built by `bun run build-rfb`.
-// Only the screen card carries it, and only when there is a live stream — the
-// idle screen card and every other card stay small. See scripts/build-rfb.ts
-// for why the viewer must live inside the card at all. (RFB_B64 is embedded via
-// assets.generated.ts — imported at the top of this file.)
 
 /**
  * The cap that actually gates a glance: VoiceOS accepts a widget glance only
@@ -67,10 +62,10 @@ export const MAX_GLANCE_CHARS = 280_000;
 export const glanceChars = (card: { _voiceos_glance: { blocks: unknown[] } }) =>
   JSON.stringify({ blocks: card._voiceos_glance.blocks }).length;
 
-const STRIP_COMMENTS = new Set<CardName>(["screen", "show"]);
+const STRIP_COMMENTS = new Set<CardName>(["show"]);
 
 /** The widget HTML with the real mark + real {data, args} injected. `fills`
- * replaces extra `__VOICEOS_<KEY>__` tokens (today: RFB on the screen card);
+ * replaces extra `__VOICEOS_<KEY>__` tokens (none today);
  * any token a widget declares but a call doesn't fill becomes the empty string. */
 export function renderCard(
   name: CardName,
@@ -80,10 +75,10 @@ export function renderCard(
   const json = JSON.stringify({ data: payload.data ?? {}, args: payload.args ?? {} })
     .replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   // Function replacers so `$` in the data can't be read as a replacement pattern.
-  // The live screen and show cards carry the most bytes, so their
+  // The show card carries the most bytes, so its
   // source comments are dropped at render time (before any data/viewer/asset
   // fill, so only the template is touched). None of these templates has "/*"
-  // inside a string — check-screen and tests/cards.test.ts guard that.
+  // inside a string — tests/cards.test.ts guards that.
   const template = STRIP_COMMENTS.has(name) ? WIDGETS[name].replace(/\/\*[\s\S]*?\*\/\n?/g, "") : WIDGETS[name];
   let html = injectMark(template).replace(/__VOICEOS_([A-Z]+)__/g, (token, key: string) => key === "DEMO" ? token : fills[key] ?? "");
   html = html.replace("__VOICEOS_DEMO__", () => json);
@@ -93,21 +88,21 @@ export function renderCard(
     // assets' helpers leaking into (or colliding with) the handoff's scope.
     // Anchor on <script>, not </style>: show.html has several style blocks.
     // After the data fill, so no asset text is ever read as a token.
-    html = html.replace("</script>", () => `\n(()=>{\n${LIVE_CHAT_JS}\n${COMPOSER_KIT_JS}\n${SHOW_ADAPTER}\n})();\n</script>`)
-      .replace("<script>", () => `<style>${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${COMPOSER_KIT_CSS}\n${SHOW_CSS}</style>\n<script>`);
+    html = html.replace("</script>", () => `\n(()=>{\n${LIVE_CHAT_JS}\n${SCREEN_PANE_JS}\n${SHOW_ADAPTER}\n})();\n</script>`)
+      .replace("<script>", () => `<style>${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${SHOW_CSS}\n${SCREEN_PANE_CSS}</style>\n<script>`);
   }
   return pruneShapeCss(name, payload.data, html);
 }
 
 /** Every widget ships clip-path polygons for all 8 Grok avatar shapes (~6.5KB).
- * A read card only needs the shapes its bots actually use, and the screen card
- * in particular must stay under MAX_GLANCE_CHARS with the 57KB viewer bundle on
- * board — so drop the unused rules. The create card keeps all 8 (its picker
- * shows every shape); `blob` always stays because adapters use it as the
+ * A read card only needs the shapes its bots actually use, and every byte saved
+ * leaves more of MAX_GLANCE_CHARS for the show card's conversations — so drop
+ * the unused rules. The create card keeps all 8 (its picker
+ * shows every shape), and so does the guide (its orbit shows every shape); `blob` always stays because adapters use it as the
  * placeholder shape for unresolved recipients. */
 function pruneShapeCss(name: CardName, data: unknown, html: string): string {
   const bots = (data as { bots?: { shape?: string }[] } | undefined)?.bots;
-  if (name === "create" || !Array.isArray(bots)) return html;
+  if (name === "create" || name === "guide" || !Array.isArray(bots)) return html;
   const used = new Set<string>(["blob", ...bots.map((b) => b.shape ?? "blob")]);
   return html.replace(/\.av\.([a-z]+),\.shapes button\.\1\{clip-path:polygon\([^)]*\)\}/g, (rule, shape: string) =>
     used.has(shape) ? rule : "");
@@ -353,9 +348,14 @@ const slimRoster = (bots: ReturnType<typeof toBot>[], whole: Set<string>) =>
 
 // ── Card builders per tool ───────────────────────────────────────────────────
 
-/** Where voice opens the roster card: one bot's chat, one group's chat, or the
- * new-group pane (bots picked, name, first send creates the group). */
-export type ShowOpen = { bot: string } | { group: string } | { members: string[]; groupName?: string };
+/** Where voice opens the roster card: one bot's chat (with `screen`, its live
+ * screen pane on top), one group's chat, or the new-group pane (bots picked,
+ * name, first send creates the group). */
+// An existing group may carry pending edits (members, name) the card starts with;
+// they save on the card's next send. `newSince` (epoch ms, from a reply
+// notification's Open) draws a "New messages" line above the first bot message
+// newer than it.
+export type ShowOpen = { bot: string; screen?: boolean; newSince?: number } | { group: string; members?: string[]; groupName?: string; newSince?: number } | { members: string[]; groupName?: string };
 
 /** show.html — roster (+ groups), and the one conversation surface. `threads`
  * is a per-conversation recent-message map (id → CardItems, bots and groups) so
@@ -400,32 +400,23 @@ export function showCard(
   return slim;
 }
 
+/** What the guide can check on this Mac. `undefined` = could not tell (the
+ * card then shows the step as not done rather than guessing). */
+export type SetupState = { app?: boolean; signedIn?: boolean; bots?: number; notifications?: boolean };
+
+/** guide.html — the two-page "how do I use this" card: setup steps checked
+ * against this Mac, then things to say. `bots` (up to 3) voice the examples
+ * with the user's own bot names; `page` 1 opens straight on the ideas page. */
+export function guideCard(setup: SetupState, bots: Agent[] = [], page: 0 | 1 = 0) {
+  const cast = bots.filter((a) => !a.isGroup).slice(0, 3).map((a) => {
+    const b = toBot(a);
+    return { name: b.name, color: b.color, shape: b.shape };
+  });
+  return glance("guide", { data: { setup, bots: cast }, args: { page } }, 410, "Grok Bot");
+}
+
 /** connect.html — first-run / needs-sign-in status. */
 export function connectCard(account?: { name?: string; email?: string }) {
   return glance("connect", { data: { account: account ?? { name: "You" } }, args: {} }, 340, "Grok Bot");
 }
 
-/**
- * screen.html — live view of a bot's computer. `stream.wsUrl` is the computer's
- * websockify WebSocket; the card opens it with its own bundled noVNC client
- * (RFB_B64). `stream.viewerUrl` is the pod's vnc.html, kept for reference
- * only (it is unusable in a browser: its assets 404 without the token header).
- * Clicking a live screen invokes the same hardened, view-only native window
- * used by `grokbot_open_computer_window`. Each bot has its own cloud computer,
- * so every bot's "screen" is its own persistent desktop. With no stream the
- * card shows its idle state and ships without the viewer bundle.
- *
- * If the live card would ever exceed the host's byte cap (viewer grew, widget
- * grew), degrade to the idle card instead of a card the host rejects.
- */
-export function screenCard(bot: Agent, stream?: { wsUrl: string; viewerUrl: string }) {
-  const payload = (live: boolean) => ({
-    data: { bots: [toBot(bot)] },
-    args: { bot: bot.id, stream: live ? stream!.wsUrl : "" },
-  });
-  if (stream) {
-    const card = glance("screen", payload(true), 380, "Grok Bot", { RFB: RFB_B64 });
-    if (glanceChars(card) <= MAX_GLANCE_CHARS) return card;
-  }
-  return glance("screen", payload(false), 380, "Grok Bot");
-}

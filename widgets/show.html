@@ -55,9 +55,26 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 .bubble b{font-weight:650}
 .sys{align-self:center;color:var(--ink-3);font-size:11.5px;display:flex;align-items:center;gap:5px;padding:2px 0}
 .msgs{display:flex;flex-direction:column;gap:6px;padding:4px 14px 30px;overflow-y:auto;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent)}
+/* Progressive blur at the scroll edges: six stacked backdrop-filter bands, each
+   masked to its own slice so the blur ramps smoothly instead of stepping. No
+   backgrounds, so the colour underneath never changes. The top fog only shows
+   once the list has scrolled (see the capture-phase scroll listener). */
+.msgwrap{position:relative}
+.fog{position:absolute;left:0;right:0;height:60px;pointer-events:none;opacity:0;transition:opacity .3s ease}
+.fog.bot{bottom:0;--dir:to bottom}
+.fog.top{top:0;--dir:to top}
+.msgwrap.scrolled .fog.top,.msgwrap.more .fog.bot{opacity:1}
+.fog i{position:absolute;inset:0}
+.fog i:nth-child(1){-webkit-backdrop-filter:blur(0.5px);backdrop-filter:blur(0.5px);-webkit-mask:linear-gradient(var(--dir),#000 0%,#000 16.7%,transparent 33.3%);mask:linear-gradient(var(--dir),#000 0%,#000 16.7%,transparent 33.3%)}
+.fog i:nth-child(2){-webkit-backdrop-filter:blur(1px);backdrop-filter:blur(1px);-webkit-mask:linear-gradient(var(--dir),transparent 0%,#000 16.7%,#000 33.3%,transparent 50%);mask:linear-gradient(var(--dir),transparent 0%,#000 16.7%,#000 33.3%,transparent 50%)}
+.fog i:nth-child(3){-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);-webkit-mask:linear-gradient(var(--dir),transparent 16.7%,#000 33.3%,#000 50%,transparent 66.7%);mask:linear-gradient(var(--dir),transparent 16.7%,#000 33.3%,#000 50%,transparent 66.7%)}
+.fog i:nth-child(4){-webkit-backdrop-filter:blur(3.5px);backdrop-filter:blur(3.5px);-webkit-mask:linear-gradient(var(--dir),transparent 33.3%,#000 50%,#000 66.7%,transparent 83.3%);mask:linear-gradient(var(--dir),transparent 33.3%,#000 50%,#000 66.7%,transparent 83.3%)}
+.fog i:nth-child(5){-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);-webkit-mask:linear-gradient(var(--dir),transparent 50%,#000 66.7%,#000 83.3%,transparent 100%);mask:linear-gradient(var(--dir),transparent 50%,#000 66.7%,#000 83.3%,transparent 100%)}
+.fog i:nth-child(6){-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);-webkit-mask:linear-gradient(var(--dir),transparent 66.7%,#000 83.3%,#000 100%);mask:linear-gradient(var(--dir),transparent 66.7%,#000 83.3%,#000 100%)}
+/* Top edge alpha fade, colour-neutral: backdrop opacity(0) masked to the last 36px. The bottom edge already fades through .msgs mask-image. */
+.fog.top i:nth-child(7){-webkit-backdrop-filter:opacity(0);backdrop-filter:opacity(0);-webkit-mask:linear-gradient(var(--dir),transparent 40%,#000 100%);mask:linear-gradient(var(--dir),transparent 40%,#000 100%)}
 .compose{display:flex;align-items:center;gap:8px;margin:0 12px 12px;background:var(--fill-1);border:1px solid transparent;border-radius:22px;padding:5px 5px 5px 6px}
 .compose input{background:none;border:0;padding:6px 4px;flex:1;min-width:0}
-.compose .plus{width:30px;height:30px;border-radius:50%;background:var(--fill-2);color:var(--ink-2);font-size:18px;line-height:30px;text-align:center;flex:none}
 .compose .send{width:30px;height:30px;border-radius:50%;background:var(--ink-1);color:#000;flex:none;display:grid;place-items:center;transition:transform .12s,opacity .15s}
 .compose .send:active{transform:scale(.92)}
 .compose .send[disabled]{opacity:.35}
@@ -70,10 +87,14 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 <style>.ty{display:inline-flex;gap:3px;padding:3px 0}.ty i{width:6px;height:6px;border-radius:50%;background:var(--ink-3);animation:ty 1s infinite}.ty i:nth-child(2){animation-delay:.15s}.ty i:nth-child(3){animation-delay:.3s}@keyframes ty{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}</style>
-<style>.panes{position:relative;overflow:hidden}.pane{transition:transform .32s cubic-bezier(.2,.8,.2,1),opacity .32s}.pane.chat{position:absolute;inset:0 0 auto 0;transform:translateX(100%);opacity:0;pointer-events:none}.panes.open .pane.list{position:absolute;inset:0 0 auto 0;transform:translateX(-18%);opacity:0;pointer-events:none}.panes.open .pane.chat{position:static;transform:none;opacity:1;pointer-events:auto}.stack{display:inline-flex;flex:none}.stack .av{margin-left:-14px;outline:2px solid #0c0c0d}.stack .av:first-child{margin-left:0}html[data-theme=light] .stack .av{outline-color:#fff}.back{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:var(--ink-2);background:var(--fill-1);flex:none}.back:hover{background:var(--fill-2)}.row .task{font-size:12.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.st{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink-2)}</style>
+<style>.panes{position:relative;overflow:hidden}.pane{transition:transform .32s cubic-bezier(.2,.8,.2,1),opacity .32s}.pane.chat,.pane.screen{position:absolute;inset:0 0 auto 0;transform:translateX(100%);opacity:0;pointer-events:none}.panes.open .pane.list{position:absolute;inset:0 0 auto 0;transform:translateX(-18%);opacity:0;pointer-events:none}.panes.open .pane.chat{position:static;transform:none;opacity:1;pointer-events:auto}
+/* Third pane: the live screen. It slides in from chat's right (same "going right" motion), and chat
+   slides out to the left behind it — so Back on the screen pane brings chat back in from the left. */
+.panes.open.screen .pane.chat{position:absolute;inset:0 0 auto 0;transform:translateX(-18%);opacity:0;pointer-events:none}.panes.screen .pane.screen{position:static;transform:none;opacity:1;pointer-events:auto}.stack{display:inline-flex;flex:none}.stack .av{margin-left:-14px;outline:2px solid #0c0c0d}.stack .av:first-child{margin-left:0}html[data-theme=light] .stack .av{outline-color:#fff}.back{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:var(--ink-2);background:var(--fill-1);flex:none}.back:hover{background:var(--fill-2)}.row .task{font-size:12.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.st{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink-2)}</style>
 <div class="panes" id="panes">
   <div class="pane list" id="list"></div>
   <div class="pane chat" id="chat"></div>
+  <div class="pane screen" id="screen-pane"></div>
 </div>
 
 <script>
@@ -140,6 +161,15 @@ const Motion=(()=>{
  return{scan,set,react};
 })();
 
+/* Message list plus its two blur fogs. Fogs live outside the scroller so they stay
+   put; the wrapper gets .scrolled once the list moves, which reveals the top fog. */
+function fog(cls,n){return '<div class="fog '+cls+'" aria-hidden="true">'+'<i></i>'.repeat(n)+'</div>'}
+function msgsBox(inner){return '<div class="msgwrap"><div class="msgs" id="msgs" style="max-height:268px">'+inner+'</div>'+fog('top',7)+fog('bot',6)+'</div>'}
+/* .scrolled = content hidden above (show the top fog); .more = content hidden below (show the
+   bottom fog). At the end of the list nothing blurs, so the last message reads clean. */
+function fogSync(m){const w=m.parentNode;if(!w||!w.classList.contains('msgwrap'))return;w.classList.toggle('scrolled',m.scrollTop>6);w.classList.toggle('more',m.scrollHeight-m.clientHeight-m.scrollTop>6)}
+document.addEventListener('scroll',e=>{const m=e.target;if(m&&m.classList&&m.classList.contains('msgs'))fogSync(m)},true);
+let fogRaf=0;new MutationObserver(()=>{if(fogRaf)return;fogRaf=requestAnimationFrame(()=>{fogRaf=0;document.querySelectorAll('.msgs').forEach(fogSync)})}).observe(document.documentElement,{childList:true,subtree:true});
 function autosize(t){t.style.height='auto';t.style.height=t.scrollHeight+'px'}
 
 
@@ -149,7 +179,7 @@ const dotCls=b=>({working:'on',thinking:'on',waiting:'warn',blocked:'bad'}[b.sta
 /* Per-bot recent messages come in d.threads[botId] (from grokbot_show); fall
    back to a flat d.thread (older shape) or empty (just the composer). */
 function thread(d,botId){const list=(d.threads&&d.threads[botId])||d.thread||[];return list.map(m=>{if(m.sys){const b=botById(d,m.bot);return '<div class="sys">'+esc(m.sys)+' '+av(b,'tiny')+' '+esc(b.name)+'</div>'}return (m.t?'<div class="sys">'+esc(m.t)+'</div>':'')+'<div class="bubble '+m.from+' fade-in">'+(m.html||esc(m.text))+'</div>'}).join('')}
-function composer(name,ph){return '<form class="compose" id="compose" onsubmit="return false"><span class="plus">+</span><input id="msg" placeholder="'+esc(ph||('Message '+name))+'" autocomplete="off"><button class="send" type="button" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form>'}
+function composer(name,ph){return '<form class="compose" id="compose" onsubmit="return false"><input id="msg" placeholder="'+esc(ph||('Message '+name))+'" autocomplete="off"><button class="send" type="button" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form>'}
 /* The card iframe is sandboxed "allow-scripts" only — no allow-forms — so a
    <form> submit event NEVER fires (the host blocks it silently). Drive the send
    from the button's click and the input's Enter instead, never from submit. */
@@ -196,7 +226,7 @@ function render(d){D=d;const w=d.bots.filter(b=>['working','thinking'].includes(
    roster. Keep this header in sync with thread.html's render(). */
 function openChat(b){const c=$('#chat');
  c.innerHTML='<div class="hd"><button class="back" id="back" aria-label="Back"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>'+(b.group?'<span class="stack">'+b.members.map(id=>av(botById(D,id),'small')).join('')+'</span>':av(b))+'<div class="grow"><div class="t2">'+esc(b.name)+'</div><div class="st"><span class="dot '+dotCls(b)+'"></span>'+statusText(b)+(b.label?' · '+esc(b.label):'')+'</div></div></div>'
- +'<div class="msgs" id="msgs" style="max-height:268px">'+thread(D,b.id)+'</div>'+composer(b.name);
+ +msgsBox(thread(D,b.id))+composer(b.name);
  $('#panes').classList.add('open');$('#back').onclick=()=>$('#panes').classList.remove('open');
  const m=$('#msgs');m.scrollTop=m.scrollHeight;wireComposer(c,v=>{const a=$('.hd .av',c);Motion.react(a);
   if(!CAN_INVOKE){appendMe(m,v);return}

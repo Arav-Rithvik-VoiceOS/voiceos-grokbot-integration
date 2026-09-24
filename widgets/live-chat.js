@@ -1,10 +1,10 @@
 /* LiveChat: the live conversation in Arav's thread + show cards (refresh, earlier messages, lazy
    images, requests, choices, deferred messages, Open computer). Rows use the card's own markup. */
 const LiveChat=(()=>{
- // The host gives a card 64 requests for its whole life (a reopened notch reloads the page, not the count), and
+ // The host gives a card 1000 requests for its whole life (VoiceOS 0.2.42+) (a reopened notch reloads the page, not the count), and
  // the in-place receipt's follow-ups share them. Automatic calls (refresh, images, deferred chunks, file polls)
- // stop at AUTO, the user's own actions at HARD; sends are never refused here, so they keep at least 8, usually 24.
- const END={completed:1,failed:1,cancelled:1,unknown:1},GAP=15e3,CAP=30,AUTO=40,HARD=56,LIMIT=64;
+ // stop at AUTO, the user's own actions at HARD; sends are never refused here, so they keep at least 20, usually 100.
+ const END={completed:1,failed:1,cancelled:1,unknown:1},GAP=2e3,CAP=850,AUTO=900,HARD=980,LIMIT=1000;
  // requestState.ts's passive types: connection prompts stay in history after they are done.
  const PASSIVE=/^(connectors?|listener-connect|scm-connect|onepassword-connect|team-access|slack-connect|cursor-agent|bot-template-share)$/;
  const DATA=/^data:image\/(png|jpeg|webp|gif);base64,/,UNSURE='The result is unconfirmed. Check Grok Bot before trying again.',OPEN='Open in Grok Bot';
@@ -72,9 +72,14 @@ const LiveChat=(()=>{
   const saved=()=>{try{o.onItems&&o.onItems(items.slice(),before)}catch(_){}};
   const el=(tag,cls,text)=>{const e=document.createElement(tag);e.className=cls;if(text)e.textContent=text;return e};
   const top=el('button','sys lc-older','Earlier messages'),end=el('div','sys lc-paused','Live updates paused. Open this conversation again to continue.');
+  // Grok Bot's unread divider (line · label · line) above the first bot message newer than o.newSince (epoch ms).
+  const since=num(o&&o.newSince),nl=el('div','lc-new');nl.setAttribute('role','separator');nl.setAttribute('aria-label','New messages');nl.innerHTML='<i></i><span>New messages</span><i></i>';
   let pc=null;
-  if(o.header&&!T.isGroup){pc=el('button','lc-pc');pc.title='Open computer';pc.setAttribute('aria-label','Open computer');pc.innerHTML=PC;
-   const wm=o.header.querySelector('.mark');wm?wm.before(pc):o.header.append(pc);pc.addEventListener('click',()=>openComputer())}
+  if(o.header&&!T.isGroup){pc=el('button','lc-pc');pc.title='View screen';pc.setAttribute('aria-label','View screen');pc.innerHTML=PC;
+   const wm=o.header.querySelector('.mark');wm?wm.before(pc):o.header.append(pc);
+   /* o.onScreen (show card) slides open the in-card screen pane; without it (thread card) fall back to
+      opening the bot's computer in the big native window. */
+   pc.addEventListener('click',()=>o.onScreen?o.onScreen():openComputer())}
 
   const view=it=>it.deferred&&FULL.get(key(it.id,it.deferred.version))||it;
   const st8=id=>{let u=ui.get(id);if(!u)ui.set(id,u={sel:new Set(),custom:'',v:0});return u};
@@ -137,9 +142,10 @@ const LiveChat=(()=>{
    const mine=items.filter(i=>i.from==='me'&&typeof i.text==='string');
    [...list.children].forEach(n=>{const x=n.dataset.lcMine;if(x==null||n.dataset.lc)return;const at=+n.dataset.lcAt||0;
     if(mine.some(i=>i.text.trim()===x&&(!i.timestampMs||i.timestampMs>=at-12e4))){const s=n.nextElementSibling;if(s&&!s.dataset.lc&&s.classList.contains('sys'))s.remove();n.remove()}});
-   const rest=[...list.children].filter(n=>!n.dataset.lc&&n!==top&&n!==end&&!(items.length&&n.classList.contains('empty')));
+   const rest=[...list.children].filter(n=>!n.dataset.lc&&n!==top&&n!==end&&n!==nl&&!(items.length&&n.classList.contains('empty')));
    top.hidden=before==null;list.classList.toggle('lc-off',spent());
    const want=[top,...nodes,...rest];if(paused)want.push(end);
+   const ni=since==null?-1:items.findIndex(i=>i.from!=='me'&&!i.local&&typeof i.sys!=='string'&&+i.timestampMs>since);if(ni>=0)want.splice(ni+1,0,nl);
    // Move only what changed, so a focused answer field keeps focus across refreshes.
    let ref=list.firstChild;for(const n of want){if(n===ref)ref=ref.nextSibling;else list.insertBefore(n,ref)}
    while(ref){const nx=ref.nextSibling;ref.remove();ref=nx}
@@ -171,14 +177,14 @@ const LiveChat=(()=>{
    catch(e){if(!(e&&e.refused))bad.add(k)}
    finally{busyK.delete(k);draw()}}
 
-  function bots(b){if(o.onBots&&(Array.isArray(b.bots)||Array.isArray(b.groups)))try{o.onBots(b.bots||[],b.groups||[])}catch(_){}}
+  function bots(b){if(o.onBots&&Array.isArray(b.bots)&&Array.isArray(b.groups))try{o.onBots(b.bots||[],b.groups||[])}catch(_){}}
   const spent=()=>br.count>=AUTO,over=()=>br.refreshes>=CAP||spent();
   function pause(){if(paused||dead)return;paused=true;clearTimeout(timer);timer=0;draw();try{o.paused&&o.paused()}catch(_){}}
-  // After a send, look sooner for the reply (3 s, then ×1.5 up to GAP); otherwise every GAP. Each look spends the card's budget.
+  // Look every GAP (2 s), before and after a send. Each look spends the card's budget, so CAP pauses it after ~28 min in view.
   const gap=()=>fast>=0&&fast<6?Math.min(GAP,3000*Math.pow(1.5,fast)):GAP;
   function schedule(){clearTimeout(timer);timer=0;if(!dead&&!paused&&br.canInvoke&&document.visibilityState!=='hidden')timer=setTimeout(()=>{timer=0;refresh()},gap())}
   // A send is the user's own action: it may wake a card paused by the refresh cap (never one out of budget).
-  function hurry(){if(dead)return;fast=0;if(!spent()){if(br.refreshes>CAP-6)br.refreshes=CAP-6;if(paused){paused=false;draw()}}if(!busy)schedule()}
+  function hurry(){if(dead)return;fast=0;if(!spent()){if(br.refreshes>CAP-30)br.refreshes=CAP-30;if(paused){paused=false;draw()}}if(!busy)schedule()}
   // Optimistic rows for the user's sends: 'sending' (in flight here), 'sent' (host confirmed), 'orphan' (from a
   // reloaded card; its request state is lost). A snapshot that has the same text drops the copy; one that still
   // lacks an orphan 30 s on means it never arrived (o.onLost), and a 'sent' copy is let go after 3 min.
@@ -246,12 +252,15 @@ const LiveChat=(()=>{
   const on=(t,f,x)=>(x||list)[dead?'removeEventListener':'addEventListener'](t,f);
   const wire=()=>{on('click',click);on('input',onInput);on('keydown',onKey);on('scroll',onScroll);on('visibilitychange',vis,document)};
 
-  function destroy(){if(dead)return;dead=true;clearTimeout(timer);timer=0;if(io)io.disconnect();if(rsz)rsz.disconnect();if(off)off();wire();if(pc)pc.remove();top.remove();end.remove()}
+  function destroy(){if(dead)return;dead=true;clearTimeout(timer);timer=0;if(io)io.disconnect();if(rsz)rsz.disconnect();if(off)off();wire();if(pc)pc.remove();top.remove();end.remove();nl.remove()}
 
   // Take over the list: keyed rows replace the handoff's first render (an empty-group note stays until messages arrive).
   [...list.childNodes].forEach(n=>{if(!(n.classList&&n.classList.contains('empty')&&!items.length))n.remove()});
   list.classList.add('lc-list');ro();if(pc)pc.hidden=!br.canInvoke;wire();if(rsz)rsz.observe(list);
   draw('bottom');schedule();
+  // Opened from a notification: when the new replies run past the view, start at their "New messages" line,
+  // just below the pane's 60 px top fog.
+  if(since!=null)requestAnimationFrame(()=>{if(dead||!nl.isConnected)return;const d=nl.getBoundingClientRect().top-list.getBoundingClientRect().top-52;if(d<0){list.scrollTop+=d;stick=near()}});
   return {refresh,loadOlder,destroy,openComputer,hurry,addLocal,setLocal,dropLocal,items:()=>items.map(view),nextBeforeSeq:()=>before}}
 
  return {bridge,relTime,mount};

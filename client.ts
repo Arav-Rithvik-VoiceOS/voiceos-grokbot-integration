@@ -14,7 +14,7 @@
  * user's OWN session on the user's OWN Mac. See SPIKE.md for the proof run and
  * PLAN.md for the design.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { execFileSync, execFile } from "node:child_process";
 import { pbkdf2Sync, createDecipheriv } from "node:crypto";
 import {
@@ -65,6 +65,12 @@ export class IntegrationError extends Error {
 // ── Local session: descriptor + Keychain → gateway creds ─────────────────────
 
 const DESCRIPTOR_PATH = `${process.env.HOME}/Library/Application Support/Grok Bot/gateway-descriptor.json`;
+/** True once the Grok Bot app has signed in on this Mac (it writes the
+ * descriptor then). A file check only: no Keychain read, so no prompt. */
+export const hasGatewaySession = () => existsSync(DESCRIPTOR_PATH);
+/** True when the Grok Bot app is installed in either Applications folder. */
+export const hasGrokBotApp = () =>
+  existsSync("/Applications/Grok Bot.app") || existsSync(`${process.env.HOME}/Applications/Grok Bot.app`);
 // Chromium "Safe Storage" Keychain item the app writes its master key under.
 const KEYCHAIN_SERVICE = "Grok Bot Safe Storage";
 
@@ -534,15 +540,8 @@ export interface AutomationEntry {
 /** Every scheduled task across all bots, each tagged with its agentId. */
 export const listAllAutomations = () => gateway<AutomationEntry[]>("listAllAutomations", {});
 
-export const sendPrompt = (agentId: string, prompt: string, attachments: {
-  attachmentPaths?: string[]; attachmentNames?: string[]; clientNonce?: string;
-} = {}) =>
-  gateway<{ accepted?: boolean }>("sendPrompt", { agentId, prompt, ...attachments }, { timeoutMs: WRITE_TIMEOUT_MS });
-
-export const uploadAttachmentChunk = (args: {
-  agentId: string; uploadId: string; filename: string; offset: number;
-  totalSize: number; bytesBase64: string;
-}) => gateway<{ committedPath?: string }>("uploadAttachmentChunk", args, { timeoutMs: WRITE_TIMEOUT_MS });
+export const sendPrompt = (agentId: string, prompt: string) =>
+  gateway<{ accepted?: boolean }>("sendPrompt", { agentId, prompt }, { timeoutMs: WRITE_TIMEOUT_MS });
 
 export const createAgent = (
   name: string,

@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { toCardItem, toCardThread, toThread as threadItems, boundThread, type CardItem } from "../conversation.ts";
 import { conversationSnapshot, conversationEntry, conversationTransport } from "../conversationService.ts";
 import {
-  renderCard, showCard, connectCard, glanceChars,
+  renderCard, showCard, connectCard, guideCard, glanceChars,
   relTime, toThread, toBot, MAX_GLANCE_CHARS, confirmationContext, CONFIRMATION_CONTEXT_CHARS,
 } from "../cards.ts";
 import {
   LIVE_CHAT_JS, LIVE_CHAT_CSS, MARKDOWN_CSS,
-  COMPOSER_KIT_JS, COMPOSER_KIT_CSS, SHOW_ADAPTER, SHOW_CSS, MARK_DATA_URI, WIDGETS,
+  SHOW_ADAPTER, SHOW_CSS, SCREEN_PANE_JS, SCREEN_PANE_CSS, MARK_DATA_URI, WIDGETS,
 } from "../assets.generated.ts";
 import type { Agent, TranscriptEntry } from "../client.ts";
 
@@ -243,8 +243,8 @@ describe("renderCard asset injection", () => {
     const html = htmlOf(showCard(roster(3), undefined, { b0: toCardThread([picture]) }));
     const [script, ...rest] = scripts(html);
     expect(rest).toHaveLength(0);
-    expect(script.endsWith(`\n(()=>{\n${LIVE_CHAT_JS}\n${COMPOSER_KIT_JS}\n${SHOW_ADAPTER}\n})();\n`)).toBe(true);
-    expect(html).toContain(`<style>${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${COMPOSER_KIT_CSS}\n${SHOW_CSS}</style>\n<script>`);
+    expect(script.endsWith(`\n(()=>{\n${LIVE_CHAT_JS}\n${SCREEN_PANE_JS}\n${SHOW_ADAPTER}\n})();\n`)).toBe(true);
+    expect(html).toContain(`<style>${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${SHOW_CSS}\n${SCREEN_PANE_CSS}</style>\n<script>`);
     expect(demo(html).data.threads.b0[0].id).toBe("picture");
     expect(html).not.toContain("__VOICEOS_DEMO__");
     expect(() => new Function(script)).not.toThrow();
@@ -268,7 +268,7 @@ describe("renderCard asset injection", () => {
   });
   test("other cards carry none of it", () => {
     for (const html of [htmlOf(connectCard()), renderCard("create", { data: {}, args: {} })])
-      for (const marker of ["const LiveChat", "const ComposerKit"]) expect(html).not.toContain(marker);
+      for (const marker of ["const LiveChat"]) expect(html).not.toContain(marker);
   });
   test("the logo is embedded once per card, however many marks it draws", () => {
     const cards = [showCard(roster(2)), connectCard()];
@@ -278,7 +278,7 @@ describe("renderCard asset injection", () => {
     }
   });
   test("stripped template comments are real comments, never \"/*\" inside a string", () => {
-    for (const name of ["show", "screen"]) {
+    for (const name of ["show"]) {
       const src = WIDGETS[name];
       for (const m of src.matchAll(/\/\*[\s\S]*?\*\//g)) {
         const before = src.slice(src.lastIndexOf("\n", m.index!) + 1, m.index);
@@ -288,8 +288,8 @@ describe("renderCard asset injection", () => {
     }
   });
   test("injected assets cannot close their own script or style element", () => {
-    for (const js of [LIVE_CHAT_JS, COMPOSER_KIT_JS, SHOW_ADAPTER]) expect(js).not.toMatch(/<\/script/i);
-    for (const css of [LIVE_CHAT_CSS, COMPOSER_KIT_CSS, MARKDOWN_CSS, SHOW_CSS]) expect(css).not.toMatch(/<\/style/i);
+    for (const js of [LIVE_CHAT_JS, SCREEN_PANE_JS, SHOW_ADAPTER]) expect(js).not.toMatch(/<\/script/i);
+    for (const css of [LIVE_CHAT_CSS, MARKDOWN_CSS, SHOW_CSS, SCREEN_PANE_CSS]) expect(css).not.toMatch(/<\/style/i);
   });
   test("transcript text cannot end the payload script of a live card", () => {
     const hostile: TranscriptEntry = { id: "x", kind: "message", content: '</script><script>parent.postMessage("pwn")</script> $& __VOICEOS_DEMO__' };
@@ -299,5 +299,30 @@ describe("renderCard asset injection", () => {
       expect(() => new Function(scripts(html)[0])).not.toThrow();
       expect(JSON.stringify(demo(html))).toContain("__VOICEOS_DEMO__");
     }
+  });
+});
+
+describe("guide card", () => {
+  const bots: Agent[] = [
+    { id: "t", name: "Terry", avatarColor: "magenta", avatarShape: "pebble" },
+    { id: "g", name: "Team", isGroup: true, memberIds: ["t"] },
+  ];
+  test("carries the setup state, only real bots, and every orbit shape", () => {
+    const card = guideCard({ app: true, signedIn: true, bots: 1, notifications: false }, bots, 1);
+    const html = htmlOf(card);
+    expect(demo(html)).toEqual({
+      data: { setup: { app: true, signedIn: true, bots: 1, notifications: false }, bots: [{ name: "Terry", color: "#FF309B", shape: "pebble" }] },
+      args: { page: 1 },
+    });
+    for (const shape of ["blob", "pebble", "squircle", "tablet", "wedge", "hex", "cloud", "teardrop"])
+      expect(html).toContain(`.av.${shape},.shapes button.${shape}{clip-path`);
+    expect(html).not.toMatch(/__VOICEOS_[A-Z]+__/);
+    expect(scripts(html)).toHaveLength(1);
+    expect(() => new Function(scripts(html)[0])).not.toThrow();
+    expect(glanceChars(card)).toBeLessThan(MAX_GLANCE);
+  });
+  test("a bot name cannot end the payload script", () => {
+    const html = htmlOf(guideCard({}, [{ id: "x", name: "</script><script>alert(1)</script>" }]));
+    expect(scripts(html)).toHaveLength(1);
   });
 });

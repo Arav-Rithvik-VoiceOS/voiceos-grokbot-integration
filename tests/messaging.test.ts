@@ -143,7 +143,7 @@ test("the computer-window tool accepts the exact bot ID carried by a screen card
   expect(computerWindows).toEqual([{ botId: "p", botName: "Pepper", botColor: toBot(bots[0]).color, botShape: toBot(bots[0]).shape, wsUrl }]);
 });
 
-test("a live screen card opens its exact bot in the hardened computer-window tool", async () => {
+test("asking for a bot's screen opens the roster card on its screen pane", async () => {
   desktopProbe = {
     live: true,
     wsUrl: "wss://pod.cursorvm.com/websockify?token=5&network_token=secret",
@@ -155,10 +155,15 @@ test("a live screen card opens its exact bot in the hardened computer-window too
   const manifest = await Bun.file(new URL("../voiceos.integration.json", import.meta.url)).json();
   const tool = manifest.tools.find((candidate: any) => candidate.name === "grokbot_open_computer_window");
 
+  expect(r.live).toBe(true);
   expect(tool.uiCallable).toBe(true);
   expect(tool.confirmation).toBeUndefined();
-  expect(html).toContain("invoke('grokbot_open_computer_window',{bot:B.id})");
-  expect(html).not.toContain("grokbot_open_screen");
+  // One card for the screen: the show card (with its back button), opened on Pepper's screen pane.
+  expect(html).toContain('"open":{"bot":"p","screen":true}');
+  expect(html).toContain("const ScreenPane=");
+  expect(html).toContain("grokbot_open_computer_window");
+  // The pane fetches the feed itself; the card never carries the socket's token.
+  expect(html).not.toContain("network_token=secret");
 });
 
 test("unknown recipients fail lookup without opening a message card", async () => {
@@ -232,6 +237,15 @@ test("voice group opens an existing group's chat pane on the roster card with th
   expect(r).toMatchObject({ opened: true, sent: false, group: "Homework crew", draft: "Team draft" });
   expect(cardData(r).args).toMatchObject({ open: { group: "g" }, message: "Team draft" });
   expect(r._voiceos_glance.blocks[0].html).toContain('<title>Your Bots</title>');
+});
+test("voice edits to an existing group open as pending edits on its pane and save nothing", async () => {
+  const r = await call("grokbot_group", { group: "Homework crew", members: ["p", "t"], groupName: "Research", message: "Draft" });
+  expect(writes).toEqual([]);
+  expect(r).toMatchObject({ opened: true, sent: false, group: "Homework crew", members: ["p", "t"], groupName: "Research" });
+  expect(cardData(r).args).toMatchObject({ open: { group: "g", members: ["p", "t"], groupName: "Research" }, message: "Draft" });
+  // No change = no pending edits.
+  const same = await call("grokbot_group", { group: "Homework crew", members: ["f", "p"], groupName: "Homework crew" });
+  expect(cardData(same).args.open).toEqual({ group: "g" });
 });
 test("voice group with new members opens compose mode and creates nothing", async () => {
   const r = await call("grokbot_group", { members: ["p", "t"], groupName: "Research", message: "Draft" });
@@ -539,11 +553,24 @@ const clickReminder = (actionId: string, data?: Record<string, unknown>) =>
     params: { notificationId: "n1", actionId, ...(data ? { data } : {}) },
   });
 
-test("reminder Open opens that bot's chat and Close just dismisses", async () => {
-  expect(await clickReminder("open_chat", { botId: "p" })).toEqual({ ok: true });
-  expect(openedChats).toEqual(["p"]);
+test("reminder Open returns that bot's conversation card for the notch, marked from newSince", async () => {
+  const r = await clickReminder("open_chat", { botId: "p", newSince: 1234 });
+  expect(r).toMatchObject({ ok: true, responseText: "Pepper's conversation." });
+  expect(r.view.blocks).toHaveLength(1);
+  expect(r.view.blocks[0].type).toBe("widget");
+  expect(cardData({ _voiceos_glance: r.view }).args.open).toEqual({ bot: "p", newSince: 1234 });
+  // The card is the notch's view now; nothing opens the Grok Bot app.
+  expect(openedChats).toEqual([]);
+});
+
+test("reminder Open without newSince opens the plain conversation; Close just dismisses", async () => {
+  const r = await clickReminder("open_chat", { botId: "p" });
+  expect(cardData({ _voiceos_glance: r.view }).args.open).toEqual({ bot: "p" });
   expect(await clickReminder("close")).toEqual({ ok: true });
-  expect(openedChats).toEqual(["p"]);
+});
+
+test("reminder Open for a deleted bot fails instead of opening an empty card", async () => {
+  await expect(clickReminder("open_chat", { botId: "gone" })).rejects.toThrow("no longer exists");
 });
 
 test("an unknown reminder button fails instead of claiming success", async () => {

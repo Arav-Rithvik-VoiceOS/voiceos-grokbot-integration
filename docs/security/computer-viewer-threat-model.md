@@ -29,7 +29,6 @@ No token-bearing temporary HTML file exists, so file cleanup cannot expose a cre
 
 - `bun test tests/computer-window.test.ts` verifies URL rejection, token-free HTML, private extraction modes, native compilation, and Swift-side rejection of an unsafe destination.
 - `bun test tests/computer-window-handler.test.ts` verifies that offline desktops do not open a window and live desktops return plain JSON while launching exactly once.
-- `bun run check-screen` protects the original card and its shared, view-only viewer.
 - `bun run build-publish` rebuilds and embeds the universal signed helper; `bun run boot` checks the shipped server startup path.
 - Live acceptance must open the card and native window together, confirm neither evicts the other, close/reopen the native window to force a fresh probe, and confirm no `voiceos-grokbot-viewer-*` directory survives after VoiceOS exits.
 

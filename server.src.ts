@@ -18,6 +18,8 @@ import {
   TOOLKIT,
   type Agent,
   createAgent,
+  hasGatewaySession,
+  hasGrokBotApp,
   createGroup,
   setGroupMembers,
   renameGroup,
@@ -29,7 +31,6 @@ import {
   log,
   openComputerWindow,
   openGrokBotApp,
-  openBotChat,
   resolveAgent,
   resolveMembers,
   sendPrompt,
@@ -38,11 +39,11 @@ import {
   agentScreen,
 } from "./client.ts";
 import { recordCardPoll, cardCovers } from "./cardWatch.ts";
-import { connectCard, screenCard, showCard, type ShowOpen, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
+import { RFB_B64 } from "./assets.generated.ts";
+import { connectCard, guideCard, showCard, type ShowOpen, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
 import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 import { conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
-import { ComposerFiles, sweepStaleAttachments, type ComposerArgs } from "./composerService.ts";
 import { needsAttention, toCardThread, type CardItem } from "./conversation.ts";
 import { IntentRoster, registerIntentSupport } from "./intents.ts";
 import { INTENT_SLOT_VALUES_META_KEY } from "./intentSdk.generated.js";
@@ -110,8 +111,9 @@ async function triggerReminder(
 // reverse request `voiceos/reminders/action` { notificationId, actionId, data }
 // (decoded from the shipped 0.2.41 app). We answer { ok: true } once the effect
 // is done — the host then dismisses the card; a throw keeps the card up with an
-// error. A button cannot return a card: the only reply the host accepts is
-// { ok: true }. Handlers are a fixed map; incoming ids are never evaluated.
+// error. Since VoiceOS 0.2.42 the answer may also carry `view` (glance blocks)
+// and `responseText`: the host opens that card in the notch, with no agent turn.
+// Handlers are a fixed map; incoming ids are never evaluated.
 const REMINDER_ACTION_METHOD = "voiceos/reminders/action";
 const ReminderActionRequest = z.object({
   method: z.literal(REMINDER_ACTION_METHOD),
@@ -128,11 +130,26 @@ const REPLY_BUTTONS: ReminderButton[] = [
   { id: "close", label: "Close" },
 ];
 
-const REMINDER_ACTIONS: Record<string, (data: Record<string, unknown> | undefined) => Promise<void>> = {
-  // Open this bot's chat in the Grok Bot app.
+/** What a button may hand back: a card for the notch, and its fallback text. */
+type ReminderReply = { view: { blocks: unknown[] }; responseText?: string } | void;
+
+const REMINDER_ACTIONS: Record<string, (data: Record<string, unknown> | undefined) => Promise<ReminderReply>> = {
+  // Open this bot's conversation in the notch: the roster card on its chat pane,
+  // with a "New messages" line above the replies the user has not seen
+  // (`newSince`: the watch's boundary, epoch ms).
   async open_chat(data) {
     const botId = typeof data?.botId === "string" ? data.botId : "";
-    await openBotChat(botId);
+    if (!botId) throw new Error("This notification does not name a bot.");
+    const agents = await listAgents();
+    const bot = agents.find((a) => a.id === botId);
+    if (!bot) throw new Error("This bot no longer exists in Grok Bot.");
+    // Best-effort, like grokbot_show: the pane's live refresh fills in a missed read.
+    let tail: Awaited<ReturnType<typeof transcriptTail>> = {};
+    try { tail = await transcriptTail(bot.id, 30); }
+    catch (error) { log("reminder open_chat transcript read failed:", error); }
+    const since = typeof data?.newSince === "number" && Number.isFinite(data.newSince) ? { newSince: data.newSince } : {};
+    const card = await conversationCard(agents, { ...openOf(bot), ...since }, tail);
+    return { view: card._voiceos_glance, responseText: `${bot.name}'s conversation.` };
   },
   // Nothing to do: answering ok is what makes the host dismiss the card.
   async close() {},
@@ -141,8 +158,8 @@ const REMINDER_ACTIONS: Record<string, (data: Record<string, unknown> | undefine
 server.server.setRequestHandler(ReminderActionRequest, async ({ params }) => {
   const run = REMINDER_ACTIONS[params.actionId];
   if (!run) throw new Error("This button is no longer available.");
-  await run(params.data);
-  return { ok: true as const };
+  const reply = await run(params.data);
+  return { ok: true as const, ...(reply ?? {}) };
 });
 
 // Cadence + limits for the thread watch. Jonah confirmed a background poll may
@@ -239,10 +256,13 @@ function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, o
             if (!busy) return;
             continue;
           }
+          // Open draws "New messages" above the first reply newer than this.
+          const times = replies.map((e) => e.timestampMs).filter((t): t is number => typeof t === "number");
+          const newSince = times.length ? Math.min(...times) - 1 : t0;
           await triggerReminder(`${bot.name} replied.`, {
             speak: false,
             actions: REPLY_BUTTONS,
-            data: { botId: bot.id },
+            data: { botId: bot.id, newSince },
           });
           return;
         }
@@ -496,6 +516,76 @@ const showTool = server.registerTool(
     }),
 );
 
+// ── READ: grokbot_help ───────────────────────────────────────────────────────
+// The setup guide must open even before Grok Bot is set up, so it never throws
+// the Connect card: each step is checked on this Mac (files and the preference
+// only), and the roster read that counts bots is best-effort and time-boxed.
+const HELP_STEPS = [
+  { key: "app", text: "Install the Grok Bot app on this Mac and open it." },
+  { key: "signedIn", text: "Sign in to Grok Bot. VoiceOS uses that session, so there are no keys to paste." },
+  { key: "bots", text: "Make a first bot, for example: \"Create a bot named Scout that checks my inbox.\"" },
+  { key: "notifications", text: "Optional: turn on \"Show notifications from bots\" in Grok Bot's settings in VoiceOS to get a ping when a bot replies.", optional: true },
+] as const;
+const HELP_PHRASES = [
+  "Show my bots",
+  "Ask <bot> to summarize today",
+  "Show me <bot>'s screen",
+  "What did <bot> find?",
+  "Start a group with <bot> and <bot>",
+  "Create a bot named <name> that <does something>",
+];
+const HELP_ROSTER_MS = 2_500;
+
+server.registerTool(
+  "grokbot_help",
+  {
+    title: "How to use Grok Bot",
+    description:
+      "Show how to set up and use Grok Bot: a card with the setup steps (checked on this Mac), then things the user can say. Use when the user asks how to use or set up Grok Bot, what Grok Bot can do, or for help with this integration.",
+    inputSchema: {
+      page: z
+        .enum(["setup", "ideas"])
+        .optional()
+        .describe("'ideas' when the user asks only what they can do or say with Grok Bot; omit to start on setup."),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async (args: { page?: "setup" | "ideas" }) =>
+    handle("grokbot_help", async () => {
+      const signedIn = hasGatewaySession();
+      let agents: Agent[] = [];
+      let bots: number | undefined;
+      if (signedIn) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          agents = await Promise.race([
+            listAgents(),
+            new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("roster read timed out")), HELP_ROSTER_MS); }),
+          ]);
+          bots = agents.filter((a) => !a.isGroup).length;
+        } catch (error) {
+          log("grokbot_help roster read failed:", error);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      // A signed-in session proves the app is there even if it lives elsewhere.
+      const setup = { app: hasGrokBotApp() || signedIn, signedIn, ...(bots === undefined ? {} : { bots }), notifications: notificationsEnabled() };
+      const done: Record<string, boolean> = { app: setup.app, signedIn, bots: (bots ?? 0) > 0, notifications: setup.notifications };
+      const steps = HELP_STEPS.map((s) => ({ step: s.text, done: done[s.key], ...("optional" in s ? { optional: true } : {}) }));
+      const next = steps.find((s) => !s.done && !s.optional);
+      return result(
+        {
+          steps,
+          ...(bots === undefined && signedIn ? { botsUnknown: true } : {}),
+          thingsToSay: HELP_PHRASES,
+          message: next ? `Next step: ${next.step}` : "Grok Bot is set up. The card shows things to say.",
+        },
+        guideCard(setup, agents, args.page === "ideas" ? 1 : 0),
+      );
+    }),
+);
+
 // Card-origin operations share the existing host grant and serialized transport.
 // Read results contain data only, so refreshing never replaces an edited card.
 async function cardRequest(tool: string, run: () => Promise<Record<string, unknown>>) {
@@ -504,22 +594,6 @@ async function cardRequest(tool: string, run: () => Promise<Record<string, unkno
     catch (error) { return result({ ok: false, message: error instanceof Error ? error.message : "The request failed." }); }
   });
 }
-
-const composerFiles = new ComposerFiles(undefined, async (botId, message) => {
-  const bot = (await listAgents()).find(b => b.id === botId);
-  if (!bot || bot.isGroup) return;
-  const baseline = (await transcriptTail(botId, 12)).entries ?? [];
-  return () => watchThreadThenNotify(bot, baseline.map(e => e.id), message);
-});
-// Staged copies are private user files: remove them on every exit (host gone,
-// SIGINT/SIGTERM), and sweep what a killed or crashed server left behind.
-process.once("exit", () => composerFiles.cleanupSync());
-void sweepStaleAttachments().catch(error => log("attachment sweep failed:", error));
-server.registerTool("grokbot_card_files", {
-  title: "Attach files from the bot card",
-  description: "Internal — only for explicit attachment picker, removal, send, and status actions in the Grok Bot card. Never call from a voice or model request.",
-  inputSchema: { bot: z.string(), action: z.enum(["pick", "status", "remove", "send"]), jobId: z.string().optional(), attachmentId: z.string().optional(), attachments: z.array(z.string()).max(20).optional(), message: z.string().max(12000).optional(), clientNonce: z.string().max(128).optional() },
-}, (args: ComposerArgs) => cardRequest("grokbot_card_files", () => composerFiles.handle(args)));
 
 server.registerTool("grokbot_card_snapshot", {
   title: "Refresh conversation",
@@ -797,7 +871,8 @@ async function performGroupSend(args: { group?: string; members?: string | strin
 
 // ── READ: grokbot_group — opens the group chat with the draft, never sends ──
 // An existing group (by name, or the same member set) opens its chat pane on the
-// roster card; a new one opens the new-group pane, created on the card's first send.
+// roster card, where members and name stay editable; a new one opens the
+// new-group pane, created on the card's first send.
 server.registerTool(
   "grokbot_group",
   {
@@ -816,14 +891,22 @@ server.registerTool(
   async (args: { group?: string; members?: string | string[]; groupName?: string; message?: string }) =>
     handle("grokbot_group", async () => {
       const agents = await listAgents();
-      const { existing, memberIds } = resolveMessageGroup(args, agents);
+      const { existing, memberIds, sameSet } = resolveMessageGroup(args, agents);
       const draft = args.message?.trim() ?? "";
       const ready = draft ? " Your message is in the box — press send to deliver it." : "";
       if (existing) {
+        // Spoken member/name changes open as pending edits on the group's pane;
+        // the card's send saves them (performGroupSend) before it sends.
+        const members = sameSet(existing.memberIds ?? [], memberIds) ? undefined : memberIds;
+        const newName = args.groupName?.trim();
+        const groupName = newName && newName !== existing.name ? newName : undefined;
+        const edits = [members && "members", groupName && "name"].filter(Boolean).join(" and ");
         const tail = await transcriptTail(existing.id, 20);
         return result(
-          { opened: true, sent: false, group: existing.name, draft, message: `Opened ${existing.name}.${ready}` },
-          await conversationCard(agents, { group: existing.id }, tail, draft),
+          { opened: true, sent: false, group: existing.name, draft,
+            ...(members ? { members } : {}), ...(groupName ? { groupName } : {}),
+            message: `Opened ${existing.name}.${edits ? ` The new ${edits} save when you send.` : ""}${ready}` },
+          await conversationCard(agents, { group: existing.id, ...(members ? { members } : {}), ...(groupName ? { groupName } : {}) }, tail, draft),
         );
       }
       const name = args.groupName?.trim() ?? "";
@@ -849,16 +932,19 @@ const screenTool = server.registerTool(
   },
   async (args: { bot: string }) =>
     handle("view_bot_desktop_live", async () => {
-      const bot = await resolveAgent(args.bot.trim());
+      const agents = await listAgents();
+      const bot = await resolveAgent(args.bot.trim(), agents);
       // Every bot has its OWN cloud desktop (its "forever box"), which persists
-      // between tasks — so the screen is worth showing whenever that desktop
-      // answers, not only while a turn is running. agentScreen() maps the box
-      // to its public socket and proves a VNC desktop is behind it; when the
-      // box is absent or silent the card shows its idle state instead of a
-      // broken viewer.
+      // between tasks. The probe here only tells the model whether it is up; the
+      // card's screen pane runs its own probe (grokbot_card_screen) and streams it.
       const probe = await agentScreen(bot.id);
       const live = probe.live;
       const working = Boolean(bot.isRunning || bot.isRunningTurn || bot.isComposingMessage);
+      // The same roster card taps reach (chat → screen, with a back button), opened
+      // on this bot's screen pane. History is a nicety one Back away: best-effort.
+      let tail: Awaited<ReturnType<typeof transcriptTail>> = {};
+      try { tail = await transcriptTail(bot.id, 30); }
+      catch (error) { log("view_bot_desktop_live transcript read failed:", error); }
       return result(
         {
           bot: bot.name,
@@ -870,19 +956,19 @@ const screenTool = server.registerTool(
               : `${bot.name}'s desktop is up but ${bot.name} is idle right now.`
             : `${bot.name}'s computer is not running right now.`,
         },
-        screenCard(bot, live ? { wsUrl: probe.wsUrl!, viewerUrl: probe.viewerUrl! } : undefined),
+        await conversationCard(agents, { bot: bot.id, screen: true }, tail),
       );
     }),
 );
 
 // ── CARD: grokbot_open_computer_window (larger native interactive screen) ──────
-// Card-only: opened when the user TAPS the live screen card; no voice intent.
+// Card-only: opened when the user TAPS the live screen pane; no voice intent.
 server.registerTool(
   "grokbot_open_computer_window",
   {
     title: "Open a bot's computer window",
     description:
-      "Internal — invoked by the live screen card when the user taps it, to open that bot's computer in a larger window. Do not call from voice.",
+      "Internal — invoked by the show card's live screen pane when the user taps it, to open that bot's computer in a larger window. Do not call from voice.",
     inputSchema: {
       bot: z.string().describe("The bot's name or identifier as the user said it, e.g. 'Pepper'."),
     },
@@ -917,6 +1003,40 @@ server.registerTool(
         live: true,
         viewOnly: false,
         message: `Opened ${bot.name}'s computer in an interactive window.`,
+      });
+    }),
+);
+
+// ── CARD: grokbot_card_screen — the show card's screen pane fetches the feed ──
+// Card-only: invoked when the user opens the in-card screen pane (the chat header's
+// screen button). Returns the live websockify socket AND the noVNC viewer bundle,
+// so the show card — THE surface, rendered every turn — need not carry the 57KB
+// viewer itself; it rides this result only when a stream exists. Plain JSON (no glance):
+// the pane renders it with its own bundled RFB loader. Do not call from voice.
+server.registerTool(
+  "grokbot_card_screen",
+  {
+    title: "Open a bot's screen in the card",
+    description:
+      "Internal — invoked by the show card's screen pane to load a bot's live desktop inside the card. Do not call from voice.",
+    inputSchema: {
+      bot: z.string().describe("The exact bot ID shown on the card."),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async (args: { bot: string }) =>
+    handle("grokbot_card_screen", async () => {
+      // Voice supplies a spoken name; the card supplies its exact id — resolveMembers accepts both.
+      const [bot] = await resolveMembers([args.bot.trim()]);
+      const probe = await agentScreen(bot.id);
+      const live = Boolean(probe.live && probe.wsUrl);
+      return result({
+        bot: bot.name,
+        live,
+        wsUrl: live ? probe.wsUrl! : "",
+        // The gzip+base64 noVNC client, only when there is a stream to show.
+        viewer: live ? RFB_B64 : "",
+        message: live ? undefined : `${bot.name}'s computer is not running right now.`,
       });
     }),
 );

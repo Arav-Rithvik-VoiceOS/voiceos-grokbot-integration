@@ -1,0 +1,30 @@
+/* Screen pane — the live view of a bot's computer, shown as the show card's third
+   pane (list → chat → screen, each sliding in from the right). The frame styling is
+   lifted from screen.html; every rule is scoped under #screen-pane so it never
+   touches the roster or chat panes. The pane has no composer of its own: the chat
+   pane behind the back button is the one conversation surface. */
+#screen-pane{padding-bottom:12px}
+#screen-pane .sp-screen{position:relative;margin:8px 6px 0;border-radius:16px;overflow:hidden;aspect-ratio:16/10;cursor:default;padding:5px;background:linear-gradient(180deg,#2c2c31 0%,#15151a 45%,#0a0a0c 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.22),inset 0 -1px 0 rgba(0,0,0,.8),0 1px 0 rgba(255,255,255,.04),0 22px 44px -18px rgba(0,0,0,.75),0 0 70px -24px var(--glow,rgba(255,138,0,.5));transition:transform .5s cubic-bezier(.2,.8,.2,1),box-shadow .5s}
+#screen-pane .sp-screen:hover{transform:translateY(-1px);box-shadow:inset 0 1px 0 rgba(255,255,255,.26),inset 0 -1px 0 rgba(0,0,0,.8),0 1px 0 rgba(255,255,255,.04),0 28px 54px -18px rgba(0,0,0,.8),0 0 90px -22px var(--glow,rgba(255,138,0,.6))}
+html[data-theme=light] #screen-pane .sp-screen{background:linear-gradient(180deg,#f2f2f5,#c9c9cf 50%,#9a9aa2);box-shadow:inset 0 1px 0 rgba(255,255,255,.9),inset 0 -1px 0 rgba(0,0,0,.25),0 22px 44px -18px rgba(0,0,0,.35),0 0 70px -24px var(--glow,rgba(255,138,0,.4))}
+#screen-pane .sp-screen::after{content:"";position:absolute;inset:5px;border-radius:11px;pointer-events:none;z-index:2;background:linear-gradient(115deg,rgba(255,255,255,.09) 0%,rgba(255,255,255,.03) 28%,transparent 42%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),inset 0 0 40px rgba(0,0,0,.25)}
+#screen-pane .sp-openo{position:absolute;inset:5px;border-radius:11px;z-index:3;display:grid;place-items:center;background:rgba(0,0,0,.45);opacity:0;transition:opacity .18s;pointer-events:none}
+#screen-pane .sp-openo span{display:flex;align-items:center;gap:8px;height:40px;padding:0 18px 0 14px;border-radius:20px;background:rgba(22,22,24,.82);backdrop-filter:blur(10px);color:#fff;font-size:17px;font-weight:600;letter-spacing:-.01em}
+#screen-pane .sp-screen.live{cursor:pointer}#screen-pane .sp-screen.live:hover .sp-openo{opacity:1}#screen-pane .sp-screen:has(.sp-ctl:hover) .sp-openo{opacity:0}
+#screen-pane .sp-screen canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#screen-pane .sp-feed{position:absolute;inset:5px;border-radius:11px;overflow:hidden;background:#0a0a0b;transition:opacity .4s}
+#screen-pane .sp-feed.stale{opacity:.5}
+/* noVNC mounts its own canvas inside .rfb. scaleViewport OFF keeps the native
+   framebuffer resolution and object-fit:cover fills the frame with no bars. */
+#screen-pane .rfb{position:absolute;inset:0;pointer-events:none;background:#0a0a0b}
+#screen-pane .rfb canvas{position:static!important;inset:auto;margin:0!important;width:100%!important;height:100%!important;object-fit:cover!important}
+#screen-pane .sp-cap{position:absolute;left:5px;right:5px;bottom:5px;z-index:4;padding:26px 8px 8px 12px;border-radius:0 0 11px 11px;background:linear-gradient(transparent,rgba(0,0,0,.72));display:flex;align-items:center;gap:10px;color:#fff;pointer-events:none}
+#screen-pane .sp-cap .sp-ctl{display:flex;gap:2px;flex:none;pointer-events:auto;margin-left:auto}
+#screen-pane .sp-cap .sp-tb{height:26px;padding:0 9px;border-radius:8px;font-size:12px;font-weight:600;color:rgba(255,255,255,.82);background:none;border:0;cursor:pointer}
+#screen-pane .sp-cap .sp-tb:hover{background:rgba(255,255,255,.14);color:#fff}
+#screen-pane .sp-cap .sp-tb.bad{color:#ff8080}#screen-pane .sp-cap .sp-tb[disabled]{opacity:.4;pointer-events:none}
+#screen-pane .sp-what{font-size:12px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#screen-pane .sp-live{position:absolute;top:14px;left:14px;z-index:4;display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px 0 7px;border-radius:10px;background:rgba(0,0,0,.5);backdrop-filter:blur(8px);color:#fff;font-size:10px;font-weight:700;letter-spacing:.06em}
+#screen-pane .sp-live .sp-rec{width:5px;height:5px;border-radius:50%;background:var(--bad);animation:sprec 1.2s ease-in-out infinite}
+@keyframes sprec{50%{opacity:.35}}
+#screen-pane .sp-live.paused .sp-rec{background:rgba(255,255,255,.4);animation:none}

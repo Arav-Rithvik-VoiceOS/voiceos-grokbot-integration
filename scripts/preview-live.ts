@@ -8,13 +8,13 @@
  * folder next to this checkout, `../preview`). Each page is a mock VoiceOS host:
  * it sends voiceos:init, sizes the frame from voiceos:resize (clamped 60–420 like
  * the notch), and answers voiceos:invokeTool from in-page mock handlers for every
- * card tool — with the host's own gates (uiCallable, 64 requests per card, args
+ * card tool — with the host's own gates (uiCallable, 1000 requests per card, args
  * and result caps) so a card that would break in VoiceOS breaks here too. Every
  * call is logged on the page.
  *
  * The card HTML gets two preview-only additions: the card CSP meta, and a tiny
  * shim that forwards card errors to the log, can speed up the card's timers (to
- * reach the 30-refresh cap in seconds), can force document.visibilityState (to
+ * reach the 850-refresh cap quickly), can force document.visibilityState (to
  * test pause/resume), and lets the host page click/inspect inside the sandbox
  * (`card.click(sel)`, `card.inspect(sel)` in the console).
  */
@@ -269,6 +269,9 @@ const showOf = (open?: Parameters<typeof cards.showCard>[4], full?: string) => c
 const show = showOf();
 const voicePepper = showOf({ open: { bot: "pepper" }, message: "Keep this draft while the chat refreshes" }, "pepper");
 const voiceGroup = showOf({ open: { group: "g1" } }, "g1");
+// A "Pepper replied." notification's Open: the same card, marked from an hour ago (the last three replies are new).
+const reminderPepper = showOf({ open: { bot: "pepper", newSince: NOW - 60 * MIN } }, "pepper");
+const voiceGroupEdit = showOf({ open: { group: "g1", members: ["pepper", "friday", "jerome"], groupName: "Study crew" }, message: "Jerome joins us today" }, "g1");
 const voiceNewGroup = showOf({ open: { members: ["pepper", "jerome"], groupName: "" }, message: "Kick off the launch plan" });
 
 type Scenario = {
@@ -279,9 +282,15 @@ const scenarios: Scenario[] = [
   { slug: "voice-1to1", title: "Voice → Pepper's chat", theme: "dark", invoke: true, html: htmlOf(voicePepper), glance: cards.glanceChars(voicePepper), initArgs: {},
     blurb: "What \"Message Pepper…\" opens: the roster card, already on Pepper's chat pane (no slide), with the draft in the box. Every message type: text, images, files, requests, choices, a Messaged row, a notice, a deferred huge message.",
     hint: "Send: the message flies into Pepper's orb and shows at once. Back slides to the roster. Close + reopen: you come back to the same pane, draft and messages kept, and the voice draft does not return after a send." },
+  { slug: "reminder-open", title: "Notification Open → Pepper's chat", theme: "dark", invoke: true, html: htmlOf(reminderPepper), glance: cards.glanceChars(reminderPepper), initArgs: {},
+    blurb: "What Open on a \"Pepper replied.\" notification shows in the notch: Pepper's chat pane with a red New messages line above the replies the user has not seen.",
+    hint: "The line sits above the sign-in request (50 min ago). Back and reopen Pepper: the line is gone. Close + reopen the notch: the line is gone (the saved pane drops it)." },
   { slug: "voice-group", title: "Voice → group chat", theme: "dark", invoke: true, html: htmlOf(voiceGroup), glance: cards.glanceChars(voiceGroup), initArgs: {},
     blurb: "What \"Message the Homework crew…\" opens: the group's chat pane on the roster card.",
-    hint: "Groups get live refresh and older messages, but NO + button and NO Open computer button." },
+    hint: "Groups get live refresh and older messages, but NO + button and NO Open computer button. Tap the avatars to edit members; tap the name to rename. Edits save on the next send." },
+  { slug: "voice-group-edit", title: "Voice → edit a group", theme: "dark", invoke: true, html: htmlOf(voiceGroupEdit), glance: cards.glanceChars(voiceGroupEdit), initArgs: {},
+    blurb: "What \"Add Jerome to the Homework crew, drop Titus, rename it Study crew…\" opens: the group's chat pane with those edits pending.",
+    hint: "The header shows the new members and name, and the status line says they save on send. Send: the log shows one grokbot_card_send with group + members + groupName; the roster behind it updates." },
   { slug: "voice-new-group", title: "Voice → new group", theme: "dark", invoke: true, html: htmlOf(voiceNewGroup), glance: cards.glanceChars(voiceNewGroup), initArgs: {},
     blurb: "What \"Message Pepper and Jerome…\" opens when no such group exists: the new-group pane. Tap the avatars to pick bots, name it, and the first send creates the group.",
     hint: "After the first send the pane turns into the new group's live chat, and the roster behind it lists the group." },
@@ -302,8 +311,7 @@ const jsonForScript = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c")
 function warningsFor(s: Scenario): string[] {
   const w: string[] = [];
   if (!s.confirmation && !s.html.includes("LiveChat")) w.push("live-chat.js is not in this card yet (rerun inline-assets, or cards.ts does not inject it): refresh, older messages, media, requests and deferred loading will not run.");
-  if (!s.confirmation && s.slug !== "voice-group" && !s.html.includes("ComposerKit")) w.push("composer-kit.js is not in this card yet: no Attach files button.");
-  if (s.confirmation && /LiveChat|ComposerKit/.test(s.html)) w.push("The confirmation card carries live-chat/composer code. SPEC: confirmation cards get only MARKDOWN_CSS.");
+  if (s.confirmation && /LiveChat/.test(s.html)) w.push("The confirmation card carries live-chat code. SPEC: confirmation cards get only MARKDOWN_CSS.");
   if (s.glance !== undefined && s.glance > cards.MAX_GLANCE_CHARS) w.push(`Glance is ${s.glance.toLocaleString("en-US")} chars, over the ${cards.MAX_GLANCE_CHARS.toLocaleString("en-US")} cap: VoiceOS would drop this card.`);
   return w;
 }
@@ -348,7 +356,7 @@ const FX = JSON.parse(document.getElementById('fx').textContent);
 const $ = s => document.querySelector(s);
 const frame = $('#card'), logEl = $('#log'), countsEl = $('#counts'), metaEl = $('#meta');
 const UI_CALLABLE = new Set(FX.uiCallable);
-const CARD_REQUEST = new Set(['grokbot_card_snapshot', 'grokbot_card_entry', 'grokbot_card_image', 'grokbot_card_action', 'grokbot_card_files']);
+const CARD_REQUEST = new Set(['grokbot_card_snapshot', 'grokbot_card_entry', 'grokbot_card_image', 'grokbot_card_action']);
 const clone = v => JSON.parse(JSON.stringify(v));
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -356,7 +364,7 @@ const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(
 let t0 = performance.now(), gen = 0, loadedGen = 0, lastHeight = 0, S, edits = {};
 const waiters = [];
 
-const fresh = () => ({ targets: clone(FX.targets), live: 0, mine: 0, requests: 0, refreshes: 0, byTool: {}, inFlight: new Set(), jobs: {}, files: {}, sends: {}, entryCalls: {}, picks: 0 });
+const fresh = () => ({ targets: clone(FX.targets), live: 0, mine: 0, requests: 0, refreshes: 0, byTool: {}, inFlight: new Set(), entryCalls: {} });
 
 function log(kind, text, cls) {
   const line = document.createElement('span');
@@ -381,7 +389,7 @@ function settings() {
 }
 function renderCounts() {
   const cap = settings().cap;
-  countsEl.textContent = 'requests ' + S.requests + (cap ? ' / ' + cap : '') + '  ·  live refreshes ' + S.refreshes + ' / 30' +
+  countsEl.textContent = 'requests ' + S.requests + (cap ? ' / ' + cap : '') + '  ·  live refreshes ' + S.refreshes + ' / 850' +
     Object.keys(S.byTool).map(k => '  ·  ' + k.replace('grokbot_', '') + ' ' + S.byTool[k]).join('');
 }
 function renderMeta() {
@@ -438,7 +446,7 @@ async function invoke(m) {
   // SPEC checks: one call in flight per card, ≤30 live refreshes, none while hidden.
   if (S.inFlight.size) log('SPEC', (S.inFlight.size + 1) + ' calls in flight at once (the card bridge should send one at a time)', 'warn');
   S.inFlight.add(m.requestId);
-  if (refresh && S.refreshes > 30) log('SPEC', 'live refresh ' + S.refreshes + ' is over the 30-per-card cap', 'bad');
+  if (refresh && S.refreshes > 850) log('SPEC', 'live refresh ' + S.refreshes + ' is over the 850-per-card cap', 'bad');
   if (refresh && cardVisibility() !== 'visible') log('SPEC', 'live refresh while the card is hidden', 'bad');
   if (!/^[a-zA-Z0-9_-]+$/.test(String(m.requestId || ''))) log('HOST', 'invalid requestId ' + short(m.requestId) + ': VoiceOS rejects it', 'bad');
   if (!st.invoke) { log('HOST', 'invokeTool while capabilities.invokeTool is false: the card must not call tools', 'bad'); return reply({ status: 'failed', error: 'Tool actions are unavailable in this card.' }); }
@@ -511,32 +519,6 @@ function answerOf(w, values, custom) {
   if (!answer) throw new Error('Choose an answer first.');
   return answer;
 }
-const kindOf = n => /\.(png|jpe?g|gif|webp|heic)$/i.test(n) ? 'image' : /\.(mp4|mov|webm)$/i.test(n) ? 'video' : /\.(mp3|wav|m4a)$/i.test(n) ? 'audio' : 'file';
-const PICKS = [[['board-deck-v3.key', 4812345], ['revenue.csv', 18204]], [['whiteboard.heic', 2345678], ['notes.md', 912]]];
-function job(bot, kind, ms) { const j = { id: uid(), bot, kind, state: 'working', readyAt: Date.now() + ms }; S.jobs[j.id] = j; return j; }
-function advance(j) {
-  if (j.state !== 'working' || Date.now() < j.readyAt) return;
-  if (j.kind === 'pick') {
-    if ($('#pickCancel').checked) { j.state = 'cancelled'; return; }
-    const pick = PICKS[S.picks++ % PICKS.length];
-    if (Object.values(S.files).filter(f => f.bot === j.bot).length + pick.length > 20) { j.state = 'failed'; j.message = 'Attach up to 20 files at a time.'; return; }
-    pick.forEach(p => { const id = uid(); S.files[id] = { id, bot: j.bot, name: p[0], size: p[1], locked: false }; });
-    j.state = 'complete';
-    return;
-  }
-  const files = j.files.map(id => S.files[id]).filter(Boolean), outcome = $('#filesOutcome').value;
-  files.forEach(f => { f.locked = false; });
-  if (outcome === 'failed') { j.state = 'failed'; j.message = 'The files could not be sent. Your draft and attachments are preserved.'; return; }
-  if (outcome === 'unknown') { j.state = 'unknown'; j.message = 'Delivery is unconfirmed. Check the conversation before sending again.'; return; }
-  files.forEach(f => { delete S.files[f.id]; });
-  if (S.targets[j.bot]) mine(S.targets[j.bot], j.text, files.map((f, i) => ({ kind: kindOf(f.name), name: f.name, index: i })));
-  j.state = 'complete';
-}
-function snap(bot, j) {
-  const out = { ok: true, attachments: Object.values(S.files).filter(f => f.bot === bot).map(f => ({ id: f.id, name: f.name, size: f.size, sending: !!f.locked })) };
-  if (j) out.job = { id: j.id, kind: j.kind, state: j.state, message: j.message };
-  return out;
-}
 
 const HANDLERS = {
   grokbot_card_snapshot(a) {
@@ -586,45 +568,6 @@ const HANDLERS = {
     item.state = 'resolved';
     return { ok: true, state: 'resolved' };
   },
-  grokbot_card_files(a) {
-    if (!FX.bots.concat(FX.groups).some(b => b.id === a.bot)) throw new Error('This bot is no longer available.');
-    Object.values(S.jobs).forEach(advance);
-    if (a.action === 'status') {
-      const j = a.jobId ? S.jobs[a.jobId] : Object.values(S.jobs).reverse().find(x => x.bot === a.bot && x.state === 'working');
-      if (a.jobId && (!j || j.bot !== a.bot)) throw new Error('This attachment session has expired.');
-      return snap(a.bot, j);
-    }
-    if (a.action === 'remove') {
-      const f = S.files[a.attachmentId || ''];
-      if (!f || f.bot !== a.bot) throw new Error('This attachment is no longer available.');
-      if (f.locked) throw new Error('Wait for the current send to finish.');
-      delete S.files[f.id];
-      return snap(a.bot);
-    }
-    if (a.action === 'pick') {
-      const active = Object.values(S.jobs).find(x => x.kind === 'pick' && x.state === 'working');
-      if (active) { if (active.bot !== a.bot) throw new Error('Finish the open file picker first.'); return snap(a.bot, active); }
-      log('mock', 'the native macOS file picker opens here (the preview picks 2 files in 1.5 s)', 'dim');
-      return snap(a.bot, job(a.bot, 'pick', 1500));
-    }
-    if (a.action !== 'send') throw new Error('Unknown action.');
-    const ids = Array.from(new Set(a.attachments || [])), message = (a.message || '').trim(), nonce = a.clientNonce;
-    if (!nonce || !/^[a-zA-Z0-9_-]{8,128}$/.test(nonce)) throw new Error('Reopen the composer before sending.');
-    if (!ids.length || ids.length > 20) throw new Error('Choose files to attach first.');
-    const fp = JSON.stringify([a.bot, ids, message]), existing = S.jobs[S.sends[nonce] || ''];
-    if (existing) {
-      if (existing.fp !== fp) throw new Error('This send belongs to a different draft.');
-      log('mock', 'same clientNonce and draft: the existing job, no second send', 'dim');
-      return snap(a.bot, existing);
-    }
-    const files = ids.map(id => S.files[id]);
-    if (files.some(f => !f || f.bot !== a.bot || f.locked)) throw new Error('An attachment is unavailable or already sending.');
-    files.forEach(f => { f.locked = true; });
-    const j = job(a.bot, 'send', 2500);
-    j.fp = fp; j.files = ids; j.text = message;
-    S.sends[nonce] = j.id;
-    return snap(a.bot, j);
-  },
   grokbot_open_computer_window(a) {
     const b = botNamed(a.bot);
     if (!b) throw new Error('No bot named ' + a.bot + '.');
@@ -650,6 +593,16 @@ const HANDLERS = {
     const b = botNamed(ref) || FX.groups.find(x => x.id === ref || x.name.toLowerCase() === r);
     if (!b) throw new Error('No bot named ' + ref + '.');
     if (S.targets[b.id]) mine(S.targets[b.id], message);
+    if (a.group !== undefined && (a.members !== undefined || a.groupName !== undefined)) {
+      // An existing group's edits save before the send, like setGroupMembers + renameGroup.
+      const members = Array.isArray(a.members) ? a.members : a.members !== undefined ? String(a.members).split(',').filter(Boolean) : b.members;
+      if (!members.length) throw new Error('Keep at least one bot in the group.');
+      const name = String(a.groupName || '').trim() || b.name;
+      b.members = members; b.name = name;
+      if (S.targets[b.id]) Object.assign(S.targets[b.id], { members, name });
+      log('mock', 'saved group ' + name + ' (' + members.join(', ') + ')', 'dim');
+      return { sent: true, group: b.id, groupName: name, members, created: false };
+    }
     return { sent: true };
   },
 };
@@ -712,16 +665,14 @@ ${warnings.map((w) => `<div class="warn-box">${escHtml(w)}</div>`).join("\n")}
     <label><input type="checkbox" id="invoke"> capabilities.invokeTool</label>
     <label><input type="checkbox" id="twostep"> Real-host double init (false, then true)</label>
     <label>Init data <select id="initData">${opt([["empty", "{} (like VoiceOS)"], ["omit", "omitted"]])}</select></label>
-    <label>Timer speed <select id="speed">${opt([["1", "1× (real)"], ["10", "10×"], ["40", "40× (30 refreshes ≈ 11 s)"]])}</select></label>
-    <label>Host request cap <select id="cap">${opt([["64", "64 per card (VoiceOS)"], ["0", "off"]])}</select></label>
+    <label>Timer speed <select id="speed">${opt([["1", "1× (real)"], ["10", "10×"], ["40", "40× (850 refreshes ≈ 43 s)"]])}</select></label>
+    <label>Host request cap <select id="cap">${opt([["1000", "1000 per card (VoiceOS 0.2.42)"], ["64", "64 per card (VoiceOS 0.2.41)"], ["0", "off"]])}</select></label>
     <label>Card visibility <select id="visibility">${opt([["real", "this tab's"], ["visible", "force visible"], ["hidden", "force hidden"]])}</select></label>
     <h2>Next reply</h2>
     <label>Next tool call <select id="next">${opt([["normal", "normal"], ["okfalse", "server error (ok:false)"], ["failed", "status failed"], ["unknown", "status unknown"], ["cancelled", "status cancelled"], ["silent", "no reply (timeout)"]])}</select></label>
     <label><input type="checkbox" id="slow"> Slow replies (3 s)</label>
     <h2>Mock server</h2>
     <label>Huge message <select id="entryMode">${opt([["normal", "loads normally"], ["once", "edited once while loading"], ["always", "keeps changing"]])}</select></label>
-    <label>File send <select id="filesOutcome">${opt([["complete", "completes"], ["failed", "fails"], ["unknown", "unconfirmed"]])}</select></label>
-    <label><input type="checkbox" id="pickCancel"> File picker cancelled</label>
     <label><input type="checkbox" id="computerOff"> Bot computer is off</label>
     <div class="btns"><button class="h" id="reload" type="button">Reload card (resets mocks)</button><button class="h" id="reopen" type="button">Close + reopen notch (keeps server)</button><button class="h" id="clear" type="button">Clear log</button>${s.confirmation ? `<button class="h primary" id="approve" type="button">Approve (host button)</button>` : ""}</div>
   </div>
@@ -741,7 +692,7 @@ function indexPage(): string {
     return `<a class="tile" href="${s.slug}.html"><b>${escHtml(s.title)}</b><span>${escHtml(s.blurb)}</span>${w.length ? `<em>${w.length} warning${w.length > 1 ? "s" : ""}</em>` : ""}</a>`;
   }).join("\n");
   const checks: [string, string][] = [
-    ["Live refresh", "A new message every 15 s while visible; the header status changes. After 30 refreshes: “Live updates paused…”."],
+    ["Live refresh", "A new message every 2 s while visible; the header status changes. After 850 refreshes (~28 min in view): “Live updates paused…”."],
     ["Older messages", "“Earlier messages” at the top loads 3 older pages, keeps the scroll position, then hides."],
     ["Drafts", "Typed text survives every refresh; in the roster card it survives Back and reopen."],
     ["Formatted text", "Table scrolls sideways, code has colors, math renders, one-line text looks like before."],
@@ -749,7 +700,6 @@ function indexPage(): string {
     ["Requests", "Sign in to Gmail has “Open in Grok Bot”; the connector and resolved/expired approvals do not. Choices answer, multi-select sends, Dismiss works."],
     ["Deferred message", "The appendix preview loads in full when visible (ends with END OF COMPLETE MESSAGE)."],
     ["Open computer", "Header button on 1:1 only; with “Bot computer is off” the card shows the message."],
-    ["Composer + button", "+ opens the file picker (1:1 only). Chips, ×, send with files."],
   ];
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
