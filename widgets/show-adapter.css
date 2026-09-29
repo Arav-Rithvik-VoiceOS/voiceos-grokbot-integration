@@ -24,3 +24,6 @@
 .gb-mrow[aria-pressed=true] .gb-check{background:var(--accent);color:#000}
 .gb-empty{text-align:center;padding:10px 20px}
 @media (prefers-reduced-motion:reduce){.gb-fly,.gb-wave{display:none}}
+/* The notch caps a result card at 360 px when it has text above it (a reply notification's card does), and
+   show.html's 268 px chat made the pane 381 px: the frame cut it and scrolled. 244 px keeps every pane under 360. */
+#chat .msgs{max-height:244px!important}

@@ -1,0 +1,3 @@
+[test]
+# archive/ holds retired tests whose imports no longer resolve.
+pathIgnorePatterns = ["archive/**", ".claude/**", "node_modules/**"]

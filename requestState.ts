@@ -119,7 +119,9 @@ const titles: Record<string, string> = {
   "bot-template-share": "Shared bot",
 };
 // Connection prompts can remain in history after the account is connected. They
-// are navigation cards, not evidence that the bot is currently blocked.
+// are navigation cards, not evidence that the bot is currently blocked, so they
+// never raise attention. A pending one still shows "Open in Grok Bot" in the
+// card (CONNECT in widgets/live-chat.js): accounts connect only in Grok Bot.
 const passive = new Set([
   "connector",
   "connectors",
@@ -130,6 +132,16 @@ const passive = new Set([
   "slack-connect",
   "cursor-agent",
   "bot-template-share",
+]);
+/** Connection prompts: the user connects the account in the Grok Bot app. */
+export const CONNECT_TYPES = new Set([
+  "connector",
+  "connectors",
+  "listener-connect",
+  "scm-connect",
+  "onepassword-connect",
+  "team-access",
+  "slack-connect",
 ]);
 const redact = (text: string) =>
   text

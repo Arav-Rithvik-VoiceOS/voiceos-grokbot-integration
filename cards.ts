@@ -21,7 +21,7 @@ import type { Agent, TranscriptEntry } from "./client.ts";
 // it automatically. The mark is a data: URI because the card sandbox blocks the
 // network; it is a 32px copy (the mark draws at 16px), embedded once per card.
 import {
-  WIDGETS, MARK_DATA_URI,
+  WIDGETS, MARK_DATA_URI, KEYCHAIN_POPUP_DATA_URI,
   LIVE_CHAT_JS, LIVE_CHAT_CSS, MARKDOWN_CSS, SHOW_ADAPTER, SHOW_CSS,
   SCREEN_PANE_JS, SCREEN_PANE_CSS,
 } from "./assets.generated.ts";
@@ -149,15 +149,55 @@ const SHAPE_FALLBACK: Record<string, GrokShape> = {
   crystal: "hex", shield: "squircle", dome: "cloud", arch: "tablet", leaf: "teardrop",
 };
 
-const colorHex = (c?: string): string => {
-  if (!c) return GROK_COLOR_HEX.orange;
-  if (c.startsWith("#")) return c;
-  return GROK_COLOR_HEX[c.toLowerCase() as GrokColor] ?? GROK_COLOR_HEX.orange;
+// Grok stores avatarShape/avatarColor as null until the user picks one; its UI
+// derives a stable default from the bot's id on every render (a fixed orb/orange
+// here made an untouched or half-edited bot look wrong). These port Grok Bot's
+// own derivation verbatim from its bundle (index.eager-platform): a 32-bit FNV-1a
+// of the id, then `pv()` for shape and `fv() = B1[A3()]` for color. Keyed by the
+// bot id so our default matches the app pixel for pixel.
+const fnv1a32 = (s: string): number => {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
 };
-const shapeKind = (s?: string): GrokShape => {
-  const id = (s ?? "").toLowerCase();
-  if ((GROK_SHAPE_IDS as readonly string[]).includes(id)) return id as GrokShape;
-  return SHAPE_FALLBACK[id] ?? "blob";
+// Grok's B1: the palette minus `black`, in the app's own order. The order IS the
+// index space of the color hash, so it must stay exactly as the bundle lists it —
+// this is deliberately not GROK_COLOR_IDS (a different order).
+const DEFAULT_COLOR_ORDER: GrokColor[] = ["brown", "red", "orange", "yellow", "green", "cyan", "blue", "violet", "magenta", "gray"];
+// pv(id): mix the FNV hash, index into the 8 pickable shapes (== Grok's `bu`).
+const defaultShapeId = (id: string): GrokShape => {
+  let t = fnv1a32(id) | 0;
+  t = Math.imul(t ^ (t >>> 16), 73244475);
+  t = Math.imul(t ^ (t >>> 13), 3266489909);
+  const h = (t ^ (t >>> 16)) >>> 0;
+  return GROK_SHAPE_IDS[h % GROK_SHAPE_IDS.length];
+};
+// fv(id) = B1[A3(T3(id))]: reseed a mulberry32 step from the hash, take one draw.
+const defaultColorId = (id: string): GrokColor => {
+  const k = Math.imul(1, 2654435769); // Grok's S3 = M3 = 1
+  const t3 = (fnv1a32(id) ^ k) >>> 0; // T3
+  let seed = (t3 ^ k) >>> 0; // E3 reseed
+  seed = (seed + 1831565813) | 0; // one P3 step
+  let n = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  n = (n + Math.imul(n ^ (n >>> 7), 61 | n)) ^ n;
+  const rnd = ((n ^ (n >>> 14)) >>> 0) / 4294967296;
+  return DEFAULT_COLOR_ORDER[Math.floor(rnd * DEFAULT_COLOR_ORDER.length)];
+};
+
+const colorHex = (c: string | null | undefined, id: string): string => {
+  const key = (c ?? "").toLowerCase();
+  if (key.startsWith("#")) return c as string; // legacy design hex passthrough
+  if (key in GROK_COLOR_HEX) return GROK_COLOR_HEX[key as GrokColor];
+  return GROK_COLOR_HEX[defaultColorId(id)]; // null/unknown → Grok's id-derived default
+};
+const shapeKind = (s: string | null | undefined, id: string): GrokShape => {
+  const key = (s ?? "").toLowerCase();
+  if ((GROK_SHAPE_IDS as readonly string[]).includes(key)) return key as GrokShape;
+  if (SHAPE_FALLBACK[key]) return SHAPE_FALLBACK[key]; // extended template shape → nearest pickable
+  return defaultShapeId(id); // null/unknown → Grok's id-derived default
 };
 
 // ── Tolerant input → Grok id (what the create tool sends to the gateway) ─────
@@ -238,8 +278,8 @@ export function toBot(a: Agent) {
     id: a.id,
     name: a.name,
     label: a.title ?? "",
-    color: colorHex(a.avatarColor),
-    shape: shapeKind(a.avatarShape),
+    color: colorHex(a.avatarColor, a.id),
+    shape: shapeKind(a.avatarShape, a.id),
     status: statusOf(a),
     task: preview(a.lastMessagePreview),
     time: relTime(a.lastActivityAt),
@@ -369,11 +409,11 @@ export function showCard(
   me?: string,
   threads: Record<string, CardItem[]> = {},
   nextBeforeSeqs: Record<string, number | undefined> = {},
-  open?: { open: ShowOpen; message?: string },
+  open?: { open: ShowOpen; message?: string; sent?: boolean },
 ) {
   const bots = agents.filter((a) => !a.isGroup).map(toBot);
   const groups = agents.filter((a) => a.isGroup).map(toGroup);
-  const args = open ? { open: open.open, ...(open.message ? { message: open.message } : {}) } : {};
+  const args = open ? { open: open.open, ...(open.message ? { message: open.message, ...(open.sent ? { sent: true } : {}) } : {}) } : {};
   const focus = open ? ("bot" in open.open ? open.open.bot : "group" in open.open ? open.open.group : undefined) : undefined;
   const card = (ids: string[], perThread: number, focusThread = perThread) => {
     const baked = Object.fromEntries(ids.map((id) => [id, withTime(boundThread(threads[id], id === focus ? focusThread : perThread))]));
@@ -404,15 +444,17 @@ export function showCard(
  * card then shows the step as not done rather than guessing). */
 export type SetupState = { app?: boolean; signedIn?: boolean; bots?: number; notifications?: boolean };
 
-/** guide.html — the two-page "how do I use this" card: setup steps checked
- * against this Mac, then things to say. `bots` (up to 3) voice the examples
- * with the user's own bot names; `page` 1 opens straight on the ideas page. */
-export function guideCard(setup: SetupState, bots: Agent[] = [], page: 0 | 1 = 0) {
+/** guide.html — the three-page "how do I use this" card: setup steps checked
+ * against this Mac, the one Keychain popup this integration causes (a
+ * mock-up, since we can't detect the real one), then things to say. `bots`
+ * (up to 3) voice the examples with the user's own bot names; `page` opens
+ * straight on the Keychain page (1) or the ideas page (2). */
+export function guideCard(setup: SetupState, bots: Agent[] = [], page: 0 | 1 | 2 = 0) {
   const cast = bots.filter((a) => !a.isGroup).slice(0, 3).map((a) => {
     const b = toBot(a);
     return { name: b.name, color: b.color, shape: b.shape };
   });
-  return glance("guide", { data: { setup, bots: cast }, args: { page } }, 410, "Grok Bot");
+  return glance("guide", { data: { setup, bots: cast, kcImg: KEYCHAIN_POPUP_DATA_URI }, args: { page } }, 410, "Grok Bot");
 }
 
 /** connect.html — first-run / needs-sign-in status. */

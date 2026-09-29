@@ -15,7 +15,7 @@
  * PLAN.md for the design.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { execFileSync, execFile } from "node:child_process";
+import { execFile } from "node:child_process";
 import { pbkdf2Sync, createDecipheriv } from "node:crypto";
 import {
   openComputerWindow as launchComputerWindow,
@@ -367,7 +367,7 @@ export async function gateway<T = unknown>(
   } catch (error) {
     // bun's fetch is TLS-fingerprint-blocked by some edges; curl isn't. Fall
     // back before giving up. (Same trick the Template's getJson uses.)
-    const curled = curlPost(creds, command, body, timeoutMs);
+    const curled = await curlPost(creds, command, body, timeoutMs);
     if (curled) {
       status = curled.status;
       text = curled.text;
@@ -398,15 +398,17 @@ export async function gateway<T = unknown>(
   }
 }
 
-/** curl fallback for gateway() — returns null when curl itself fails. */
+/** curl fallback for gateway() — resolves null when curl itself fails.
+ * Async on purpose: a sync curl froze the whole server for up to timeoutMs,
+ * so parallel reads (one per bot on the roster) ran their curls one by one. */
 function curlPost(
   creds: GatewayCreds,
   command: string,
   body: Record<string, unknown>,
   timeoutMs: number,
-): { status: number; text: string } | null {
-  try {
-    const out = execFileSync(
+): Promise<{ status: number; text: string } | null> {
+  return new Promise((resolve) => {
+    execFile(
       "/usr/bin/curl",
       [
         "-sS", "--max-time", String(Math.max(1, Math.round(timeoutMs / 1000))),
@@ -419,13 +421,16 @@ function curlPost(
         `${creds.baseUrl}/api/${command}`,
       ],
       { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
+      (error, out) => {
+        if (error) {
+          log(`curl fallback for ${command} failed:`, error);
+          return resolve(null);
+        }
+        const nl = out.lastIndexOf("\n");
+        resolve({ status: Number(out.slice(nl + 1).trim()) || 0, text: out.slice(0, nl) });
+      },
     );
-    const nl = out.lastIndexOf("\n");
-    return { status: Number(out.slice(nl + 1).trim()) || 0, text: out.slice(0, nl) };
-  } catch (error) {
-    log(`curl fallback for ${command} failed:`, error);
-    return null;
-  }
+  });
 }
 
 function classifyStatus(status: number, text: string): IntegrationError {
@@ -478,6 +483,8 @@ export interface Agent {
   unreadCount?: number;
   lastMessagePreview?: string;
   lastActivityAt?: number;
+  /** The per-bot "Notify on updates" switch in the Grok Bot app (on by default). */
+  notifyOnUpdatesEnabled?: boolean;
 }
 
 export interface TranscriptEntry {
@@ -575,6 +582,10 @@ export const createGroup = async (name: string, memberAgentIds: string[], descri
 // Gateway contracts verified against Grok Bot's shipped RPC schema.
 export const setGroupMembers = (id: string, memberAgentIds: string[]) =>
   gateway("setGroupMembers", { id, memberAgentIds }, { timeoutMs: WRITE_TIMEOUT_MS });
+
+/** Flip a bot's "Notify on updates" switch — the same one the Grok Bot app shows. */
+export const setAgentNotifyOnUpdates = (id: string, isEnabled: boolean) =>
+  gateway("setAgentNotifyOnUpdates", { id, isEnabled }, { timeoutMs: WRITE_TIMEOUT_MS });
 
 export const renameGroup = (group: Agent, name: string) =>
   gateway("updateAgent", {

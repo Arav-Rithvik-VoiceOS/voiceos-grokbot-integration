@@ -22,6 +22,7 @@ import {
   hasGrokBotApp,
   createGroup,
   setGroupMembers,
+  setAgentNotifyOnUpdates,
   renameGroup,
   type AutomationRun,
   entryText,
@@ -42,7 +43,7 @@ import { recordCardPoll, cardCovers } from "./cardWatch.ts";
 import { RFB_B64 } from "./assets.generated.ts";
 import { connectCard, guideCard, showCard, type ShowOpen, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
-import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
+import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 import { conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
 import { needsAttention, toCardThread, type CardItem } from "./conversation.ts";
 import { IntentRoster, registerIntentSupport } from "./intents.ts";
@@ -74,11 +75,18 @@ const ReminderResult = z.object({ notificationId: z.string().min(1) });
 
 /**
  * The "Show notifications from bots" setup toggle (manifest preference
- * SHOW_BOT_NOTIFICATIONS, default off). VoiceOS injects preferences as env vars;
+ * SHOW_BOT_NOTIFICATIONS, default on). VoiceOS injects preferences as env vars;
  * a boolean arrives as a string, and an unset var (older install) means off.
  */
 const notificationsEnabled = (): boolean =>
   /^(true|1|yes|on)$/i.test((process.env.SHOW_BOT_NOTIFICATIONS ?? "").trim());
+
+/**
+ * A bot's own "Notify on updates" switch in the Grok Bot app. Both switches must
+ * be on to ping: the VoiceOS toggle above and this per-bot one. Unset (an older
+ * app, or a roster miss) means on, the app's own default.
+ */
+const botNotifies = (bot: Agent | undefined): boolean => bot?.notifyOnUpdatesEnabled !== false;
 
 /** A reminder button: `id` must match a key in REMINDER_ACTIONS below. */
 type ReminderButton = { id: string; label: string };
@@ -130,26 +138,42 @@ const REPLY_BUTTONS: ReminderButton[] = [
   { id: "close", label: "Close" },
 ];
 
-/** What a button may hand back: a card for the notch, and its fallback text. */
+/** What a button may hand back: a card for the notch (and optional fallback
+ * text, which we leave out: the host would draw it above the card). */
 type ReminderReply = { view: { blocks: unknown[] }; responseText?: string } | void;
 
+/** The notch card for one bot's conversation (the roster card on its chat
+ * pane), with a "New messages" line above replies newer than `newSince`. */
+async function reminderView(botId: string, newSince?: number) {
+  const agents = await listAgents();
+  const bot = agents.find((a) => a.id === botId);
+  if (!bot) throw new Error("This bot no longer exists in Grok Bot.");
+  // Best-effort, like grokbot_show: the pane's live refresh fills in a missed read.
+  let tail: Awaited<ReturnType<typeof transcriptTail>> = {};
+  try { tail = await transcriptTail(bot.id, 30); }
+  catch (error) { log("reminder view transcript read failed:", error); }
+  const since = typeof newSince === "number" && Number.isFinite(newSince) ? { newSince } : {};
+  return (await conversationCard(agents, { ...openOf(bot), ...since }, tail))._voiceos_glance;
+}
+
+// Built when the pill fires, so Open answers at once: the host shows "Running…"
+// on the button for as long as the handler takes. One per bot (the newest
+// pill); the card's live refresh brings it up to date as it opens.
+const READY_VIEWS = new Map<string, { newSince: number; view: Awaited<ReturnType<typeof reminderView>> }>();
+async function prepareReminderView(botId: string, newSince: number): Promise<void> {
+  try { READY_VIEWS.set(botId, { newSince, view: await reminderView(botId, newSince) }); }
+  catch (error) { log("reminder view prebuild failed:", error); } // Open builds it then
+}
+
 const REMINDER_ACTIONS: Record<string, (data: Record<string, unknown> | undefined) => Promise<ReminderReply>> = {
-  // Open this bot's conversation in the notch: the roster card on its chat pane,
-  // with a "New messages" line above the replies the user has not seen
-  // (`newSince`: the watch's boundary, epoch ms).
+  // Open this bot's conversation in the notch (`newSince`: the watch's boundary, epoch ms).
   async open_chat(data) {
     const botId = typeof data?.botId === "string" ? data.botId : "";
     if (!botId) throw new Error("This notification does not name a bot.");
-    const agents = await listAgents();
-    const bot = agents.find((a) => a.id === botId);
-    if (!bot) throw new Error("This bot no longer exists in Grok Bot.");
-    // Best-effort, like grokbot_show: the pane's live refresh fills in a missed read.
-    let tail: Awaited<ReturnType<typeof transcriptTail>> = {};
-    try { tail = await transcriptTail(bot.id, 30); }
-    catch (error) { log("reminder open_chat transcript read failed:", error); }
-    const since = typeof data?.newSince === "number" && Number.isFinite(data.newSince) ? { newSince: data.newSince } : {};
-    const card = await conversationCard(agents, { ...openOf(bot), ...since }, tail);
-    return { view: card._voiceos_glance, responseText: `${bot.name}'s conversation.` };
+    const newSince = typeof data?.newSince === "number" ? data.newSince : undefined;
+    const ready = READY_VIEWS.get(botId);
+    if (ready && ready.newSince === newSince) return { view: ready.view };
+    return { view: await reminderView(botId, newSince) };
   },
   // Nothing to do: answering ok is what makes the host dismiss the card.
   async close() {},
@@ -196,7 +220,7 @@ const summarize = (text: string, max = 140): string => {
  * the thread back and stop: we only ping chats started through VoiceOS.
  */
 function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, ourText: string): void {
-  if (!notificationsEnabled()) return; // nothing to ping, so don't poll
+  if (!notificationsEnabled() || !botNotifies(bot)) return; // nothing to ping, so don't poll
   void (async () => {
     const known = new Set(seen);
     const t0 = Date.now();
@@ -215,6 +239,8 @@ function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, o
         }
         const busy = isBusy(me);
         if (busy) sawActivity = true;
+        // The user muted this bot in the Grok Bot app (or by voice) mid-watch.
+        if (me && !botNotifies(me)) return;
 
         // New messages since we last looked.
         let entries: Awaited<ReturnType<typeof transcriptTail>>["entries"];
@@ -259,6 +285,7 @@ function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, o
           // Open draws "New messages" above the first reply newer than this.
           const times = replies.map((e) => e.timestampMs).filter((t): t is number => typeof t === "number");
           const newSince = times.length ? Math.min(...times) - 1 : t0;
+          await prepareReminderView(bot.id, newSince);
           await triggerReminder(`${bot.name} replied.`, {
             speak: false,
             actions: REPLY_BUTTONS,
@@ -336,10 +363,15 @@ function startAutomationWatch(): void {
       try {
         const enabled = (await listAllAutomations()).filter((e) => e.automation?.isEnabled);
 
-        // agentId → name for the pill label (best-effort).
+        // agentId → name for the pill label, and the bots muted in the Grok Bot
+        // app (best-effort: a roster miss pings, the app's default).
         const nameById = new Map<string, string>();
+        const muted = new Set<string>();
         try {
-          for (const a of await listAgents()) nameById.set(a.id, a.name);
+          for (const a of await listAgents()) {
+            nameById.set(a.id, a.name);
+            if (!botNotifies(a)) muted.add(a.id);
+          }
         } catch {
           /* names are a nicety */
         }
@@ -349,6 +381,7 @@ function startAutomationWatch(): void {
             if (!run.finishedAt || pinged.has(run.id)) continue;
             pinged.add(run.id);
             if (!baselined) continue; // finished before we started → don't ping history
+            if (muted.has(e.agentId)) continue;
             const bot = nameById.get(e.agentId) ?? "A bot";
             const text = await automationResultText(e.agentId, run);
             const body = text
@@ -434,13 +467,21 @@ function statusWord(a: Agent): string {
 /** One short transcript page per bot and group, for the roster card's chat
  * panes (showCard drops them if they would push the card over the glance cap).
  * On older gateways that omit the authoritative awaitingUserResponse flag, the
- * same page infers it from a pending request or question. */
+ * same page infers it from a pending request or question.
+ * The pages are a preload, so they get ROSTER_PRELOAD_MS: a bot whose read is
+ * slower is left out, and its pane fills from the live chat when opened. Before
+ * the budget, one hanging read held the card back for its whole timeout plus
+ * the curl retry (16 s), and a voice send's card took up to half a minute. */
+const ROSTER_PRELOAD_MS = 1_500;
 async function rosterThreads(agents: Agent[], skip?: string) {
   const recent: Record<string, CardItem[]> = {};
   const cursors: Record<string, number | undefined> = {};
-  await Promise.all(agents.filter((b) => b.id !== skip).map(async (b) => {
+  let late = false;
+  const reads = Promise.all(agents.filter((b) => b.id !== skip).map(async (b) => {
     try {
       const tail = await transcriptTail(b.id, 6);
+      // Past the budget the card is already built; do not touch it.
+      if (late) return;
       const thread = toCardThread(tail.entries ?? []);
       if (b.awaitingUserResponse === undefined && needsAttention(thread)) b.awaitingUserResponse = true;
       recent[b.id] = thread;
@@ -449,19 +490,24 @@ async function rosterThreads(agents: Agent[], skip?: string) {
       // One unreachable transcript must not hide the entire roster.
     }
   }));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([reads, new Promise<void>((r) => { timer = setTimeout(r, ROSTER_PRELOAD_MS); })]);
+  clearTimeout(timer);
+  late = true;
   return { recent, cursors };
 }
 
 /** The roster card opened on one conversation — the same card "Show my bots"
  * shows, so voice and taps land on one surface with one back button. `tail` is
- * the opened conversation's longer page; `message` is its draft in the box.
+ * the opened conversation's longer page; `message` is its draft in the box, or
+ * with `sent` the message voice already sent, which flies into the orb on open.
  * A new group (`members`) has no conversation yet: the card opens its
  * new-group pane, and the first send creates it. */
-async function conversationCard(agents: Agent[], open: ShowOpen, tail: { entries?: TranscriptEntry[]; nextBeforeSeq?: number } = {}, message = "") {
+async function conversationCard(agents: Agent[], open: ShowOpen, tail: { entries?: TranscriptEntry[]; nextBeforeSeq?: number } = {}, message = "", sent = false) {
   const focus = "bot" in open ? open.bot : "group" in open ? open.group : undefined;
   const { recent, cursors } = await rosterThreads(agents, focus);
   if (focus) { recent[focus] = toCardThread(tail.entries ?? []); cursors[focus] = tail.nextBeforeSeq; }
-  return showCard(agents, undefined, recent, cursors, { open, message });
+  return showCard(agents, undefined, recent, cursors, { open, message, sent });
 }
 const openOf = (bot: Agent): ShowOpen => (bot.isGroup ? { group: bot.id } : { bot: bot.id });
 
@@ -533,6 +579,7 @@ const HELP_PHRASES = [
   "What did <bot> find?",
   "Start a group with <bot> and <bot>",
   "Create a bot named <name> that <does something>",
+  "Turn off <bot>'s notifications",
 ];
 const HELP_ROSTER_MS = 2_500;
 
@@ -544,13 +591,15 @@ server.registerTool(
       "Show how to set up and use Grok Bot: a card with the setup steps (checked on this Mac), then things the user can say. Use when the user asks how to use or set up Grok Bot, what Grok Bot can do, or for help with this integration.",
     inputSchema: {
       page: z
-        .enum(["setup", "ideas"])
+        .enum(["setup", "keychain", "ideas"])
         .optional()
-        .describe("'ideas' when the user asks only what they can do or say with Grok Bot; omit to start on setup."),
+        .describe(
+          "'ideas' when the user asks only what they can do or say with Grok Bot; 'keychain' when they ask about a Keychain / password popup from Grok Bot or macOS; omit to start on setup.",
+        ),
     },
     annotations: { readOnlyHint: true },
   },
-  async (args: { page?: "setup" | "ideas" }) =>
+  async (args: { page?: "setup" | "keychain" | "ideas" }) =>
     handle("grokbot_help", async () => {
       const signedIn = hasGatewaySession();
       let agents: Agent[] = [];
@@ -581,7 +630,7 @@ server.registerTool(
           thingsToSay: HELP_PHRASES,
           message: next ? `Next step: ${next.step}` : "Grok Bot is set up. The card shows things to say.",
         },
-        guideCard(setup, agents, args.page === "ideas" ? 1 : 0),
+        guideCard(setup, agents, args.page === "ideas" ? 2 : args.page === "keychain" ? 1 : 0),
       );
     }),
 );
@@ -722,24 +771,26 @@ async function performSend(botRef: string, rawMessage: string | undefined) {
     return result({ sent: true, group: bot.id, groupName: bot.name, sentMessage: message, message: `Sent your message to ${bot.name}.` });
   }
 
-  // Baseline the transcript BEFORE sending, so we can spot the reply.
-  const base = await transcriptTail(bot.id, 12);
-  const seen = new Set((base.entries ?? []).map((e) => e.id));
+  await sendToBot(bot, message);
+  return result({ sent: true, bot: bot.name, sentMessage: message, message: `Sent your message to ${bot.name}.` });
+}
 
+/** Send once to one bot and start the reply watch. `base` is a transcript
+ * page read BEFORE this send (the reply watch skips what it already had). */
+async function sendToBot(bot: Agent, message: string, base?: { entries?: TranscriptEntry[] }) {
+  const seen = new Set(((base ?? await transcriptTail(bot.id, 12)).entries ?? []).map((e) => e.id));
   await sendPrompt(bot.id, message);
-
   // Acknowledge immediately, then watch in the background and ping under the
   // notch when the reply lands. No foreground wait — replies run ~40s, past
   // what VoiceOS lets a tool block for.
   watchThreadThenNotify(bot, seen, message);
-  return result({ sent: true, bot: bot.name, sentMessage: message, message: `Sent your message to ${bot.name}.` });
 }
 
-// ── READ: grokbot_send — opens the bot's chat with the draft, never sends ──
-// Voice only prepares the message: the card's composer holds the draft and
-// its send arrow (grokbot_card_send) is the one path that delivers it. So no
-// confirmation card and no "ask before acting" step sits between the user and
-// the live conversation.
+// ── WRITE: grokbot_send — voice sends at once, then opens the bot's chat ──
+// No confirmation card and no draft to approve: "Send a message to Pepper"
+// sends, and the card opens on Pepper's chat with the message flying from the
+// box into the orb, the same as a tap send. No `readOnlyHint` (it sends), and
+// no `confirmation`, so the host's ask switch defaults to "Don't ask".
 const sendTool = server.registerTool(
   "grokbot_send",
   {
@@ -752,24 +803,29 @@ const sendTool = server.registerTool(
       message: z
         .string()
         .optional()
-        .describe("The message or task, composed the way the user would type it — their meaning kept, lead-in verbs like 'tell Pepper to' dropped."),
+        .describe("The message or task, written TO the bot the way the user would type it: meaning kept, lead-in verbs like 'tell Pepper to' dropped, reported speech made direct ('ask Pepper how the test is going' → 'How's the test going?')."),
       // Must be declared here too (not just the manifest): the MCP layer parses
       // args against THIS schema and strips anything not listed, so without it
       // the card's via:"card" never reaches the handler.
     },
-    annotations: { readOnlyHint: true },
     _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: [] } },
   },
   async (args: { bot: string; message?: string; recipientId?: string }) =>
     handle("grokbot_send", async () => {
       const agents = await listAgents();
       const bot = resolveMessageRecipient(args.recipientId ?? args.bot, agents.filter((a) => !a.isGroup));
-      const draft = args.message?.trim() ?? "";
+      const text = tidySpoken(args.message ?? "");
+      // Read BEFORE sending: the card's history then ends just before this
+      // message, which arrives as the fly-in and the live chat's next refresh.
       const tail = await transcriptTail(bot.id, 20);
+      if (!text) {
+        return result({ opened: true, sent: false, bot: bot.name, message: `Opened ${bot.name}. Nothing was sent.` },
+          await conversationCard(agents, { bot: bot.id }, tail));
+      }
+      await sendToBot(bot, text, tail);
       return result(
-        { opened: true, sent: false, bot: bot.name, draft,
-          message: draft ? `Opened ${bot.name}. Your message is in the box — press send to deliver it.` : `Opened ${bot.name}.` },
-        await conversationCard(agents, { bot: bot.id }, tail, draft),
+        { sent: true, bot: bot.name, sentMessage: text, message: `Sent your message to ${bot.name}.` },
+        await conversationCard(agents, { bot: bot.id }, tail, text, true),
       );
     }),
 );
@@ -842,12 +898,57 @@ server.registerTool(
     }),
 );
 
+// ── WRITE: grokbot_notifications (confirmation: declarative card) ────────────
+// The per-bot "Notify on updates" switch from the Grok Bot app. The reply and
+// scheduled-task pings above read it, so muting here silences that bot's pills.
+const notifyTool = server.registerTool(
+  "grokbot_notifications",
+  {
+    title: "Bot notifications",
+    description:
+      "Turn one Grok Bot's notifications on or off (the bot's \"Notify on updates\" switch in the Grok Bot app). Off means no notch ping when that bot replies or finishes a scheduled task. Use when the user asks to mute, silence, unmute, or turn on/off notifications for a bot. Not for all bots at once: that is the \"Show notifications from bots\" setting in Grok Bot's VoiceOS settings.",
+    inputSchema: {
+      bot: z.string().describe("The bot's name as the user said it."),
+      enabled: z.boolean().describe("true to turn the bot's notifications on, false to turn them off."),
+    },
+  },
+  async (args: { bot: string; enabled: boolean }) =>
+    handle("grokbot_notifications", async () => {
+      const agents = await listAgents();
+      const bot = await resolveAgent(args.bot?.trim() ?? "", agents);
+      const enabled = args.enabled === true;
+      if (botNotifies(bot) !== enabled) await setAgentNotifyOnUpdates(bot.id, enabled);
+      const word = enabled ? "on" : "off";
+      const note = enabled && !notificationsEnabled()
+        ? " \"Show notifications from bots\" is off in Grok Bot's VoiceOS settings, so turn that on too to see them."
+        : "";
+      return result(
+        { bot: bot.name, notifications: enabled, message: `Turned ${word} notifications for ${bot.name}.${note}` },
+        {
+          _voiceos_glance: {
+            blocks: [
+              { type: "header", title: bot.name.slice(0, 60), trailing: `Notifications ${word}` },
+            ],
+          },
+        },
+      );
+    }),
+);
+
 // ── WRITE: the one GROUP send path — only the card's send arrow reaches it ──
 // Saves member/name edits (or creates the group on first send) and sends once.
 // The card that sent stays open: an existing group's chat refreshes, and a new
 // group's pane becomes that group's chat from the returned id.
 async function performGroupSend(args: { group?: string; members?: string | string[]; groupName?: string; message?: string }) {
-  const agents = await listAgents();
+  const s = await sendToGroup(args, await listAgents());
+  // The card that sent keeps going: a new group's pane turns into that group's
+  // chat from the returned id, name and members.
+  return result({ sent: true, group: s.group, groupName: s.groupName, members: s.members, created: s.created,
+    sentMessage: s.sentMessage, message: `Sent your message to ${s.groupName}.` });
+}
+
+/** Save member/name edits (or create the group) and send once. */
+async function sendToGroup(args: { group?: string; members?: string | string[]; groupName?: string; message?: string }, agents: Agent[]) {
   const { existing, memberIds, bots, sameSet } = resolveMessageGroup(args, agents);
   const message = args.message?.trim() ?? "";
   const name = args.groupName?.trim() ?? existing?.name ?? "";
@@ -863,16 +964,16 @@ async function performGroupSend(args: { group?: string; members?: string | strin
     if (!target?.id) throw new IntegrationError("upstream", "The group was not created.");
   }
   await sendPrompt(target.id, message);
-  // The card that sent keeps going: a new group's pane turns into that group's
-  // chat from the returned id, name and members.
-  return result({ sent: true, group: target.id, groupName: savedName, members: memberIds, created: !existing,
-    sentMessage: message, message: `Sent your message to ${savedName}.` });
+  return { group: target.id, groupName: savedName, members: memberIds, created: !existing, sentMessage: message };
 }
 
-// ── READ: grokbot_group — opens the group chat with the draft, never sends ──
-// An existing group (by name, or the same member set) opens its chat pane on the
-// roster card, where members and name stay editable; a new one opens the
-// new-group pane, created on the card's first send.
+// ── WRITE: grokbot_group — voice sends at once, then opens the group chat ──
+// With a message, an existing group (by name, or the same member set) or a new
+// one with at least two bots gets it at once: spoken member/name edits are
+// saved, a new group is created, and the card opens on that group's chat with
+// the message flying into its avatars. Without a message, or with too few bots
+// for a new group, it only opens the pane (a new group's is created on the
+// card's first send).
 server.registerTool(
   "grokbot_group",
   {
@@ -884,16 +985,25 @@ server.registerTool(
       members: z.union([z.array(z.string()), z.string()]).optional()
         .describe("Bots to include, as names the user said or exact ids. Omit to use an existing group's members, or to choose members in the card."),
       groupName: z.string().optional().describe("The new or edited group name, composed as the user would type it. Omit to preserve an existing name; leave empty to name a new group in the card."),
-      message: z.string().optional().describe("The drafted message, composed as the user would type it, with lead-in commands removed. The arrow sends the final edited text."),
+      message: z.string().optional().describe("The message to send, written TO the group the way the user would type it: lead-in commands removed, reported speech made direct."),
     },
-    annotations: { readOnlyHint: true },
   },
   async (args: { group?: string; members?: string | string[]; groupName?: string; message?: string }) =>
     handle("grokbot_group", async () => {
       const agents = await listAgents();
       const { existing, memberIds, sameSet } = resolveMessageGroup(args, agents);
-      const draft = args.message?.trim() ?? "";
-      const ready = draft ? " Your message is in the box — press send to deliver it." : "";
+      const draft = tidySpoken(args.message ?? "");
+      if (draft && (existing || memberIds.length >= 2)) {
+        // Read BEFORE sending (see grokbot_send). A new group has no history.
+        const tail = existing ? await transcriptTail(existing.id, 20) : {};
+        const s = await sendToGroup({ ...args, message: draft }, agents);
+        // Re-read the roster: it now has the new group, or the saved edits.
+        return result(
+          { sent: true, group: s.groupName, members: s.members, created: s.created, sentMessage: s.sentMessage,
+            message: `${s.created ? `Created ${s.groupName} and sent` : "Sent"} your message${s.created ? "" : ` to ${s.groupName}`}.` },
+          await conversationCard(await listAgents(), { group: s.group }, tail, s.sentMessage, true),
+        );
+      }
       if (existing) {
         // Spoken member/name changes open as pending edits on the group's pane;
         // the card's send saves them (performGroupSend) before it sends.
@@ -905,11 +1015,12 @@ server.registerTool(
         return result(
           { opened: true, sent: false, group: existing.name, draft,
             ...(members ? { members } : {}), ...(groupName ? { groupName } : {}),
-            message: `Opened ${existing.name}.${edits ? ` The new ${edits} save when you send.` : ""}${ready}` },
+            message: `Opened ${existing.name}.${edits ? ` The new ${edits} save when you send.` : ""}` },
           await conversationCard(agents, { group: existing.id, ...(members ? { members } : {}), ...(groupName ? { groupName } : {}) }, tail, draft),
         );
       }
       const name = args.groupName?.trim() ?? "";
+      const ready = draft ? " Your message is in the box: add at least two bots, then press send." : "";
       return result(
         { opened: true, sent: false, newGroup: true, members: memberIds, draft,
           message: `Opened a new group${name ? ` called ${name}` : ""}. Pick members if needed.${ready}` },
@@ -1076,7 +1187,7 @@ server.registerTool(
     }),
 );
 
-const intentSupport = registerIntentSupport(server, [showTool, sendTool, threadTool, screenTool], intentRoster, error => log("Intent roster refresh failed:", error));
+const intentSupport = registerIntentSupport(server, { named: [showTool, threadTool, screenTool, notifyTool], labeled: [sendTool] }, intentRoster, error => log("Intent roster refresh failed:", error));
 await server.connect(new StdioServerTransport());
 
 // Exit when the host goes away. The background loops below (automation watch,

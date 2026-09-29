@@ -71,6 +71,10 @@ mock.module("../client.ts", () => ({
     writes.push(["name", group.id, name]);
     group.name = name;
   },
+  setAgentNotifyOnUpdates: async (id: string, isEnabled: boolean) => {
+    writes.push(["notify", id, isEnabled]);
+    agents.find(a => a.id === id)!.notifyOnUpdatesEnabled = isEnabled;
+  },
 }));
 // server.ts is the published bundle (client.ts inlined), so mocks never reach it.
 await import("../server.src.ts");
@@ -212,6 +216,18 @@ test("group lookup preserves drafts and returns resolved member IDs", async () =
   expect(r.args).toMatchObject({ members: ["p", "t"], groupName: "Research", message: "Hello" });
   expect(writes).toEqual([]);
 });
+test("a voice toggle flips one bot's Notify on updates switch, and skips a no-op write", async () => {
+  const off = await call("grokbot_notifications", { bot: "pepper", enabled: false });
+  expect(off).toMatchObject({ bot: "Pepper", notifications: false });
+  expect(writes).toEqual([["notify", "p", false]]);
+  // Already off: nothing to write.
+  await call("grokbot_notifications", { bot: "Pepper", enabled: false });
+  expect(writes).toEqual([["notify", "p", false]]);
+  // Unset means on (the app's default), so turning it on is a no-op too.
+  await call("grokbot_notifications", { bot: "Friday", enabled: true });
+  expect(writes).toEqual([["notify", "p", false]]);
+  expect((await call("grokbot_notifications", { bot: "Nobody", enabled: false })).isError).toBe(true);
+});
 test("creation reports pending registration without inventing a roster entry", async () => {
   publishCreated = false;
   const r = await call("grokbot_create", { name: "James", description: "Help" });
@@ -224,34 +240,40 @@ test("creation reports pending registration without inventing a roster entry", a
   expect((await call("grokbot_prepare_message", { bot: "James" })).args.bot).toBe("created");
 });
 
-test("voice send opens the bot's chat pane on the roster card with the draft typed in and sends nothing", async () => {
-  const r = await call("grokbot_send", { bot: "Pepper", message: "Draft" });
-  expect(writes).toEqual([]);
-  expect(r).toMatchObject({ opened: true, sent: false, bot: "Pepper", draft: "Draft" });
-  expect(cardData(r).args).toMatchObject({ open: { bot: "p" }, message: "Draft" });
+test("voice send sends at once and opens the bot's chat pane with the message marked sent (it flies in)", async () => {
+  const r = await call("grokbot_send", { bot: "Pepper", message: "Hello." });
+  expect(writes).toEqual([["send", "p", "Hello."]]);
+  expect(r).toMatchObject({ sent: true, bot: "Pepper", sentMessage: "Hello." });
+  expect(cardData(r).args).toEqual({ open: { bot: "p" }, message: "Hello.", sent: true });
+  // History is read before the send, so the card never shows the message twice.
+  expect(cardData(r).data.threads.p.map((i: any) => i.text)).not.toContain("Hello.");
   expect(r._voiceos_glance.blocks[0].html).toContain('<title>Your Bots</title>');
 });
-test("voice group opens an existing group's chat pane on the roster card with the draft and sends nothing", async () => {
-  const r = await call("grokbot_group", { group: "Homework crew", message: "Team draft" });
-  expect(writes).toEqual([]);
-  expect(r).toMatchObject({ opened: true, sent: false, group: "Homework crew", draft: "Team draft" });
-  expect(cardData(r).args).toMatchObject({ open: { group: "g" }, message: "Team draft" });
-  expect(r._voiceos_glance.blocks[0].html).toContain('<title>Your Bots</title>');
+test("voice group sends to an existing group at once and opens its chat pane marked sent", async () => {
+  const r = await call("grokbot_group", { group: "Homework crew", message: "Team note." });
+  expect(writes).toEqual([["send", "g", "Team note."]]);
+  expect(r).toMatchObject({ sent: true, group: "Homework crew", created: false, sentMessage: "Team note." });
+  expect(cardData(r).args).toEqual({ open: { group: "g" }, message: "Team note.", sent: true });
 });
-test("voice edits to an existing group open as pending edits on its pane and save nothing", async () => {
-  const r = await call("grokbot_group", { group: "Homework crew", members: ["p", "t"], groupName: "Research", message: "Draft" });
-  expect(writes).toEqual([]);
-  expect(r).toMatchObject({ opened: true, sent: false, group: "Homework crew", members: ["p", "t"], groupName: "Research" });
-  expect(cardData(r).args).toMatchObject({ open: { group: "g", members: ["p", "t"], groupName: "Research" }, message: "Draft" });
-  // No change = no pending edits.
-  const same = await call("grokbot_group", { group: "Homework crew", members: ["f", "p"], groupName: "Homework crew" });
-  expect(cardData(same).args.open).toEqual({ group: "g" });
+test("voice edits to an existing group are saved before the send, and the pane opens on the saved group", async () => {
+  const r = await call("grokbot_group", { group: "Homework crew", members: ["p", "t"], groupName: "Research", message: "Hi." });
+  expect(writes).toEqual([["members", "g", ["p", "t"]], ["name", "g", "Research"], ["send", "g", "Hi."]]);
+  expect(r).toMatchObject({ sent: true, group: "Research", members: ["p", "t"] });
+  expect(cardData(r).args.open).toEqual({ group: "g" });
+  expect(cardData(r).data.groups.find((g: any) => g.id === "g").name).toBe("Research");
 });
-test("voice group with new members opens compose mode and creates nothing", async () => {
-  const r = await call("grokbot_group", { members: ["p", "t"], groupName: "Research", message: "Draft" });
+test("voice group with two or more new members creates the group, sends, and opens its chat", async () => {
+  const r = await call("grokbot_group", { members: ["p", "t"], groupName: "Research", message: "Kickoff." });
+  expect(writes).toEqual([["create", "Research", ["p", "t"]], ["send", "new", "Kickoff."]]);
+  expect(r).toMatchObject({ sent: true, created: true, group: "Research", members: ["p", "t"] });
+  expect(cardData(r).args).toEqual({ open: { group: "new" }, message: "Kickoff.", sent: true });
+  expect(cardData(r).data.groups.some((g: any) => g.id === "new")).toBe(true);
+});
+test("voice group with one new member keeps the message as a draft on the new-group pane", async () => {
+  const r = await call("grokbot_group", { members: ["p"], message: "Draft." });
   expect(writes).toEqual([]);
-  expect(r).toMatchObject({ opened: true, sent: false, newGroup: true, members: ["p", "t"], draft: "Draft" });
-  expect(cardData(r).args).toMatchObject({ open: { members: ["p", "t"], groupName: "Research" }, message: "Draft" });
+  expect(r).toMatchObject({ opened: true, sent: false, newGroup: true, draft: "Draft." });
+  expect(cardData(r).args).toEqual({ open: { members: ["p"] }, message: "Draft." });
 });
 test("host string member edits are saved on an existing group before a card send", async () => {
   const r = await call("grokbot_card_send", { group: "g", members: "p,t", groupName: "Research", message: "Draft" });
@@ -261,7 +283,7 @@ test("host string member edits are saved on an existing group before a card send
 });
 test("voice send and group with no message still open (never error) and never write", async () => {
   const send = await call("grokbot_send", { bot: "Pepper" });
-  expect(send).toMatchObject({ opened: true, sent: false, draft: "" });
+  expect(send).toMatchObject({ opened: true, sent: false });
   const group = await call("grokbot_group", { members: ["p", "t"] });
   expect(group).toMatchObject({ opened: true, sent: false, newGroup: true, draft: "" });
   expect(writes).toEqual([]);
@@ -356,12 +378,22 @@ test("existing groups keep one member after removal; empty groups cannot send", 
   expect(writes).toEqual([["members", "g", ["p"]], ["send", "g", "Hi"]]);
 });
 test("script-like text and template-token text remain message data", async () => {
-  const message = '</script><script>throw new Error("injected")</script> __VOICEOS_RFB__ $&';
+  const message = '</script><script>throw new Error("injected")</script> __VOICEOS_RFB__ $&.';
   const r = await call("grokbot_send", { bot: "Pepper", message });
   expect(cardData(r).args.message).toBe(message);
   const scripts = [...r._voiceos_glance.blocks[0].html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
   expect(scripts).toHaveLength(1);
   expect(() => new Function(scripts[0][1])).not.toThrow();
+});
+test("a pending connect card reaches the model as where to connect; a connected one stays silent", async () => {
+  tail = [
+    { kind: "send-message", message: { type: "connector", connector: "Gmail" }, id: "c1" },
+    { kind: "send-message", message: { type: "connector", connector: "Google Calendar", variant: "connected" }, id: "c2" },
+  ];
+  const r = await call("grokbot_thread", { bot: "Pepper" });
+  expect(r.thread).toHaveLength(1);
+  expect(r.thread[0].text).toContain("connect Gmail");
+  expect(r.thread[0].text).toContain("Open in Grok Bot");
 });
 test("reading a thread gives the model the message text and no card by default", async () => {
   tail = [
@@ -397,17 +429,21 @@ test("manifest advertises exactly the registered server tools", async () => {
   expect(handlers.has("voiceos_hook_pre_tool_use")).toBe(true);
   expect(manifest.hooks.preToolUse.scope).toBe("own");
   expect(manifest.tools.map((t: any) => t.name).sort()).toEqual([...handlers.keys()].filter(name => !name.startsWith("voiceos_hook_")).sort());
-  // grokbot_send/grokbot_group now only OPEN a card (never send), and
-  // grokbot_card_send is the only tool that ever sends — none of the three
-  // carry a host confirmation dialog any more. grokbot_create is the sole
-  // survivor: its card asks the user to review a brand-new bot before it exists.
+  // Voice sends (grokbot_send/grokbot_group) and the card's send arrow
+  // (grokbot_card_send) send at once — none carry a host confirmation dialog.
+  // grokbot_create is the sole survivor: its card asks the user to review a
+  // brand-new bot before it exists.
   for (const name of ["grokbot_prepare_message", "grokbot_send", "grokbot_group", "grokbot_card_send"]) {
     expect(manifest.tools.find((t: any) => t.name === name).confirmation).toBeUndefined();
   }
   const create = manifest.tools.find((t: any) => t.name === "grokbot_create");
   expect(create.confirmation.schemaVersion).toBe(1);
   expect(create.confirmation.root.type).toBe("widget");
-  // grokbot_send / grokbot_group are card-callable read-only opens.
+  // The per-bot mute acts, so it confirms: a card whose switch is the arg that runs.
+  const notify = manifest.tools.find((t: any) => t.name === "grokbot_notifications");
+  expect(notify.confirmation.root.type).toBe("card");
+  expect(notify.confirmation.root.children.some((c: any) => c.type === "toggle" && c.bind === "{{enabled}}")).toBe(true);
+  // grokbot_send / grokbot_group are card-callable.
   for (const name of ["grokbot_send", "grokbot_group"]) {
     expect(manifest.tools.find((t: any) => t.name === name).uiCallable).toBe(true);
   }
@@ -528,11 +564,11 @@ test("a model-initiated send without preparation still shows the recipient's row
   expect(context.bots.map((b: any) => b.id)).toEqual(["p", "f", "t"]);
   expect(context.threads.p.map((i: any) => i.id)).toEqual(["old", "fri"]);
 });
-test("a group named like a bot does not stop an approved open for that bot", async () => {
+test("a group named like a bot does not stop a send to that bot", async () => {
   agents.push({ id: "g2", name: "Pepper", isGroup: true, memberIds: ["f", "t"] });
-  const r = await call("grokbot_send", { bot: "Pepper", message: "Hi" });
-  expect(r).toMatchObject({ opened: true, sent: false, bot: "Pepper" });
-  expect(writes).toEqual([]);
+  const r = await call("grokbot_send", { bot: "Pepper", message: "Hi." });
+  expect(r).toMatchObject({ sent: true, bot: "Pepper" });
+  expect(writes).toEqual([["send", "p", "Hi."]]);
 });
 test("showing one bot opens its conversation even when its history cannot be read", async () => {
   tailFails = true;
@@ -555,7 +591,9 @@ const clickReminder = (actionId: string, data?: Record<string, unknown>) =>
 
 test("reminder Open returns that bot's conversation card for the notch, marked from newSince", async () => {
   const r = await clickReminder("open_chat", { botId: "p", newSince: 1234 });
-  expect(r).toMatchObject({ ok: true, responseText: "Pepper's conversation." });
+  expect(r.ok).toBe(true);
+  // No fallback text: the host would draw it above the card and cap the card's height.
+  expect(r.responseText).toBeUndefined();
   expect(r.view.blocks).toHaveLength(1);
   expect(r.view.blocks[0].type).toBe("widget");
   expect(cardData({ _voiceos_glance: r.view }).args.open).toEqual({ bot: "p", newSince: 1234 });
@@ -575,4 +613,18 @@ test("reminder Open for a deleted bot fails instead of opening an empty card", a
 
 test("an unknown reminder button fails instead of claiming success", async () => {
   await expect(clickReminder("delete_all")).rejects.toThrow("no longer available");
+});
+
+test("a spoken message is tidied before it goes out; typed card sends are sent as typed", async () => {
+  const { tidySpoken } = await import("../messaging.ts");
+  expect(tidySpoken("how's the screen test going")).toBe("How's the screen test going?");
+  expect(tidySpoken("check the latest build")).toBe("Check the latest build.");
+  expect(tidySpoken("iPhone build looks off")).toBe("iPhone build looks off.");
+  expect(tidySpoken("Done!")).toBe("Done!");
+  const r = await call("grokbot_send", { bot: "Pepper", message: "how's the screen test going" });
+  expect(writes).toEqual([["send", "p", "How's the screen test going?"]]);
+  expect(cardData(r).args.message).toBe("How's the screen test going?");
+  writes = [];
+  await call("grokbot_card_send", { bot: "Pepper", message: "lowercase on purpose" });
+  expect(writes).toEqual([["send", "p", "lowercase on purpose"]]);
 });

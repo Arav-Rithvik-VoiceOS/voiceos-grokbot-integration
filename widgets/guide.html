@@ -44,7 +44,9 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .stack .av:first-child{margin-left:0}
 
 /* Pages: one track, slid sideways. The tallest page sets the card height. */
-.view{overflow:hidden;position:relative}
+/* The view is as tall as the page on screen (fit(), in JS), not the tallest
+   page — so a short page leaves no dead space above the footer. */
+.view{overflow:hidden;position:relative;transition:height .45s cubic-bezier(.2,.9,.1,1)}
 .track{display:flex;align-items:flex-start;transition:transform .6s cubic-bezier(.2,.9,.1,1);will-change:transform}
 .page{flex:0 0 100%;min-width:0;transition:opacity .45s,filter .45s}
 .page:not(.on){opacity:.25;filter:blur(1.5px)}
@@ -89,19 +91,47 @@ html[data-theme=light] .aurora{opacity:.3}
 .chip.go{background:rgba(255,138,0,.16);color:var(--accent)}
 .chip.ok{background:rgba(52,201,110,.14);color:var(--good)}
 
+/* The one macOS Keychain popup this integration causes (client.ts reading the
+   Chromium "Grok Bot Safe Storage" item on the first live call) — the REAL
+   dialog, a screenshot cropped tight with its corners made transparent
+   (kcImg, from assets.generated.ts), not a recreation. A Grok Bot hops on
+   Always Allow so it stops recurring. Setup's second page; we can't detect
+   it happened, so it's never marked done. */
+.kc-lead{padding:6px 24px 4px;text-align:center}
+.kc-lead .t3{white-space:normal;margin-top:3px}
+.kc-stage{position:relative;padding:14px 4px 22px;display:flex;justify-content:center}
+/* The wrapper IS the image's box (the img fills it), so the bot's % position
+   below lands on Always Allow at any width. */
+.kc-callout{position:relative;display:block;width:92%;max-width:300px;line-height:0}
+/* aspect-ratio: the page is measured for its height before the data: URI
+   decodes, so the img needs its real height up front. The shadow stays
+   inside the stage's bottom padding (.view clips below the page). */
+.kc-shot{display:block;width:100%;height:auto;aspect-ratio:560/241;filter:drop-shadow(0 8px 14px rgba(0,0,0,.45))}
+/* One Grok Bot (the orange blob, same av() as everywhere else in this card)
+   hopping on Always Allow. The anchor sits on the button's top edge, on its
+   right part — measured in the source image (40.3%, 76.3%) — so at the top
+   of each hop the bot is over the empty password box, never over the
+   "Password:" label. % positions hold at any kc-shot width. The bot squashes
+   from its feet on each landing; its shadow on the button shrinks as it rises. */
+.kc-hop{position:absolute;left:40.3%;top:76.3%;width:0;height:0}
+.kc-hop .av{position:absolute;left:-9px;bottom:0;width:18px;height:18px;transform-origin:50% 100%;animation:kchop .9s infinite}
+.kc-hop .sh{position:absolute;left:-7px;top:-2px;width:14px;height:4px;border-radius:50%;background:rgba(0,0,0,.35);animation:kcsh .9s infinite}
+@keyframes kchop{0%,100%{transform:translateY(0) scale(1.14,.86);animation-timing-function:cubic-bezier(.2,.7,.4,1)}12%{transform:translateY(-2px) scale(.94,1.07)}50%{transform:translateY(-10px) scale(1);animation-timing-function:cubic-bezier(.6,0,.8,.3)}88%{transform:translateY(-1px) scale(.97,1.04)}}
+@keyframes kcsh{0%,100%{transform:scale(1.1);opacity:.9}50%{transform:scale(.55);opacity:.35}}
+.dots button.go{background:var(--accent);animation:nudge 2.4s ease-in-out infinite}
+
 .head2{display:flex;align-items:center;gap:12px;padding:4px 17px 6px 15px}
 .parade{display:flex;align-items:flex-end;gap:5px;height:34px;flex:none}
 .parade .av{width:18px;height:18px}
 .parade .av:nth-child(2n){width:22px;height:22px}
-.idea{display:flex;align-items:center;gap:11px;padding:4px 15px;min-height:42px;border-radius:14px;transition:background .12s}
-.idea:hover{background:var(--fill-1)}
+/* Things to SAY, not buttons: no hover state and no mic glyph, so nothing
+   here looks clickable. */
+.idea{display:flex;align-items:center;gap:11px;padding:4px 15px;min-height:42px}
 .idea .who{width:48px;display:flex;justify-content:center;flex:none}
 .idea .who .av{width:28px;height:28px}
 .idea .who .stack .av{width:22px;height:22px}
 .idea .q{font-size:13.5px;font-weight:600;letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .idea .q::before{content:"\201C";color:var(--accent)}.idea .q::after{content:"\201D";color:var(--accent)}
-.idea .mic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;color:var(--ink-3);flex:none;transition:color .15s,background .15s}
-.idea:hover .mic{color:var(--accent);background:rgba(255,138,0,.12)}
 .new{width:28px;height:28px;border-radius:50%;border:1.5px dashed var(--ink-3);display:grid;place-items:center;color:var(--ink-2);font-size:16px;line-height:1}
 
 .foot{display:flex;align-items:center;gap:8px;padding:0 15px;height:56px;padding-right:160px}
@@ -116,7 +146,7 @@ html[data-theme=light] .aurora{opacity:.3}
 .hint{font-size:11.5px;color:var(--ink-3);white-space:nowrap}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
-<div class="hd"><span class="mark"><i></i>Grok Bot</span><span class="grow"></span><span class="crumb"><span class="on" id="c0">Setup</span><span id="c1">Things to say</span></span></div>
+<div class="hd"><span class="mark"><i></i>Grok Bot</span><span class="grow"></span><span class="crumb"><span class="on" id="c0">Setup</span><span id="c1"></span><span id="c2">Things to say</span></span></div>
 <div class="view"><div class="track" id="track">
   <section class="page" id="p0">
     <div class="stage in" id="stage">
@@ -128,11 +158,14 @@ html[data-theme=light] .aurora{opacity:.3}
     <div id="steps"></div>
   </section>
   <section class="page" id="p1">
+    <div id="kc"></div>
+  </section>
+  <section class="page" id="p2">
     <div class="head2 in"><div class="grow"><div class="t1">Just say it</div><div class="t3">Grok Bot opens the right card for you.</div></div><div class="parade" id="parade"></div></div>
     <div id="ideas"></div>
   </section>
 </div></div>
-<div class="foot"><button class="nb" id="prev" aria-label="Back"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button><span class="dots" id="dots"><button aria-label="Setup"></button><button aria-label="Things to say"></button></span><button class="nb" id="next" aria-label="Next"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button><span class="hint" id="hint"></span></div>
+<div class="foot"><button class="nb" id="prev" aria-label="Back"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button><span class="dots" id="dots"><button aria-label="Setup"></button><button aria-label="Keychain popup"></button><button aria-label="Things to say"></button></span><button class="nb" id="next" aria-label="Next"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button><span class="hint" id="hint"></span></div>
 
 <script>
 const DEMO=__VOICEOS_DEMO__;
@@ -191,7 +224,14 @@ const CREW=[
 ];
 const SAMPLE=[{name:'Pepper',color:'#FF6700',shape:'blob'},{name:'Scout',color:'#1084FE',shape:'hex'},{name:'Nova',color:'#9159FE',shape:'cloud'}];
 const CHECK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
-const MIC='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+/* The Keychain popup this integration causes, once — the real macOS dialog
+   itself (a cropped screenshot, `img`, not a recreation), with a Grok Bot
+   hopping on Always Allow so it stops asking. Step 2 of setup; we can't
+   detect the real popup, so it's never marked done. */
+function kcHTML(img){
+ return '<div class="kc-lead in" style="--i:1"><div class="t1">One popup from macOS</div><div class="t3">It pops up on your real screen — not in this card. Click <b>Always Allow</b> so it doesn’t ask again.</div></div>'
+ +'<div class="kc-stage in" style="--i:2"><span class="kc-callout"><img class="kc-shot" src="'+esc(img)+'" alt="The real macOS Keychain popup"><span class="kc-hop"><i class="sh"></i>'+av(CREW[0],'idle')+'</span></span></div>';
+}
 
 /* ── Hero orbit ── */
 const Orbit=(()=>{
@@ -217,26 +257,19 @@ const Orbit=(()=>{
  return{mount,play};
 })();
 
-/* ── Page 1: setup steps, checked against this Mac ── */
+/* ── Page 1: one step — the Grok Bot app, checked against this Mac.
+   setup.app is true when the app is installed (or a Grok session exists,
+   which only the app writes). Once it is there, the Keychain dot pulses:
+   that popup is the next thing the user meets. ── */
 function renderSteps(d){
- const s=d.setup||{};const bots=Array.isArray(d.bots)?d.bots:[];
- const botCount=typeof s.bots==='number'?s.bots:null;
- const steps=[
-  {t:'Get the Grok Bot app',sub:'Install it on this Mac, then open it.',done:s.app===true},
-  {t:'Sign in to Grok Bot',sub:'VoiceOS uses that session. No keys to paste.',done:s.signedIn===true},
-  {t:'Make your first bot',sub:botCount?('You have '+botCount+' bot'+(botCount===1?'':'s')+'.'):'Say “Create a bot named Scout”.',done:!!botCount,team:bots},
-  {t:'Get pings from bots',sub:'Turn on “Show notifications from bots”.',done:s.notifications===true,opt:true},
- ];
- const next=steps.findIndex(x=>!x.done&&!x.opt);
- const req=steps.filter(x=>!x.opt),doneReq=req.filter(x=>x.done).length;
- $('#intro-sub').textContent=next<0?'You’re all set. Swipe for things to say.':doneReq?doneReq+' of '+req.length+' steps done. Then just talk.':'Three quick steps, then just talk.';
- $('#steps').innerHTML=steps.map((x,i)=>{
-  const cls=x.done?'done':i===next?'next':'';
-  const right=x.done&&x.team&&x.team.length?'<span class="stack">'+x.team.slice(0,3).map(b=>av(b,'idle')).join('')+'</span>'
-   :x.done?'<span class="chip ok">Done</span>':i===next?'<span class="chip go">Next</span>':x.opt?'<span class="chip">Optional</span>':'';
-  return '<div class="step in '+cls+'" style="--i:'+(i+2)+'"><span class="num">'+(x.done?CHECK:i+1)+'</span><div class="grow"><div class="t2">'+esc(x.t)+'</div><div class="t3">'+esc(x.sub)+'</div></div>'+right+'</div>';
- }).join('');
- $$('#steps .stack .av').forEach(a=>{a.style.width=a.style.height='20px'});
+ const s=d.setup||{};
+ appReady=s.app===true;
+ $('#intro-sub').textContent=appReady?'The app is on this Mac. Swipe for the one popup you’ll see.':'Get the app first, then just talk.';
+ $('#steps').innerHTML='<div class="step in '+(appReady?'done':'next')+'" style="--i:2"><span class="num">'+(appReady?CHECK:1)+'</span><div class="grow"><div class="t2">'
+  +(appReady?'Grok Bot app installed':'Download the Grok Bot app')+'</div><div class="t3">'
+  +(appReady?'Found on this Mac.':'Install it on this Mac, then open it.')+'</div></div>'
+  +(appReady?'<span class="chip ok">Done</span>':'<span class="chip go">Next</span>')+'</div>';
+ $$('#dots button')[1]?.classList.toggle('go',appReady);
 }
 
 /* ── Page 2: things to say, voiced with the user's own bots when there are some ── */
@@ -252,31 +285,38 @@ function renderIdeas(d){
   {q:'Start a group with '+n(0)+' and '+n(1),sub:'Put a team on one job',who:'<span class="stack">'+av(cast[0],'waiting')+av(cast[1],'waiting')+'</span>'},
   {q:'Create a bot named Juno',sub:'Hire a new teammate',who:'<span class="new" id="juno">+</span>'},
  ];
- $('#ideas').innerHTML=ideas.map((x,i)=>'<div class="idea in" style="--i:'+(i+1)+'"><span class="who">'+x.who+'</span><div class="grow"><div class="q">'+esc(x.q)+'</div><div class="t3">'+esc(x.sub)+'</div></div><span class="mic">'+MIC+'</span></div>').join('');
+ $('#ideas').innerHTML=ideas.map((x,i)=>'<div class="idea in" style="--i:'+(i+1)+'"><span class="who">'+x.who+'</span><div class="grow"><div class="q">'+esc(x.q)+'</div><div class="t3">'+esc(x.sub)+'</div></div></div>').join('');
  $('#parade').innerHTML=CREW.slice(0,5).map((b,i)=>av(b,i%2?'working':'idle')).join('');
 }
 /* The "+" becomes a brand-new bot that hops in, then goes back to waiting its turn. */
 let junoTimer=0;
 function hireJuno(on){clearInterval(junoTimer);const slot=$('#juno');if(!slot||!on)return;
  const hire=()=>{const s=$('#juno');if(!s)return;s.outerHTML='<span id="juno">'+av({shape:'teardrop',color:'#00C972'},'done')+'</span>';
-  setTimeout(()=>{const j=$('#juno');if(j&&page===1)j.outerHTML='<span class="new" id="juno">+</span>'},2600)};
+  setTimeout(()=>{const j=$('#juno');if(j&&page===2)j.outerHTML='<span class="new" id="juno">+</span>'},2600)};
  setTimeout(hire,900);junoTimer=setInterval(hire,4200);}
 
-/* ── Paging: arrows, dots, keys, swipe ── */
-let page=0;
-const HINTS=['Things to say','Back to setup'];
+/* ── Paging: arrows, dots, keys, swipe. Setup · Keychain popup · Things to say ── */
+let page=0,appReady=false;
+const HINTS=['The popup you’ll see','Things to say','Back to setup'];
 function go(p){
- page=Math.max(0,Math.min(1,p));
+ page=Math.max(0,Math.min(2,p));
  $('#track').style.transform='translateX('+(-100*page)+'%)';
  $$('.page').forEach((el,i)=>{el.classList.toggle('on',i===page);el.inert=i!==page});
  $$('#dots button').forEach((b,i)=>b.classList.toggle('on',i===page));
  $$('.crumb span').forEach((s,i)=>s.classList.toggle('on',i===page));
- $('#prev').disabled=page===0;$('#next').disabled=page===1;
- $('#next').classList.toggle('hot',page===0);
+ $('#prev').disabled=page===0;$('#next').disabled=page===2;
+ $('#next').classList.toggle('hot',page===0&&appReady);
  $('#hint').textContent=HINTS[page];
  Orbit.play(page===0&&!document.hidden);
- hireJuno(page===1);
+ hireJuno(page===2);
+ fit();
 }
+/* Size the view to the page on screen. The track is a flex row, so on its
+   own it is as tall as its tallest page; pinning .view's height to the
+   active page drops the dead space (the body's ResizeObserver then reports
+   the new height to the host). Re-run whenever any page's content resizes. */
+function fit(){const el=$$('.page')[page];if(el)$('.view').style.height=el.offsetHeight+'px'}
+const pageRO=new ResizeObserver(fit);
 function wire(){
  $('#prev').onclick=()=>go(page-1);$('#next').onclick=()=>go(page+1);
  $$('#dots button').forEach((b,i)=>b.onclick=()=>go(i));
@@ -289,7 +329,9 @@ function wire(){
 }
 
 function render(d,args){
- renderSteps(d);renderIdeas(d);Orbit.mount($('#stage'));wire();
- go(args.page===1||args.page==='ideas'?1:0);
+ renderSteps(d);$('#kc').innerHTML=kcHTML(d.kcImg||'');renderIdeas(d);Orbit.mount($('#stage'));wire();
+ $$('.page').forEach(p=>pageRO.observe(p));
+ // cards.ts guideCard sends the page as a number (0/1/2); the names are for hand-built args.
+ go(args.page===1||args.page==='keychain'?1:args.page===2||args.page==='ideas'?2:0);
 }
 </script>

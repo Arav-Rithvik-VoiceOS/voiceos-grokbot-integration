@@ -61,7 +61,7 @@ card** declared in the manifest, which the user can edit and approve.
    or a priority arg (`low|medium|high`) needs a control this vocabulary
    lacks (calendar picker; green/yellow/red select), so such a tool's
    confirmation is a widget. Grok Bot's messaging tools skip confirmation
-   on purpose (voice only opens a draft; the card sends): see docs/messaging.md.
+   on purpose (voice sends at once, then opens the live chat): see docs/messaging.md.
 5. **Be honest**: throw on failure; never fabricate data or claim success.
    Use `console.error` for debug logging (stdout is the MCP wire).
 6. **Least privilege**: the manifest's network permission lists only domains
@@ -77,7 +77,13 @@ card** declared in the manifest, which the user can edit and approve.
 ```bash
 bun install        # once, and after adding dependencies
 bun server.ts      # starts the MCP server; Ctrl-C when it idles cleanly
+bun run test       # all tests, one process per file
 ```
+
+Use `bun run test` (or `bun test --isolate`), never a plain `bun test`.
+`tests/messaging.test.ts` mocks `client.ts`, and a module another test file
+loaded first keeps the real client: in one shared process the card snapshot
+test then reads the real Grok gateway and fails.
 
 Then in VoiceOS: Dashboard → Agent tab → Integration Studio → My
 Integrations → open **Grok Bot** → **Reload**. The agent sees your

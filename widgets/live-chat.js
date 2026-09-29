@@ -5,8 +5,9 @@ const LiveChat=(()=>{
  // the in-place receipt's follow-ups share them. Automatic calls (refresh, images, deferred chunks, file polls)
  // stop at AUTO, the user's own actions at HARD; sends are never refused here, so they keep at least 20, usually 100.
  const END={completed:1,failed:1,cancelled:1,unknown:1},GAP=2e3,CAP=850,AUTO=900,HARD=980,LIMIT=1000;
- // requestState.ts's passive types: connection prompts stay in history after they are done.
- const PASSIVE=/^(connectors?|listener-connect|scm-connect|onepassword-connect|team-access|slack-connect|cursor-agent|bot-template-share)$/;
+ // requestState.ts's passive types that have nothing to do here. Connection prompts are passive too (no
+ // attention badge), but they DO get Open: accounts connect only in Grok Bot's own window (CONNECT).
+ const PASSIVE=/^(cursor-agent|bot-template-share)$/,CONNECT=/^(connectors?|listener-connect|scm-connect|onepassword-connect|team-access|slack-connect)$/;
  const DATA=/^data:image\/(png|jpeg|webp|gif);base64,/,UNSURE='The result is unconfirmed. Check Grok Bot before trying again.',OPEN='Open in Grok Bot';
  const PC='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>';
  const DOC='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5"/></svg>';
@@ -106,7 +107,7 @@ const LiveChat=(()=>{
    if(Array.isArray(r.details)&&r.details.length)s+='<dl class="lc-kv">'+r.details.slice(0,6).map(p=>'<dt>'+h(p&&p[0])+'</dt><dd>'+h(p&&p[1])+'</dd>').join('')+'</dl>';
    if(r.footer)s+='<div class="lc-f">'+h(r.footer)+'</div>';
    // Sign-ins and approvals finish in Grok Bot's own window: secrets never pass through VoiceOS, which logs tool calls.
-   if(pend&&!(r.passive===true||PASSIVE.test(r.type||'')))s+='<div class="lc-row"><button class="lc-btn pri" data-lc-open="entry">'+OPEN+'</button>'+(/secret|credential|cookie/.test(r.type||'')?'<span class="lc-f">Sign in there, not here.</span>':'')+'</div>';
+   if(pend&&!(r.passive===true||PASSIVE.test(r.type||'')))s+='<div class="lc-row"><button class="lc-btn pri" data-lc-open="entry">'+OPEN+'</button>'+(/secret|credential|cookie/.test(r.type||'')?'<span class="lc-f">Sign in there, not here.</span>':CONNECT.test(r.type||'')?'<span class="lc-f">Connect it there.</span>':'')+'</div>';
    return s+'</div>'}
   function html(v,t){const m={...v,from:v.from==='me'?'me':'bot'};
    if(t)m.t=t;if(m.sys==='')return '';
@@ -259,7 +260,7 @@ const LiveChat=(()=>{
   list.classList.add('lc-list');ro();if(pc)pc.hidden=!br.canInvoke;wire();if(rsz)rsz.observe(list);
   draw('bottom');schedule();
   // Opened from a notification: when the new replies run past the view, start at their "New messages" line,
-  // just below the pane's 60 px top fog.
+  // a little under the top edge so the line has room to breathe.
   if(since!=null)requestAnimationFrame(()=>{if(dead||!nl.isConnected)return;const d=nl.getBoundingClientRect().top-list.getBoundingClientRect().top-52;if(d<0){list.scrollTop+=d;stick=near()}});
   return {refresh,loadOlder,destroy,openComputer,hurry,addLocal,setLocal,dropLocal,items:()=>items.map(view),nextBeforeSeq:()=>before}}
 

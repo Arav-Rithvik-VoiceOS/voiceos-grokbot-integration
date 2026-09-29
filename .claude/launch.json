@@ -12,6 +12,126 @@
         "/private/tmp/claude-501/-Users-arav-Vault-voiceOS-grokbot-integration/b43a0c7e-efee-4ad7-aa1f-a518a79df290/scratchpad/preview"
       ],
       "port": 4181
+    },
+    {
+      "name": "live-chat-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4182",
+        "--directory",
+        "/private/tmp/claude-501/-Users-arav-Vault-voiceOS-grokbot-integration/47fd039f-fe7a-4b15-a30a-b31b33c6f944/scratchpad/preview"
+      ],
+      "port": 4182
+    },
+    {
+      "name": "composer-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4183",
+        "--directory",
+        "/private/tmp/claude-501/-Users-arav-Vault-voiceOS-grokbot-integration/3d3e30cd-9757-4053-ba0f-9a961c3ef4e4/scratchpad/preview"
+      ],
+      "port": 4183
+    },
+    {
+      "name": "send-state-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4184",
+        "--directory",
+        "/private/tmp/claude-501/-Users-arav-Vault-voiceOS-grokbot-integration/94b20e23-694e-400e-a314-775db26e3e7b/scratchpad/preview"
+      ],
+      "port": 4184
+    },
+    {
+      "name": "screen-open-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4186",
+        "--directory",
+        "/private/tmp/claude-501/-Users-arav-Vault-voiceOS-grokbot-integration/fb8d2e23-359c-4b47-9fca-1e72d56bf008/scratchpad/preview"
+      ],
+      "port": 4186
+    },
+    {
+      "name": "guide-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4187",
+        "--directory",
+        "/private/tmp/claude-501/-Users-arav-Vault-voiceOS-grokbot-integration/4e46911d-c7a0-409b-9c07-04e2ac4a6d89/scratchpad"
+      ],
+      "port": 4187
+    },
+    {
+      "name": "glass-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4188",
+        "--directory",
+        "/private/tmp/claude-501/-Users-arav-Vault-voiceOS-grokbot-integration/b31dce03-e88e-4936-838e-a4efd2bd98e9/scratchpad/preview"
+      ],
+      "port": 4188
+    },
+    {
+      "name": "group-edit-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4189",
+        "--directory",
+        "/private/tmp/claude-501/-Users-arav-Vault-voiceOS-grokbot-integration/c304e060-bd43-4277-8229-3426ba4638d4/scratchpad/preview"
+      ],
+      "port": 4189
+    },
+    {
+      "name": "reminder-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4190",
+        "--directory",
+        "/private/tmp/claude-501/-Users-arav-Vault-voiceOS-grokbot-integration/d602362d-0c69-419f-b5f2-8e625a8c76a5/scratchpad/preview"
+      ],
+      "port": 4190
+    },
+    {
+      "name": "voice-sent-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4195",
+        "--directory",
+        "/private/tmp/claude-501/-Users-arav-Vault-voiceOS-grokbot-integration/4f8c619c-3ebd-44a3-8d5d-7fbec3018308/scratchpad/preview"
+      ],
+      "port": 4195
+    },
+    {
+      "name": "connect-open-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4196",
+        "--directory",
+        "/private/tmp/claude-501/-Users-arav-Vault-voiceOS-grokbot-integration/af94c71a-d607-4f4e-9306-794b7c071b06/scratchpad/preview"
+      ],
+      "port": 4196
     }
   ]
 }

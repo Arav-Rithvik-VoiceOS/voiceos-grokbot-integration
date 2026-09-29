@@ -268,6 +268,8 @@ const showOf = (open?: Parameters<typeof cards.showCard>[4], full?: string) => c
 ) as Card;
 const show = showOf();
 const voicePepper = showOf({ open: { bot: "pepper" }, message: "Keep this draft while the chat refreshes" }, "pepper");
+// "Send a message to Pepper": voice already sent it, so it flies from the box into the orb on open.
+const voiceSent = showOf({ open: { bot: "pepper" }, message: "Can you send me the Q3 numbers?", sent: true }, "pepper");
 const voiceGroup = showOf({ open: { group: "g1" } }, "g1");
 // A "Pepper replied." notification's Open: the same card, marked from an hour ago (the last three replies are new).
 const reminderPepper = showOf({ open: { bot: "pepper", newSince: NOW - 60 * MIN } }, "pepper");
@@ -282,6 +284,9 @@ const scenarios: Scenario[] = [
   { slug: "voice-1to1", title: "Voice → Pepper's chat", theme: "dark", invoke: true, html: htmlOf(voicePepper), glance: cards.glanceChars(voicePepper), initArgs: {},
     blurb: "What \"Message Pepper…\" opens: the roster card, already on Pepper's chat pane (no slide), with the draft in the box. Every message type: text, images, files, requests, choices, a Messaged row, a notice, a deferred huge message.",
     hint: "Send: the message flies into Pepper's orb and shows at once. Back slides to the roster. Close + reopen: you come back to the same pane, draft and messages kept, and the voice draft does not return after a send." },
+  { slug: "voice-sent", title: "Voice send → Pepper's chat", theme: "dark", invoke: true, html: htmlOf(voiceSent), glance: cards.glanceChars(voiceSent), initArgs: {},
+    blurb: "What \"Send a message to Pepper…\" opens now: voice already sent the message, so the card opens on Pepper's chat and the message flies from the box into the orb.",
+    hint: "The box stays empty. Close + reopen: the message does not fly in again." },
   { slug: "reminder-open", title: "Notification Open → Pepper's chat", theme: "dark", invoke: true, html: htmlOf(reminderPepper), glance: cards.glanceChars(reminderPepper), initArgs: {},
     blurb: "What Open on a \"Pepper replied.\" notification shows in the notch: Pepper's chat pane with a red New messages line above the replies the user has not seen.",
     hint: "The line sits above the sign-in request (50 min ago). Back and reopen Pepper: the line is gone. Close + reopen the notch: the line is gone (the saved pane drops it)." },
@@ -697,7 +702,7 @@ function indexPage(): string {
     ["Drafts", "Typed text survives every refresh; in the roster card it survives Back and reopen."],
     ["Formatted text", "Table scrolls sideways, code has colors, math renders, one-line text looks like before."],
     ["Lazy images", "Images load when scrolled into view; the broken mockup shows “Open in Grok Bot”."],
-    ["Requests", "Sign in to Gmail has “Open in Grok Bot”; the connector and resolved/expired approvals do not. Choices answer, multi-select sends, Dismiss works."],
+    ["Requests", "Sign in to Gmail and the Google Drive connector have “Open in Grok Bot”; resolved/expired approvals do not. Choices answer, multi-select sends, Dismiss works."],
     ["Deferred message", "The appendix preview loads in full when visible (ends with END OF COMPLETE MESSAGE)."],
     ["Open computer", "Header button on 1:1 only; with “Bot computer is off” the card shows the message."],
   ];

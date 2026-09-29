@@ -2,7 +2,7 @@ import type { IntentDefinition } from "./sdk/intents.ts";
 import type { PreToolUseHookInput, HookResult } from "./sdk/hooks.ts";
 import { type Agent, normalize, IntegrationError } from "./client.ts";
 import { confirmationContext, confirmationRows, type ConfirmRow } from "./cards.ts";
-import { resolveMessageRecipient } from "./messaging.ts";
+import { resolveMessageRecipient, botChoiceLabel } from "./messaging.ts";
 import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { defineHooks, INTENT_SLOT_VALUES_META_KEY, INTENT_REFRESH_NOTIFICATION_METHOD } from "./intentSdk.generated.js";
@@ -23,85 +23,56 @@ export const intents: IntentDefinition[] = [
   },
   {
     name: "send_message", tool: "grokbot_send",
-    description: "Open one known Grok Bot's live chat with the message typed in its box; the user presses send. Copy the message without the command lead-in, preserving its meaning. Multiple questions inside that message are one send. Reject unknown bots, groups, multiple recipients, or separate actions outside the message.",
-    utterances: { en: ["Send a message to {bot} asking {message}", "Ask {bot} to {message}", "Message {bot} saying {message}", "Send {bot} a message saying {message}", "Tell Grok bot {bot} to {message}", "Grok Bot send {bot} {message}"] },
+    description: "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. Pick the bot: a name the user says wins, even if another bot's role fits better. If the user names no bot, or the name is unclear or misheard, pick the one bot whose role clearly fits the task (school work → the school bot). If two bots fit equally or none fits, do not pick. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask Pepper how the screen test is going' → 'How's the screen test going?'; 'tell Pepper to check the build' → 'Check the build.'). Drop the lead-in, keep the meaning, capital first letter, right end punctuation. Several questions in one message are one send. Reject groups, multiple recipients, or separate actions outside the message.",
+    utterances: { en: ["Send a message to {bot} asking {message}", "Ask {bot} {message}", "Ask {bot} to {message}", "Message {bot} saying {message}", "Send {bot} a message saying {message}", "Tell Grok bot {bot} to {message}", "Grok Bot send {bot} {message}", "Have {bot} {message}", "Get {bot} to {message}"] },
     slots: {
       bot: { type: "enum", valuesFrom: "tool", required: true },
-      message: { type: "string", required: true, examples: ["summarize today's updates", "check the latest build"] },
+      message: { type: "string", required: true, examples: ["How's the screen test going?", "Summarize today's updates.", "Can you check the latest build?"] },
     },
-    response: { en: "Your message to {bot} is ready to send." },
+    // Not "{bot}": the choice is the bot's whole name-and-role label.
+    response: { en: "Sending your message." },
   },
   {
-  "name": "view_screen",
-  "tool": "view_bot_desktop_live",
-  "description": "Show the live screen of ONE named bot in the notch: see its screen, watch it, or what it is working on. Not a bigger or separate window, not its messages.",
-  "utterances": {
-    "en": [
-      "Show me {bot}'s screen",
-      "What's {bot} working on",
-      "Watch {bot}"
-    ]
+    name: "view_screen", tool: "view_bot_desktop_live",
+    description: "Show the live screen of ONE named bot in the notch: see its screen, watch it, or what it is working on. Not a bigger or separate window, not its messages.",
+    utterances: { en: ["Show me {bot}'s screen", "What's {bot} working on", "Watch {bot}"] },
+    slots: { bot: { type: "enum", valuesFrom: "tool", required: true } },
+    response: { en: "Here is {bot}'s screen." },
   },
-  "slots": {
-    "bot": {
-      "type": "enum",
-      "valuesFrom": "tool",
-      "required": true
-    }
-  },
-  "response": {
-    "en": "Here is {bot}'s screen."
-  }
-},
   {
-  "name": "open_chat",
-  "tool": "grokbot_thread",
-  "description": "Open or show the conversation with ONE named bot. Only for seeing or opening the chat. Not for questions about what the bot said, summaries, or sending a message.",
-  "utterances": {
-    "en": [
-      "Open my chat with {bot}",
-      "Show {bot}'s messages",
-      "Open {bot}'s conversation"
-    ]
+    name: "open_chat", tool: "grokbot_thread",
+    description: "Open or show the conversation with ONE named bot. Only for seeing or opening the chat. Not for questions about what the bot said, summaries, or sending a message.",
+    utterances: { en: ["Open my chat with {bot}", "Show {bot}'s messages", "Open {bot}'s conversation"] },
+    slots: { bot: { type: "enum", valuesFrom: "tool", required: true } },
+    fixedArgs: { show: true },
+    response: { en: "Here is your chat with {bot}." },
   },
-  "slots": {
-    "bot": {
-      "type": "enum",
-      "valuesFrom": "tool",
-      "required": true
-    }
-  },
-  "fixedArgs": {
-    "show": true
-  },
-  "response": {
-    "en": "Here is your chat with {bot}."
-  }
-},
   {
-  "name": "create_bot",
-  "tool": "grokbot_create",
-  "description": "Create a new Grok bot when the user gives BOTH a name and what the bot should do. Not when either is missing.",
-  "utterances": {
-    "en": [
-      "Create a bot named {name} that {description}",
-      "Make a new bot called {name} to {description}"
-    ]
-  },
-  "slots": {
-    "name": {
-      "type": "string",
-      "required": true
+    name: "create_bot", tool: "grokbot_create",
+    description: "Create a new Grok bot when the user gives BOTH a name and what the bot should do. Not when either is missing.",
+    utterances: { en: ["Create a bot named {name} that {description}", "Make a new bot called {name} to {description}"] },
+    slots: {
+      name: { type: "string", required: true },
+      description: { type: "string", required: true },
     },
-    "description": {
-      "type": "string",
-      "required": true
-    }
+    response: { en: "Creating {name}." },
   },
-  "response": {
-    "en": "Creating {name}."
-  }
-},
+  {
+    name: "mute_bot", tool: "grokbot_notifications",
+    description: "Turn OFF notifications for ONE named bot. Not for all bots, and not to turn them on.",
+    utterances: { en: ["Turn off notifications for {bot}", "Turn off {bot}'s notifications", "Mute {bot}", "Stop notifications from {bot}", "Silence {bot}"] },
+    slots: { bot: { type: "enum", valuesFrom: "tool", required: true } },
+    fixedArgs: { enabled: false },
+    response: { en: "Turning off {bot}'s notifications." },
+  },
+  {
+    name: "unmute_bot", tool: "grokbot_notifications",
+    description: "Turn ON notifications for ONE named bot. Not for all bots, and not to turn them off.",
+    utterances: { en: ["Turn on notifications for {bot}", "Turn on {bot}'s notifications", "Unmute {bot}", "Notify me about {bot}"] },
+    slots: { bot: { type: "enum", valuesFrom: "tool", required: true } },
+    fixedArgs: { enabled: true },
+    response: { en: "Turning on {bot}'s notifications." },
+  },
   {
     name: "help", tool: "grokbot_help",
     description: "Show how to set up and use Grok Bot, and what the user can say to it. Only a guide; do not list, message or create bots.",
@@ -119,6 +90,24 @@ export function botIntentNames(agents: Agent[]): string[] {
   // SDK dynamic enums support 30 choices. Never silently publish a partial roster.
   return names.length <= 30 ? names : [];
 }
+
+/** The send intent's choices: the same bots as botIntentNames, each as its
+ * name-and-role label so the selector can route a task that names no bot. A
+ * label that reads as another bot's name falls back to its own name, and any
+ * clash left publishes plain names, so every choice resolves to one bot. */
+export function botIntentLabels(agents: Agent[]): string[] {
+  const individuals = agents.filter(a => !a.isGroup);
+  const names = botIntentNames(agents);
+  const labels = names.map(name => {
+    const bot = individuals.find(a => a.name === name)!;
+    const label = botChoiceLabel(bot);
+    return individuals.some(b => b !== bot && normalize(b.name) === normalize(label)) ? name : label;
+  });
+  return new Set(labels.map(normalize)).size === labels.length ? labels : names;
+}
+
+/** Plain names for the show/thread/screen intents; labels for send. */
+export interface BotChoices { names: string[]; labels: string[] }
 
 /** How long a send's hook waits for the recipient's recent rows. The host
  * gives preToolUse 2 s in all and fails open past it, and an unhooked send
@@ -141,7 +130,7 @@ export class IntentRoster {
   private updatedAt = 0;
   private pending?: Promise<Agent[]>;
   private signature = "";
-  onChoices: (names: string[]) => void = () => {};
+  onChoices: (choices: BotChoices) => void = () => {};
   /** The recipient's recent confirmation rows; the server wires the gateway in. */
   recentRows: (botId: string) => Promise<ConfirmRow[]> = async () => [];
 
@@ -152,22 +141,22 @@ export class IntentRoster {
     this.pending = this.read().then(agents => {
       this.agents = agents;
       this.updatedAt = this.now();
-      this.publish(botIntentNames(agents));
+      this.publish({ names: botIntentNames(agents), labels: botIntentLabels(agents) });
       return agents;
     }, error => {
       this.agents = [];
       this.updatedAt = 0;
-      this.publish([]);
+      this.publish({ names: [], labels: [] });
       throw error;
     }).finally(() => { this.pending = undefined; });
     return this.pending;
   }
 
-  private publish(names: string[]) {
-    const signature = JSON.stringify(names);
+  private publish(choices: BotChoices) {
+    const signature = JSON.stringify(choices);
     if (signature === this.signature) return;
     this.signature = signature;
-    this.onChoices(names);
+    this.onChoices(choices);
   }
 
   private fresh() {
@@ -235,9 +224,12 @@ export class IntentRoster {
   }
 }
 
-export function registerIntentSupport(server: McpServer, tools: Pick<RegisteredTool, "update">[], roster: IntentRoster, onError: (error: unknown) => void) {
-  roster.onChoices = names => {
-    for (const tool of tools) tool.update({ _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: names } } });
+type IntentTool = Pick<RegisteredTool, "update">;
+/** `named` tools get plain bot names; `labeled` tools get name-and-role labels. */
+export function registerIntentSupport(server: McpServer, tools: { named: IntentTool[]; labeled: IntentTool[] }, roster: IntentRoster, onError: (error: unknown) => void) {
+  roster.onChoices = ({ names, labels }) => {
+    for (const tool of tools.named) tool.update({ _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: names } } });
+    for (const tool of tools.labeled) tool.update({ _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: labels } } });
   };
   defineHooks(server, { preToolUse: (input: PreToolUseHookInput) => roster.beforeTool(input) });
   const refresh = () => { void roster.refresh().catch(onError); };

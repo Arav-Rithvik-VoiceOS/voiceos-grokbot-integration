@@ -56,6 +56,15 @@ function markPng() {
 }
 const markB64 = markPng().toString("base64");
 
+// The real macOS Keychain "Always Allow" dialog (client.ts's `security` call),
+// from a 900×430 screenshot: cropped to the panel border (11,23)-(881,397),
+// corners masked transparent at radius 48, resized to 560px wide, WebP q90.
+// The source screenshot isn't checked in; this .webp is the frozen output.
+// guide.html shows it verbatim, not a recreation, and stands a bot on
+// Always Allow's measured top edge (40.3%, 76.3%) — re-measure if you
+// replace it.
+const keychainPopupB64 = readFileSync(join(root, "keychain-popup.webp")).toString("base64");
+
 function computerViewerBinary() {
   const scratch = mkdtempSync(join(tmpdir(), "grokbot-viewer-build-"));
   const source = join(root, "native", "ComputerViewer.swift");
@@ -96,6 +105,7 @@ export const SHOW_CSS = ${s(minified("widgets/show-adapter.css"))};
 export const SCREEN_PANE_JS = ${s(minified("widgets/screen-pane.js"))};
 export const SCREEN_PANE_CSS = ${s(minified("widgets/screen-pane.css"))};
 export const MARK_DATA_URI = ${s(`data:image/png;base64,${markB64}`)};
+export const KEYCHAIN_POPUP_DATA_URI = ${s(`data:image/webp;base64,${keychainPopupB64}`)};
 export const RFB_B64 = ${s(text("widgets/rfb.b64").trim())};
 export const RFB_FULL_B64 = ${s(text("widgets/rfb-full.b64").trim())};
 export const COMPUTER_VIEWER_BINARY_B64 = ${s(computerViewerB64)};

@@ -5,7 +5,7 @@
 
    Voice opens this same card: args.open says which pane to start on — {bot}, {group} (with optional
    pending {members, groupName} edits), or {members, groupName} for a new group — and args.message is
-   the draft for that pane. */
+   the draft for that pane, or with args.sent the message voice already sent (it flies into the orb). */
 const lcBridge=LiveChat.bridge({canInvoke:CAN_INVOKE}),lcDrafts=new Map();
 let lcPane=null,lcGroup=null,gbNew=null,gbEdit=null,gbScreen=null,gbRosterDue=false,gbNewSince=null;
 const gbCalm=matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -40,8 +40,10 @@ boot=function(data,args,mode){const d=data&&Array.isArray(data.bots)?data:DEMO.d
  // Groups this card created after its html was baked.
  (s.madeGroups||[]).forEach(g=>{d.groups=d.groups||[];if(!d.groups.some(x=>x.id===g.id))d.groups.push(g)});
  Object.entries(s.drafts||{}).forEach(([k,v])=>lcDrafts.set(k,v));
- // The voice draft is used once: a reopened card must not put an already-sent message back in the box.
- const k=gbKey(a.open);if(!s.argsUsed&&k&&a.message&&!lcDrafts.has(k)){lcDrafts.set(k,String(a.message));gbSaveDrafts()}
+ // The voice message is used once: a reopened card must not put it back in the box or fly it in again.
+ // args.sent = voice already sent it (it flies in below); otherwise it is a draft for the box.
+ const k=gbKey(a.open),voice=!s.argsUsed&&k&&a.message?String(a.message):'';
+ if(voice&&!a.sent&&!lcDrafts.has(k)){lcDrafts.set(k,voice);gbSaveDrafts()}
  gbPut({argsUsed:true});
  // boot runs inside show.html's init listener, before ours mirrors CAN_INVOKE: a pane opened below
  // (the screen pane probes its feed at once) must find the queue already on.
@@ -49,6 +51,8 @@ boot=function(data,args,mode){const d=data&&Array.isArray(data.bots)?data:DEMO.d
  lcBoot(d,a,mode);
  // Where the user left the card beats where voice opened it (null = they went back to the roster).
  const pane=s.pane!==undefined?s.pane:(a.open||null);if(pane)gbOpen(pane,true);
+ // Wait two frames so the pane has its final layout before the flight measures the box and the orb.
+ if(voice&&a.sent)requestAnimationFrame(()=>requestAnimationFrame(()=>{if(lcPane&&lcPane.id===k)gbFlyIn(lcPane,voice)}));
  // Check the roster once per open, even behind a chat: the saved chat's own bot may be the deleted one.
  gbRoster()};
 // One roster-only read (no bot = no transcript): drops bots and groups deleted in Grok Bot.
@@ -71,7 +75,7 @@ const gbGroupRef=g=>({name:g.name,color:'#888',shape:'blob',status:'working',gro
    The chat's LiveChat keeps running behind it, so Back just slides the feed away and tears it down. */
 function gbOpenScreen(b){const host=$('#screen-pane');if(!host||b.group)return;
  if(gbScreen&&gbScreen.destroy)gbScreen.destroy();
- gbScreen=ScreenPane.mount({host,bot:botById(D,b.id)||b,invoke,onBack:gbCloseScreen});
+ gbScreen=ScreenPane.mount({host,bot:botById(D,b.id)||b,invoke,onBack:gbCloseScreen,whenReady:f=>lcBridge.onReady(f)});
  gbPut({pane:{bot:b.id,screen:true}});
  $('#panes').classList.add('screen');if(typeof report==='function')report()}
 function gbCloseScreen(){$('#panes').classList.remove('screen');const g=gbScreen;gbScreen=null;
@@ -162,6 +166,13 @@ function gbSend(p,v){const id=p.id,localId=p.live.addLocal(v);gbFlying.add(local
   .catch(e=>{const st=e&&e.status;if(st==='unknown'){gbLocal(id,localId,'orphan');return}
    gbLocal(id,localId,null);gbGiveBack(id,v);gbSay(id,((st==='cancelled'?'':(e&&(e.error||e.message))||'')+' Not sent. Your message is back in the box.').trim(),true)})
   .finally(()=>gbFlying.delete(localId))}
+/* Voice already sent this message: it still leaves the box and flies into the orb, as a tap send does.
+   It lands on its real row if the pane's first refresh already brought it, else on a local 'sent' row
+   that the next refresh swaps for the real one. */
+function gbFlyIn(p,v){const t=v.trim(),now=Date.now();
+ const hit=p.live.items().filter(i=>i&&i.from==='me'&&!i.local&&String(i.text||'').trim()===t&&now-(+i.timestampMs||0)<12e4).pop();
+ const id=hit?hit.id:p.live.addLocal(v);if(!hit)p.live.setLocal(id,'sent');
+ gbLaunch(v,id,p.id);p.live.hurry()}
 // Settle a local row whether or not its conversation is still the open pane.
 function gbLocal(id,localId,state){const p=lcPane&&lcPane.id===id?lcPane:null;
  if(p){state?p.live.setLocal(localId,state):p.live.dropLocal(localId);if(state)p.live.hurry();return}

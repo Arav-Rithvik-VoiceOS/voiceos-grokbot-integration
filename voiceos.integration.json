@@ -1,12 +1,15 @@
 {
   "schemaVersion": 1,
   "id": "com.arav.bot",
-  "version": "1.0.35",
+  "version": "1.0.38",
   "name": "Grok Bot",
   "summary": "Talk to your Grok Bot AI teammates by voice.",
   "description": "See your Grok Bot teammates, message one, catch up on what a bot said, create a new bot, or start a group chat with several at once — all by voice, from the notch.",
   "categories": [
     "Productivity"
+  ],
+  "supportedPlatforms": [
+    "darwin"
   ],
   "icon": "icon.png",
   "publisher": {
@@ -47,13 +50,57 @@
       "title": "Show notifications from bots",
       "description": "Show a notch pill when a bot replies or a scheduled task finishes.",
       "type": "boolean",
-      "default": false
+      "default": true
     }
   ],
+  "setupGuide": {
+    "title": "Set up Grok Bot",
+    "blocks": [
+      {
+        "type": "heading",
+        "text": "1. Install Grok Bot and sign in"
+      },
+      {
+        "type": "text",
+        "text": "Install the Grok Bot app on this Mac, open it, and sign in. VoiceOS uses that session, so there are no keys to paste."
+      },
+      {
+        "type": "heading",
+        "text": "2. One popup from macOS"
+      },
+      {
+        "type": "text",
+        "text": "The first time you use Grok Bot in VoiceOS, macOS asks for access to \"Grok Bot Safe Storage\" in your Keychain. It shows on your screen, not in VoiceOS. Type your Mac password and click Always Allow, so it does not ask again."
+      },
+      {
+        "type": "image",
+        "src": "keychain-popup-setup.webp",
+        "alt": "The macOS Keychain popup asking for access to Grok Bot Safe Storage, with an Always Allow button",
+        "caption": "Click Always Allow."
+      },
+      {
+        "type": "heading",
+        "text": "3. Make your first bot"
+      },
+      {
+        "type": "text",
+        "text": "Say \"Create a bot named Scout that checks my inbox.\""
+      },
+      {
+        "type": "heading",
+        "text": "Optional: notifications"
+      },
+      {
+        "type": "text",
+        "text": "Turn on \"Show notifications from bots\" below to get a ping when a bot replies. To mute one bot, say \"Turn off Pepper's notifications\"."
+      }
+    ]
+  },
   "tools": [
     {
       "name": "view_bot_desktop_live",
       "title": "View a bot's live screen",
+      "hidePermissionToggle": true,
       "description": "Show a live view of a Grok Bot teammate's computer while it works. Use when the user asks to see a bot's screen, watch what a bot is doing, or what a bot is working on right now — e.g. \"show me Pepper's screen\", \"what's Jerome working on\".",
       "inputSchema": {
         "type": "object",
@@ -71,6 +118,7 @@
     {
       "name": "grokbot_show",
       "title": "Show bots",
+      "hidePermissionToggle": true,
       "description": "Show the user's Grok Bot AI teammates, or one bot's live progress. Use when the user asks to see their bots, what bots they have, or what a specific bot is doing right now.",
       "inputSchema": {
         "type": "object",
@@ -85,6 +133,7 @@
     {
       "name": "grokbot_help",
       "title": "How to use Grok Bot",
+      "hidePermissionToggle": true,
       "description": "Show how to set up and use Grok Bot: a card with the setup steps (checked on this Mac), then things the user can say. Use when the user asks how to use or set up Grok Bot, what Grok Bot can do, or for help with this integration.",
       "inputSchema": {
         "type": "object",
@@ -103,7 +152,8 @@
     {
       "name": "grokbot_thread",
       "title": "Read a bot's messages",
-      "description": "Read what one Grok Bot teammate said, found, or did. Use for ANY question about a bot's messages or results: what it said, summarize its work, answer a question from it, or draft something from it. Returns the message text in `thread`; read it and do what the user asked in your own words. Set show only when the user asks to see or open the conversation.",
+      "hidePermissionToggle": true,
+      "description": "Read what one Grok Bot teammate said, found, or did. Use for ANY question about a bot's messages or results: what it said, summarize its work, answer a question from it, or draft something from it. Returns the message text in `thread`; read it and do what the user asked in your own words. Set show only when the user asks to see or open the conversation. Accounts a bot needs (Gmail, Google Calendar, Slack, …) cannot be connected by voice or in VoiceOS: tell the user to press \"Open in Grok Bot\" on that request in the bot's card, or open the bot's chat in the Grok Bot app, and connect it there.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -129,6 +179,7 @@
     {
       "name": "grokbot_prepare_message",
       "title": "Check message recipients",
+      "hidePermissionToggle": true,
       "description": "Check the live Grok Bot roster before opening a message. Use FIRST for group messages or when recipient identity is uncertain; single-bot fast intents can call grokbot_send directly. Pass names as the user said them. This read-only lookup does not send. On success call nextTool with the returned args. On failure stop and explain the recipient could not be found; do not guess another bot, create a bot, or retry automatically.",
       "inputSchema": {
         "type": "object",
@@ -171,8 +222,9 @@
     {
       "name": "grokbot_send",
       "title": "Message a bot",
+      "hidePermissionToggle": true,
       "uiCallable": true,
-      "description": "Open the live chat with one Grok Bot, with the user's message typed into the card's message box. Use when the user asks to message, ask, or tell one bot something. It does NOT send: the user reviews the draft and presses send in the card, then keeps chatting there. Accepts a known bot name or an exact ID from grokbot_prepare_message. Unknown, ambiguous, or group recipients are rejected; do not substitute another bot. After it opens, tell the user their draft is ready to send.",
+      "description": "Send the user's message to one Grok Bot right away, then open its live chat, where the user keeps chatting. The message goes out as written, so write it TO the bot the way the user would type it ('ask Pepper how the test is going' → 'How's the test going?'). Use when the user asks to message, ask, or tell one bot something. Accepts a known bot name or an exact ID from grokbot_prepare_message. Unknown, ambiguous, or group recipients are rejected; do not substitute another bot. After it returns, tell the user the message was sent.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -201,8 +253,9 @@
     {
       "name": "grokbot_card_send",
       "title": "Send from the bot card",
+      "hidePermissionToggle": true,
       "uiCallable": true,
-      "description": "Internal — called only by the Grok Bot card's message box, never by voice. Do not call this tool; for a spoken request use grokbot_send or grokbot_group, which open the card with the draft for the user to send.",
+      "description": "Internal — called only by the Grok Bot card's message box, never by voice. Do not call this tool; for a spoken request use grokbot_send or grokbot_group.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -246,6 +299,7 @@
     {
       "name": "grokbot_create",
       "title": "Create a bot",
+      "hidePermissionToggle": true,
       "description": "Create a new Grok Bot teammate with a name and instructions. Use when the user asks to make, create, or set up a new bot.",
       "inputSchema": {
         "type": "object",
@@ -313,10 +367,76 @@
       }
     },
     {
+      "name": "grokbot_notifications",
+      "title": "Bot notifications",
+      "hidePermissionToggle": true,
+      "description": "Turn one Grok Bot's notifications on or off (the bot's \"Notify on updates\" switch in the Grok Bot app). Off means no notch ping when that bot replies or finishes a scheduled task. Use when the user asks to mute, silence, unmute, or turn on/off notifications for a bot. Not for all bots at once: that is the \"Show notifications from bots\" setting in Grok Bot's VoiceOS settings.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "bot": {
+            "type": "string",
+            "description": "The bot's name as the user said it."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "true to turn the bot's notifications on, false to turn them off."
+          }
+        },
+        "required": [
+          "bot",
+          "enabled"
+        ]
+      },
+      "confirmation": {
+        "schemaVersion": 1,
+        "root": {
+          "type": "card",
+          "title": "Bot notifications",
+          "children": [
+            {
+              "type": "text",
+              "text": "Pings in the notch when this bot replies or finishes a scheduled task.",
+              "variant": "body",
+              "maxLines": 3
+            },
+            {
+              "type": "textField",
+              "bind": "{{bot}}",
+              "label": "Bot",
+              "required": true
+            },
+            {
+              "type": "toggle",
+              "bind": "{{enabled}}",
+              "label": "Notifications"
+            }
+          ],
+          "footer": [
+            {
+              "type": "actions",
+              "items": [
+                {
+                  "label": "Cancel",
+                  "role": "cancel"
+                },
+                {
+                  "label": "Save",
+                  "role": "confirm",
+                  "color": "accent"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
       "name": "grokbot_group",
       "title": "Message a group chat",
+      "hidePermissionToggle": true,
       "uiCallable": true,
-      "description": "Open a Grok Bot group chat (an existing group, or a new one from the named bots), with the user's message typed into the card's message box. Use when the user asks to message several bots or a group. It does NOT send: the user can edit the draft, group name and members, then presses send in the card and keeps chatting there. Use AFTER grokbot_prepare_message succeeds for this request, copying its returned args including resolved group/member IDs. Never call after a missing or ambiguous recipient lookup.",
+      "description": "Send the user's message to a Grok Bot group chat right away (an existing group, or a new one created from two or more named bots), then open that group's live chat. Use when the user asks to message several bots or a group. Spoken member or name changes are saved before it sends. Without a message, or with fewer than two bots for a new group, it only opens the group pane. Use AFTER grokbot_prepare_message succeeds for this request, copying its returned args including resolved group/member IDs. Never call after a missing or ambiguous recipient lookup.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -348,7 +468,7 @@
           },
           "message": {
             "type": "string",
-            "description": "The drafted message, composed as the user would type it, with lead-in commands removed. The arrow sends the final edited text."
+            "description": "The message to send, written TO the group the way the user would type it: lead-in commands removed, reported speech made direct."
           }
         },
         "required": []
@@ -358,6 +478,7 @@
     {
       "name": "grokbot_card_snapshot",
       "title": "Refresh conversation",
+      "hidePermissionToggle": true,
       "description": "Internal read-only tool for the visible Grok Bot conversation card. Use grokbot_thread for spoken requests.",
       "inputSchema": {
         "type": "object",
@@ -377,6 +498,7 @@
     {
       "name": "grokbot_card_image",
       "title": "Load conversation image",
+      "hidePermissionToggle": true,
       "description": "Internal read-only image loader for Grok Bot cards. Resolves only an image belonging to the specified transcript entry.",
       "inputSchema": {
         "type": "object",
@@ -404,6 +526,7 @@
     {
       "name": "grokbot_card_action",
       "title": "Respond to a conversation card",
+      "hidePermissionToggle": true,
       "description": "Internal — only invoke from a user's click on a Grok Bot card. Never select or dismiss an answer on the user's behalf. Handles the exact selected options or opens Grok Bot's native authentication and approval flow.",
       "inputSchema": {
         "type": "object",
@@ -444,6 +567,7 @@
     {
       "name": "grokbot_card_entry",
       "title": "Load complete conversation message",
+      "hidePermissionToggle": true,
       "uiCallable": true,
       "description": "Internal read-only loader for complete Grok Bot messages. The card automatically reads bounded chunks; no user action or native-app handoff is needed.",
       "inputSchema": {
@@ -473,6 +597,7 @@
     {
       "name": "grokbot_open_computer_window",
       "title": "Open a bot's computer window",
+      "hidePermissionToggle": true,
       "uiCallable": true,
       "description": "Internal — invoked by the live screen card when the user taps it, to open that bot's computer in a larger window. Do not call from voice.",
       "inputSchema": {
@@ -492,6 +617,7 @@
     {
       "name": "grokbot_card_screen",
       "title": "Open a bot's screen in the card",
+      "hidePermissionToggle": true,
       "uiCallable": true,
       "description": "Internal — invoked by the show card's screen pane to load a bot's live desktop inside the card. Do not call from voice.",
       "inputSchema": {
@@ -511,6 +637,7 @@
     {
       "name": "grokbot_reply_check",
       "title": "Check a bot's latest reply",
+      "hidePermissionToggle": true,
       "uiCallable": true,
       "description": "Internal — polled by the screen card's message bar after the user sends a message, to show the bot's reply on the card. Do not call from voice.",
       "inputSchema": {
@@ -582,15 +709,18 @@
     {
       "name": "send_message",
       "tool": "grokbot_send",
-      "description": "Open one known Grok Bot's live chat with the message typed in its box; the user presses send. Copy the message without the command lead-in, preserving its meaning. Multiple questions inside that message are one send. Reject unknown bots, groups, multiple recipients, or separate actions outside the message.",
+      "description": "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. Pick the bot: a name the user says wins, even if another bot's role fits better. If the user names no bot, or the name is unclear or misheard, pick the one bot whose role clearly fits the task (school work → the school bot). If two bots fit equally or none fits, do not pick. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask Pepper how the screen test is going' → 'How's the screen test going?'; 'tell Pepper to check the build' → 'Check the build.'). Drop the lead-in, keep the meaning, capital first letter, right end punctuation. Several questions in one message are one send. Reject groups, multiple recipients, or separate actions outside the message.",
       "utterances": {
         "en": [
           "Send a message to {bot} asking {message}",
+          "Ask {bot} {message}",
           "Ask {bot} to {message}",
           "Message {bot} saying {message}",
           "Send {bot} a message saying {message}",
           "Tell Grok bot {bot} to {message}",
-          "Grok Bot send {bot} {message}"
+          "Grok Bot send {bot} {message}",
+          "Have {bot} {message}",
+          "Get {bot} to {message}"
         ]
       },
       "slots": {
@@ -603,13 +733,14 @@
           "type": "string",
           "required": true,
           "examples": [
-            "summarize today's updates",
-            "check the latest build"
+            "How's the screen test going?",
+            "Summarize today's updates.",
+            "Can you check the latest build?"
           ]
         }
       },
       "response": {
-        "en": "Your message to {bot} is ready to send."
+        "en": "Sending your message."
       }
     },
     {
@@ -681,6 +812,59 @@
       },
       "response": {
         "en": "Creating {name}."
+      }
+    },
+    {
+      "name": "mute_bot",
+      "tool": "grokbot_notifications",
+      "description": "Turn OFF notifications for ONE named bot. Not for all bots, and not to turn them on.",
+      "utterances": {
+        "en": [
+          "Turn off notifications for {bot}",
+          "Turn off {bot}'s notifications",
+          "Mute {bot}",
+          "Stop notifications from {bot}",
+          "Silence {bot}"
+        ]
+      },
+      "slots": {
+        "bot": {
+          "type": "enum",
+          "valuesFrom": "tool",
+          "required": true
+        }
+      },
+      "fixedArgs": {
+        "enabled": false
+      },
+      "response": {
+        "en": "Turning off {bot}'s notifications."
+      }
+    },
+    {
+      "name": "unmute_bot",
+      "tool": "grokbot_notifications",
+      "description": "Turn ON notifications for ONE named bot. Not for all bots, and not to turn them off.",
+      "utterances": {
+        "en": [
+          "Turn on notifications for {bot}",
+          "Turn on {bot}'s notifications",
+          "Unmute {bot}",
+          "Notify me about {bot}"
+        ]
+      },
+      "slots": {
+        "bot": {
+          "type": "enum",
+          "valuesFrom": "tool",
+          "required": true
+        }
+      },
+      "fixedArgs": {
+        "enabled": true
+      },
+      "response": {
+        "en": "Turning on {bot}'s notifications."
       }
     },
     {

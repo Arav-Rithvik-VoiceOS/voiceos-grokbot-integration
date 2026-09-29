@@ -7,7 +7,7 @@ import {
 } from "../cards.ts";
 import {
   LIVE_CHAT_JS, LIVE_CHAT_CSS, MARKDOWN_CSS,
-  SHOW_ADAPTER, SHOW_CSS, SCREEN_PANE_JS, SCREEN_PANE_CSS, MARK_DATA_URI, WIDGETS,
+  SHOW_ADAPTER, SHOW_CSS, SCREEN_PANE_JS, SCREEN_PANE_CSS, MARK_DATA_URI, KEYCHAIN_POPUP_DATA_URI, WIDGETS,
 } from "../assets.generated.ts";
 import type { Agent, TranscriptEntry } from "../client.ts";
 
@@ -311,7 +311,7 @@ describe("guide card", () => {
     const card = guideCard({ app: true, signedIn: true, bots: 1, notifications: false }, bots, 1);
     const html = htmlOf(card);
     expect(demo(html)).toEqual({
-      data: { setup: { app: true, signedIn: true, bots: 1, notifications: false }, bots: [{ name: "Terry", color: "#FF309B", shape: "pebble" }] },
+      data: { setup: { app: true, signedIn: true, bots: 1, notifications: false }, bots: [{ name: "Terry", color: "#FF309B", shape: "pebble" }], kcImg: KEYCHAIN_POPUP_DATA_URI },
       args: { page: 1 },
     });
     for (const shape of ["blob", "pebble", "squircle", "tablet", "wedge", "hex", "cloud", "teardrop"])

@@ -55,24 +55,6 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 .bubble b{font-weight:650}
 .sys{align-self:center;color:var(--ink-3);font-size:11.5px;display:flex;align-items:center;gap:5px;padding:2px 0}
 .msgs{display:flex;flex-direction:column;gap:6px;padding:4px 14px 30px;overflow-y:auto;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent)}
-/* Progressive blur at the scroll edges: six stacked backdrop-filter bands, each
-   masked to its own slice so the blur ramps smoothly instead of stepping. No
-   backgrounds, so the colour underneath never changes. The top fog only shows
-   once the list has scrolled (see the capture-phase scroll listener). */
-.msgwrap{position:relative}
-.fog{position:absolute;left:0;right:0;height:60px;pointer-events:none;opacity:0;transition:opacity .3s ease}
-.fog.bot{bottom:0;--dir:to bottom}
-.fog.top{top:0;--dir:to top}
-.msgwrap.scrolled .fog.top,.msgwrap.more .fog.bot{opacity:1}
-.fog i{position:absolute;inset:0}
-.fog i:nth-child(1){-webkit-backdrop-filter:blur(0.5px);backdrop-filter:blur(0.5px);-webkit-mask:linear-gradient(var(--dir),#000 0%,#000 16.7%,transparent 33.3%);mask:linear-gradient(var(--dir),#000 0%,#000 16.7%,transparent 33.3%)}
-.fog i:nth-child(2){-webkit-backdrop-filter:blur(1px);backdrop-filter:blur(1px);-webkit-mask:linear-gradient(var(--dir),transparent 0%,#000 16.7%,#000 33.3%,transparent 50%);mask:linear-gradient(var(--dir),transparent 0%,#000 16.7%,#000 33.3%,transparent 50%)}
-.fog i:nth-child(3){-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);-webkit-mask:linear-gradient(var(--dir),transparent 16.7%,#000 33.3%,#000 50%,transparent 66.7%);mask:linear-gradient(var(--dir),transparent 16.7%,#000 33.3%,#000 50%,transparent 66.7%)}
-.fog i:nth-child(4){-webkit-backdrop-filter:blur(3.5px);backdrop-filter:blur(3.5px);-webkit-mask:linear-gradient(var(--dir),transparent 33.3%,#000 50%,#000 66.7%,transparent 83.3%);mask:linear-gradient(var(--dir),transparent 33.3%,#000 50%,#000 66.7%,transparent 83.3%)}
-.fog i:nth-child(5){-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);-webkit-mask:linear-gradient(var(--dir),transparent 50%,#000 66.7%,#000 83.3%,transparent 100%);mask:linear-gradient(var(--dir),transparent 50%,#000 66.7%,#000 83.3%,transparent 100%)}
-.fog i:nth-child(6){-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);-webkit-mask:linear-gradient(var(--dir),transparent 66.7%,#000 83.3%,#000 100%);mask:linear-gradient(var(--dir),transparent 66.7%,#000 83.3%,#000 100%)}
-/* Top edge alpha fade, colour-neutral: backdrop opacity(0) masked to the last 36px. The bottom edge already fades through .msgs mask-image. */
-.fog.top i:nth-child(7){-webkit-backdrop-filter:opacity(0);backdrop-filter:opacity(0);-webkit-mask:linear-gradient(var(--dir),transparent 40%,#000 100%);mask:linear-gradient(var(--dir),transparent 40%,#000 100%)}
 .compose{display:flex;align-items:center;gap:8px;margin:0 12px 12px;background:var(--fill-1);border:1px solid transparent;border-radius:22px;padding:5px 5px 5px 6px}
 .compose input{background:none;border:0;padding:6px 4px;flex:1;min-width:0}
 .compose .send{width:30px;height:30px;border-radius:50%;background:var(--ink-1);color:#000;flex:none;display:grid;place-items:center;transition:transform .12s,opacity .15s}
@@ -161,15 +143,7 @@ const Motion=(()=>{
  return{scan,set,react};
 })();
 
-/* Message list plus its two blur fogs. Fogs live outside the scroller so they stay
-   put; the wrapper gets .scrolled once the list moves, which reveals the top fog. */
-function fog(cls,n){return '<div class="fog '+cls+'" aria-hidden="true">'+'<i></i>'.repeat(n)+'</div>'}
-function msgsBox(inner){return '<div class="msgwrap"><div class="msgs" id="msgs" style="max-height:268px">'+inner+'</div>'+fog('top',7)+fog('bot',6)+'</div>'}
-/* .scrolled = content hidden above (show the top fog); .more = content hidden below (show the
-   bottom fog). At the end of the list nothing blurs, so the last message reads clean. */
-function fogSync(m){const w=m.parentNode;if(!w||!w.classList.contains('msgwrap'))return;w.classList.toggle('scrolled',m.scrollTop>6);w.classList.toggle('more',m.scrollHeight-m.clientHeight-m.scrollTop>6)}
-document.addEventListener('scroll',e=>{const m=e.target;if(m&&m.classList&&m.classList.contains('msgs'))fogSync(m)},true);
-let fogRaf=0;new MutationObserver(()=>{if(fogRaf)return;fogRaf=requestAnimationFrame(()=>{fogRaf=0;document.querySelectorAll('.msgs').forEach(fogSync)})}).observe(document.documentElement,{childList:true,subtree:true});
+function msgsBox(inner){return '<div class="msgs" id="msgs" style="max-height:268px">'+inner+'</div>'}
 function autosize(t){t.style.height='auto';t.style.height=t.scrollHeight+'px'}
 
 
@@ -213,7 +187,7 @@ function swapTo(receipt){
 
 let D;
 function render(d){D=d;const w=d.bots.filter(b=>['working','thinking'].includes(b.status)).length,need=d.bots.filter(b=>b.status==='waiting').length;
- $('#list').innerHTML='<div class="hd"><span class="mark"><i></i>Grok Bot</span><span class="grow"></span><span class="t3">'+w+' working'+(need?' · <span style="color:var(--accent)">'+need+' needs you</span>':' · '+(d.bots.length-w)+' idle')+'</span></div>'
+ $('#list').innerHTML='<div class="hd"><span class="mark"><i></i>Grok Bot</span></div>'
  +d.bots.map(b=>'<button class="row" data-bot="'+b.id+'">'+av(b)+'<div class="grow" style="min-width:0"><div style="display:flex;align-items:center;gap:6px"><span class="t2">'+esc(b.name)+'</span><span class="chip">'+esc(b.label)+'</span><span class="grow"></span><span class="st"><span class="dot '+dotCls(b)+'"></span>'+statusText(b)+'</span></div><div class="task">'+esc(b.task)+'</div></div></button>').join('')
  +(d.groups||[]).map(g=>'<button class="row" data-group="'+g.id+'"><span class="stack">'+g.members.map(id=>av(botById(d,id),'small')).join('')+'</span><div class="grow" style="min-width:0"><div style="display:flex;align-items:center;gap:6px"><span class="t2">'+esc(g.name)+'</span><span class="chip">Group</span><span class="grow"></span><span class="t3 num">'+esc(g.time)+'</span></div><div class="task">'+esc(g.last)+'</div></div></button>').join('')
  +'<div style="height:8px"></div>';

@@ -6,7 +6,7 @@ import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/typ
 import { z } from "zod";
 import { intentErrors, resolveIntentSlots, matchIntentTemplate, INTENT_SLOT_VALUES_META_KEY, INTENT_REFRESH_NOTIFICATION_METHOD } from "./sdk/intents.ts";
 import type { PreToolUseHookInput } from "./sdk/hooks.ts";
-import { intents, IntentRoster, botIntentNames, resolveApprovedRecipient, registerIntentSupport } from "./intents.ts";
+import { intents, IntentRoster, botIntentNames, botIntentLabels, resolveApprovedRecipient, registerIntentSupport } from "./intents.ts";
 import type { Agent } from "./client.ts";
 import { GROK_COLOR_HEX } from "./cards.ts";
 import manifest from "./voiceos.integration.json";
@@ -20,12 +20,13 @@ const hook = (args: Record<string, unknown>): PreToolUseHookInput => ({
   hookApiVersion: 1, event: "preToolUse", toolName: "grokbot_send", args,
 });
 
-test("shipped show and send intents use the SDK contract; only create asks first", () => {
+test("shipped show and send intents use the SDK contract; only create and mute ask first", () => {
   expect<unknown>(manifest.intents).toEqual(intents);
   expect(intentErrors(intents, manifest.tools)).toEqual([]);
   // grokbot_send / grokbot_group only open the card with a draft; the card's
-  // send arrow sends. Create keeps its card and the hook forces it on.
-  expect(manifest.tools.filter(t => t.confirmation).map(t => t.name)).toEqual(["grokbot_create"]);
+  // send arrow sends. Create keeps its card and the hook forces it on; the
+  // per-bot notification switch shows its own on/off card.
+  expect(manifest.tools.filter(t => t.confirmation).map(t => t.name)).toEqual(["grokbot_create", "grokbot_notifications"]);
   expect(manifest.hooks).toEqual({ preToolUse: { scope: "own" } });
   expect(matchIntentTemplate(intents[0], "show my Grok bots")).toEqual({});
   expect(matchIntentTemplate(intents[0], "Grok Bot show")).toEqual({});
@@ -42,13 +43,40 @@ test("live enums include individual names, excluding ambiguous names and oversiz
   expect(botIntentNames(Array.from({ length: 31 }, (_, i) => ({ id: String(i), name: `Bot ${i}` })))).toEqual([]);
 });
 
+test("send choices carry each bot's role and resolve back to that one bot", async () => {
+  const team: Agent[] = [
+    { id: "pepper", name: "Pepper", title: "EA", description: "Chief of Staff.\n Calendar and  handoffs." },
+    { id: "friday", name: "F.R.I.D.A.Y.", title: "School", description: "Assignments, tests, deadlines. ".repeat(10) },
+    { id: "bare", name: "Bare" },
+    { id: "g", name: "Pepper — EA: Chief of Staff. Calendar and handoffs.", isGroup: true },
+  ];
+  const labels = botIntentLabels(team);
+  expect(labels).toEqual(["Bare", expect.stringMatching(/^F\.R\.I\.D\.A\.Y\. — School: Assignments/), "Pepper — EA: Chief of Staff. Calendar and handoffs."]);
+  expect(labels.every(l => l.length <= 200)).toBe(true);
+  expect(labels[1].endsWith("…")).toBe(true);
+  // A label that reads as another bot's name would resolve to that bot: keep the plain name.
+  const clashing = botIntentLabels([...team, { id: "clash", name: "Bee — x" }, { id: "bee", name: "Bee", description: "x" }]);
+  expect(clashing).toContain("Bee");
+  expect(clashing).toContain("Bee — x");
+  const roster = new IntentRoster(async () => team);
+  const published: { names: string[]; labels: string[] }[] = [];
+  roster.onChoices = c => published.push(c);
+  await roster.refresh();
+  expect(published).toEqual([{ names: ["Bare", "F.R.I.D.A.Y.", "Pepper"], labels }]);
+  for (const [label, id] of [[labels[2], "pepper"], [labels[1], "friday"], ["Pepper", "pepper"]]) {
+    const r = await roster.beforeTool(hook({ bot: label, message: "Hi" }));
+    expect(r.updatedArgs).toMatchObject({ bot: label, recipientId: id });
+    expect(resolveApprovedRecipient(label, id, team).id).toBe(id);
+  }
+});
+
 test("roster changes publish new choices once; outages clear old names", async () => {
   let current = agents;
   let reads = 0;
   let fail = false;
   const roster = new IntentRoster(async () => { reads++; if (fail) throw Error("offline"); return current; });
   const published: string[][] = [];
-  roster.onChoices = names => published.push(names);
+  roster.onChoices = ({ names }) => published.push(names);
   await Promise.all([roster.refresh(), roster.refresh()]);
   expect(reads).toBe(1);
   await roster.refresh();
@@ -189,7 +217,7 @@ test("actual MCP tools/list metadata and refresh notification carry current enum
     inputSchema: { bot: z.string().optional(), message: z.string().optional() },
     _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: [] } },
   }, async () => { throw new Error("No message tools should execute in this test"); }));
-  const support = registerIntentSupport(server, tools, roster, error => { throw error; });
+  const support = registerIntentSupport(server, { named: [tools[0]], labeled: [tools[1]] }, roster, error => { throw error; });
   let changes = 0;
   client.setNotificationHandler(ToolListChangedNotificationSchema, () => { changes++; });
   const [hostTransport, appTransport] = InMemoryTransport.createLinkedPair();
