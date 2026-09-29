@@ -3,6 +3,19 @@
 The bare-bones starting point for every VoiceOS integration. Copy this folder,
 rename it, fill in every `{{PLACEHOLDER}}`, and you have a working voice tool.
 
+## Grok Bot setup: the Keychain popup
+
+The first time you use Grok Bot in VoiceOS, macOS asks for access to
+"Grok Bot Safe Storage" in your Keychain. The popup shows on your screen, not
+in VoiceOS. Type your Mac password and click **Always Allow**, so it does not
+ask again.
+
+![The macOS Keychain popup asking for access to Grok Bot Safe Storage, with an Always Allow button](docs/images/keychain-popup-setup.webp)
+
+VoiceOS's setup guide loads this same image from GitHub
+(`voiceos.integration.json` → `setupGuide`), because a shared integration
+cannot carry image files. Keep the file at this path on `main`.
+
 ## What's in here
 
 | File | What it is | Touch it? |
