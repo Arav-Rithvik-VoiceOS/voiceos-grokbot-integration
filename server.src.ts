@@ -44,7 +44,7 @@ import { recordCardPoll, cardCovers } from "./cardWatch.ts";
 import { RFB_B64 } from "./assets.generated.ts";
 import { connectCard, guideCard, showCard, type ShowOpen, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
-import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
+import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, SEND_BOT_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 import { conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
 import { needsAttention, toCardThread, type CardItem } from "./conversation.ts";
 import { IntentRoster, registerIntentSupport } from "./intents.ts";
@@ -813,7 +813,7 @@ const sendTool = server.registerTool(
     description: SEND_DESCRIPTION,
     inputSchema: {
       confirmationContext: z.string().optional().describe(CONTEXT_DESCRIPTION),
-      bot: z.string().describe("One Grok Bot's name as spoken, or its exact ID from grokbot_prepare_message. The SDK hook verifies the recipient."),
+      bot: z.string().describe(SEND_BOT_DESCRIPTION),
       recipientId: z.string().optional().describe("Internal: recipient ID pinned by the preparation hook. Never compose or change this value."),
       message: z
         .string()

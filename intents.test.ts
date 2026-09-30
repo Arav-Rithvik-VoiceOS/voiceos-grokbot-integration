@@ -6,7 +6,7 @@ import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/typ
 import { z } from "zod";
 import { intentErrors, resolveIntentSlots, matchIntentTemplate, INTENT_SLOT_VALUES_META_KEY, INTENT_REFRESH_NOTIFICATION_METHOD } from "./sdk/intents.ts";
 import type { PreToolUseHookInput } from "./sdk/hooks.ts";
-import { intents, IntentRoster, botIntentNames, botIntentLabels, resolveApprovedRecipient, registerIntentSupport } from "./intents.ts";
+import { intents, IntentRoster, botIntentNames, botIntentLabels, resolveApprovedRecipient, registerIntentSupport, botForTask, namesABot } from "./intents.ts";
 import { type Agent, IntegrationError, withoutWaking } from "./client.ts";
 import { GROK_COLOR_HEX } from "./cards.ts";
 import manifest from "./voiceos.integration.json";
@@ -27,7 +27,7 @@ test("shipped show and send intents use the SDK contract; only create and mute a
   // send arrow sends. Create keeps its card and the hook forces it on; the
   // per-bot notification switch shows its own on/off card.
   expect(manifest.tools.filter(t => t.confirmation).map(t => t.name)).toEqual(["grokbot_create", "grokbot_notifications"]);
-  expect(manifest.hooks).toEqual({ preToolUse: { scope: "own" } });
+  expect(manifest.hooks).toEqual({ preToolUse: { scope: "own" }, transcript: {} });
   expect(matchIntentTemplate(intents[0], "show my Grok bots")).toEqual({});
   expect(matchIntentTemplate(intents[0], "Grok Bot show")).toEqual({});
   const resolved = resolveIntentSlots(intents[1], { properties: { bot: { type: "string" } } }, { bot: ["SEO Master"] })!;
@@ -285,6 +285,9 @@ test("actual MCP tools/list metadata and refresh notification carry current enum
     const prepared = await client.callTool({ name: "voiceos_hook_pre_tool_use", arguments: { payload_json: JSON.stringify(hook({ bot: "Terry", message: "Review this" })) } });
     const args = JSON.parse((prepared.content as { text: string }[])[0].text).updatedArgs;
     expect(args).toMatchObject({ bot: "Terry", recipientId: "terry", message: "Review this" });
+    // A turn for Grok Bot that names no bot carries every bot's role for the model.
+    const ctx = await client.callTool({ name: "voiceos_hook_transcript", arguments: { payload_json: JSON.stringify({ hookApiVersion: 1, event: "transcript", transcript: "Send this task to Grok Bot: plan the venue", source: "voice" }) } });
+    expect(JSON.parse((ctx.content as { text: string }[])[0].text).additionalContext).toContain("- Terry");
     const before = changes;
     current = [{ id: "sol", name: "Sol" }];
     await client.notification({ method: INTENT_REFRESH_NOTIFICATION_METHOD });
@@ -312,4 +315,62 @@ test("upstream screen, chat and create shortcuts coexist with verified sends", (
 test("create always asks first, even if the user turns its ask switch off", async () => {
   const roster = new IntentRoster(async () => agents);
   expect(await roster.beforeTool({ ...hook({ name: "Scout", description: "Research" }), toolName: "grokbot_create" })).toEqual({ requireConfirmation: true });
+});
+
+test("a Grok Bot turn gets each bot's role; other turns and an empty roster get nothing", async () => {
+  const roster = new IntentRoster(async () => [
+    { id: "j", name: "Jasper", title: "BISV Hacks EA", description: "Sponsorships, fundraising, and venue." },
+    { id: "p", name: "Piper", title: "EA", description: "Chief of Staff." },
+    { id: "g", name: "Crew", isGroup: true, memberIds: ["j", "p"] },
+  ]);
+  expect(roster.transcriptContext("Send a message to Grok Bot about BISV hacks")).toBeUndefined();
+  await roster.refresh();
+  const context = roster.transcriptContext("Send a message to Grok Bot talking about BISV hacks")!;
+  expect(context).toContain("- Jasper — BISV Hacks EA: Sponsorships, fundraising, and venue.");
+  expect(context).toContain("- Piper — EA: Chief of Staff.");
+  expect(context).not.toContain("Crew");
+  expect(context).toContain("default bot");
+  for (const turn of ["Ask my bot about the venue", "Dispatch a task: research venues"]) expect(roster.transcriptContext(turn)).toBe(context);
+  expect(roster.transcriptContext("What's the weather tomorrow?")).toBeUndefined();
+});
+test("the roster context stays inside the host's 2,000-character limit", async () => {
+  const many: Agent[] = Array.from({ length: 30 }, (_, i) => ({ id: `b${i}`, name: `Bot ${i}`, title: "Role", description: "x".repeat(180) }));
+  const roster = new IntentRoster(async () => many);
+  await roster.refresh();
+  expect(roster.transcriptContext("ask my bot")!.length).toBeLessThanOrEqual(2_000);
+});
+
+const crew: Agent[] = [
+  { id: "hq", name: "Piper", title: "EA", description: "Chief of Staff. Calendar, prioritization, intern/hackathon/startup handoffs. School is owned by F.I.N.C.H." },
+  { id: "hx", name: "Jasper", title: "Hackathon Hacks EA", description: "Personal EA for the hackathon: sponsorships, fundraising, and venue." },
+  { id: "sc", name: "F.I.N.C.H.", title: "School", description: "School specialist. Assignments, tests, deadlines, and CSA practice. School is off Piper's plate." },
+  { id: "db", name: "Demo", title: "Speech & Debate", description: "Public speaking and debating." },
+];
+test("a turn that names no bot goes to the bot whose role fits its words", () => {
+  const pick = (t: string) => botForTask(t, crew)?.id;
+  expect(pick("Can you ask Grok Bot if there's any CSA homework for today in school?")).toBe("sc");
+  expect(pick("Dispatch a task to Grok Bot: research elite venues to host the hackathon")).toBe("hx");
+  expect(pick("Ask my bot to find sponsors")).toBe("hx");
+  expect(pick("Ask my bot what's on my calendar tomorrow")).toBe("hq");
+  expect(pick("Ask Grok Bot to help me practice my debate speech")).toBe("db");
+  // No topic, or a tie: no pick, so the model's choice stands.
+  expect(pick("Ask Grok Bot how it's going")).toBeUndefined();
+  expect(namesABot("Ask Jasper about sponsors", crew)).toBe(true);
+  expect(namesABot("What did Finch's tutor say?", crew)).toBe(true);
+  expect(namesABot("Ask my bot to demonstrate the demo flow", crew)).toBe(true);
+  expect(namesABot("Ask my bot to demonstrate it", crew)).toBe(false);
+});
+test("the send hook moves a guessed bot to the role match only when the turn named no bot", async () => {
+  let now = 1_000_000;
+  const roster = new IntentRoster(async () => crew, () => now);
+  await roster.refresh();
+  roster.noteTurn("Send a message to Grok Bot about the hackathon venue");
+  const moved = await roster.beforeTool(hook({ bot: "Piper", message: "Research venues." }));
+  expect(moved.updatedArgs).toMatchObject({ bot: "Jasper", recipientId: "hx", message: "Research venues." });
+  roster.noteTurn("Ask Piper about the hackathon venue");
+  expect((await roster.beforeTool(hook({ bot: "Piper", message: "Venue?" }))).updatedArgs).toMatchObject({ bot: "Piper", recipientId: "hq" });
+  // A stale turn (another request long ago) never moves a send.
+  roster.noteTurn("Send a message to Grok Bot about the hackathon venue");
+  now += 121_000;
+  expect((await roster.beforeTool(hook({ bot: "Piper", message: "Hi" }))).updatedArgs).toMatchObject({ bot: "Piper", recipientId: "hq" });
 });
