@@ -42,6 +42,10 @@ entry.manifest = manifest;
 const server = config.customMcpServers?.find((e: any) => e.id === entry.serverId);
 if (!server) { console.error(`No MCP server ${entry.serverId} for ${manifest.id}. Reinstall it via the app.`); process.exit(1); }
 server.confirmTools = manifest.tools.filter((t: any) => t.confirmation).map((t: any) => t.name);
+// Hook subscriptions live on the same descriptor, also written only at
+// install: a hook the manifest adds (the transcript hook) is never called
+// until this copy lists it.
+server.hooks = manifest.hooks ?? {};
 writeFileSync(configPath, JSON.stringify(config, null, 2));
-console.log(`Pushed manifest ${before} → ${manifest.version} (${manifest.tools.length} tools; asks first: ${server.confirmTools.join(", ") || "none"}). Backup: ${backup}`);
+console.log(`Pushed manifest ${before} → ${manifest.version} (${manifest.tools.length} tools; asks first: ${server.confirmTools.join(", ") || "none"}; hooks: ${Object.keys(server.hooks).join(", ") || "none"}). Backup: ${backup}`);
 console.log("Relaunch VoiceOS, then run: bun run check:installed");

@@ -20,6 +20,10 @@ const actual = [...(server.confirmTools ?? [])].sort();
 if (!isDeepStrictEqual(actual, expected)) {
   failures.push(`Runtime confirmTools is [${actual.join(", ")}]; expected [${expected.join(", ")}]. Refresh the server descriptor as well as the manifest.`);
 }
+// The host calls only the hooks this runtime copy lists, not the manifest's.
+if (!isDeepStrictEqual(server.hooks ?? {}, manifest.hooks ?? {})) {
+  failures.push(`Runtime hooks are ${JSON.stringify(server.hooks ?? {})}; expected ${JSON.stringify(manifest.hooks ?? {})}. Run bun run push-cache.`);
+}
 
 // VoiceOS 0.2.41 toolRequiresConfirmation: server mode, then the user's
 // per-tool switch, then server.confirmTools, then annotations. Voice send/group
@@ -40,4 +44,4 @@ if (!actual.includes("grokbot_create")) failures.push("grokbot_create is missing
 if (failures.length) {
   for (const failure of failures) console.error(failure);
   process.exitCode = 1;
-} else console.log(`Installed manifest ${manifest.version}, runtime confirmTools, and approval policy agree.`);
+} else console.log(`Installed manifest ${manifest.version}, runtime confirmTools, hooks, and approval policy agree.`);
