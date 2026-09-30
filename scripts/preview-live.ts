@@ -43,14 +43,14 @@ MARKDOWN_CSS, COMPOSER_KIT_JS, COMPOSER_KIT_CSS and SHOW_ADAPTER).`);
 // ── Fixtures ────────────────────────────────────────────────────────────────
 const NOW = Date.now(), MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 const agents: Agent[] = [
-  { id: "pepper", name: "Pepper", title: "EA", avatarColor: "orange", isRunning: true, lastMessagePreview: "Drafting the Q3 board deck", lastActivityAt: NOW - 2 * MIN },
-  { id: "friday", name: "Friday", title: "School", avatarColor: "green", avatarShape: "hex", isComposingMessage: true, lastMessagePreview: "Checking what submitted last night", lastActivityAt: NOW - 9 * MIN },
-  { id: "jerome", name: "Jerome", title: "BISV Hacks", avatarColor: "red", avatarShape: "wedge", lastActivityAt: NOW - 3 * DAY },
-  { id: "titus", name: "Titus", title: "Research", avatarColor: "blue", avatarShape: "tablet", awaitingUserResponse: true, lastMessagePreview: "Needs an API key", lastActivityAt: NOW - 40 * MIN },
-  { id: "g1", name: "Homework crew", isGroup: true, memberIds: ["pepper", "friday", "titus"], lastMessagePreview: "CSA 1.7 is next.", lastActivityAt: NOW - 20 * MIN },
+  { id: "piper", name: "Piper", title: "EA", avatarColor: "orange", isRunning: true, lastMessagePreview: "Drafting the Q3 board deck", lastActivityAt: NOW - 2 * MIN },
+  { id: "finch", name: "Finch", title: "School", avatarColor: "green", avatarShape: "hex", isComposingMessage: true, lastMessagePreview: "Checking what submitted last night", lastActivityAt: NOW - 9 * MIN },
+  { id: "jasper", name: "Jasper", title: "BISV Hacks", avatarColor: "red", avatarShape: "wedge", lastActivityAt: NOW - 3 * DAY },
+  { id: "theo", name: "Theo", title: "Research", avatarColor: "blue", avatarShape: "tablet", awaitingUserResponse: true, lastMessagePreview: "Needs an API key", lastActivityAt: NOW - 40 * MIN },
+  { id: "g1", name: "Study group", isGroup: true, memberIds: ["piper", "finch", "theo"], lastMessagePreview: "CSA 1.7 is next.", lastActivityAt: NOW - 20 * MIN },
 ];
 const byId = (id: string) => agents.find((a) => a.id === id)!;
-const pepper = byId("pepper"), group = { id: "g1", name: "Homework crew", members: ["pepper", "friday", "titus"] };
+const piper = byId("piper"), group = { id: "g1", name: "Study group", members: ["piper", "finch", "theo"] };
 
 const me = (id: string, content: string, ago: number): TranscriptEntry =>
   ({ id, kind: "message", role: "user", content, timestampMs: NOW - ago });
@@ -107,46 +107,46 @@ const HUGE = "## Appendix: full research notes\n\n" +
     `**Note ${i + 1}.** Interview ${i + 1} confirms the renewal pattern: teams that onboard in week one renew at a higher rate, and support tickets fall after the second month.`,
   ).join("\n\n") + "\n\n```ts\nexport const complete = true;\n```\n\nEND OF COMPLETE MESSAGE";
 
-const pepperEntries: TranscriptEntry[] = [
+const piperEntries: TranscriptEntry[] = [
   me("p-ask", "Can you pull together the Q3 numbers and explain the variance?", 3 * DAY),
   says("p-rich", text(RICH), 3 * DAY - 5 * MIN),
   me("p-more", "Great. Send me the chart and the full report too.", 2 * DAY),
-  says("p-image", { ...text("Here is the revenue chart."), images: [{ url: `${FILES}/pepper/attachments/revenue-chart.png`, alt: "Revenue chart" }] }, 2 * DAY - 3 * MIN),
-  says("p-file", { type: "attachment", url: "/home/box/agent-data/agents/pepper/attachments/Q3-report.pdf", file_name: "Q3 report.pdf" }, 2 * DAY - 2 * MIN),
+  says("p-image", { ...text("Here is the revenue chart."), images: [{ url: `${FILES}/piper/attachments/revenue-chart.png`, alt: "Revenue chart" }] }, 2 * DAY - 3 * MIN),
+  says("p-file", { type: "attachment", url: "/home/box/agent-data/agents/piper/attachments/Q3-report.pdf", file_name: "Q3 report.pdf" }, 2 * DAY - 2 * MIN),
   { id: "p-upload", kind: "user-attachment", file_path: "/Users/me/Desktop/board-notes.txt", file_name: "board-notes.txt", timestampMs: NOW - 26 * HOUR },
-  { id: "p-messaged", kind: "message", content: "Can you double-check the APAC numbers?", toAgent: { id: "titus", name: "Titus" }, timestampMs: NOW - 25 * HOUR },
-  { id: "p-notice", kind: "notice", text: "Pepper restarted its computer.", timestampMs: NOW - 24 * HOUR },
+  { id: "p-messaged", kind: "message", content: "Can you double-check the APAC numbers?", toAgent: { id: "theo", name: "Theo" }, timestampMs: NOW - 25 * HOUR },
+  { id: "p-notice", kind: "notice", text: "Piper restarted its computer.", timestampMs: NOW - 24 * HOUR },
   { id: "p-huge", kind: "message", role: "assistant", content: HUGE, timestampMs: NOW - 20 * HOUR },
   says("p-approved", { type: "auto-review-approval", approval: { status: "approved", summary: "Email the Q3 report to finance@example.com", command: "gmail send --to finance@example.com --attach Q3-report.pdf" } }, 19 * HOUR),
   says("p-expired", { type: "auto-review-approval", approval: { status: "expired", summary: "Approve PR 182 on voiceos-dictation", reason: "Review requested", command: "gh pr review 182 --approve" } }, 18 * HOUR),
-  says("p-mockups", { ...text("Two deck mockups. The second file is gone from the server, so it must fall back to Open in Grok Bot."), images: [{ url: `${FILES}/pepper/attachments/mockup-a.png`, alt: "Mockup A" }, { url: `${FILES}/pepper/attachments/mockup-b.png`, alt: "Mockup B (broken)" }] }, 3 * HOUR),
+  says("p-mockups", { ...text("Two deck mockups. The second file is gone from the server, so it must fall back to Open in Grok Bot."), images: [{ url: `${FILES}/piper/attachments/mockup-a.png`, alt: "Mockup A" }, { url: `${FILES}/piper/attachments/mockup-b.png`, alt: "Mockup B (broken)" }] }, 3 * HOUR),
   says("p-connector", { type: "connector", connector: "Google Drive" }, 2 * HOUR),
-  says("p-credential", { type: "credential-request", credentialRequest: { label: "Sign in to Gmail", description: "Pepper needs to sign in to send the board deck." } }, 50 * MIN),
+  says("p-credential", { type: "credential-request", credentialRequest: { label: "Sign in to Gmail", description: "Piper needs to sign in to send the board deck." } }, 50 * MIN),
   says("p-choice", { type: "widget", widget: { prompt: "Ship this deck, or tweak it further?", options: [{ label: "Ship it", value: "Ship deck v3", description: "Send it to the board today" }, { label: "Tweak more", value: "Tweak the deck further" }] } }, 12 * MIN),
   says("p-multi", { type: "widget", widget: { prompt: "Which sections go in the board deck?", multiSelect: true, allowCustom: true, options: [{ label: "Revenue", value: "revenue" }, { label: "Churn", value: "churn" }, { label: "Hiring", value: "hiring" }, { label: "Roadmap", value: "roadmap", description: "Next two quarters" }] } }, 4 * MIN),
 ];
 
 const groupEntries: TranscriptEntry[] = [
-  me("g-ask", "All of you: CSA first, then Zinn. Titus, find sources.", 5 * HOUR),
-  says("g-pepper", text("On it. **CSA 1.7** is next, then Zinn chapter 4."), 5 * HOUR - 2 * MIN, "pepper"),
-  says("g-friday", text("Plan:\n\n| Task | Due |\n|---|---|\n| CSA 1.7 | Tonight |\n| Zinn Ch 4 | Friday |\n\n```js\nconst left = tasks.filter(t => !t.done);\n```"), 5 * HOUR - 4 * MIN, "friday"),
-  { id: "g-messaged", kind: "message", content: "Send me your Zinn notes.", author: { id: "friday", name: "Friday" }, toAgent: { id: "titus", name: "Titus" }, timestampMs: NOW - 4 * HOUR },
-  { id: "g-notice", kind: "notice", text: "Titus joined the group.", timestampMs: NOW - 4 * HOUR + MIN },
-  says("g-image", { ...text("Source map for chapter 4."), images: [{ url: `${FILES}/titus/attachments/source-chart.png`, alt: "Source chart" }] }, 3 * HOUR, "titus"),
-  says("g-choice", { type: "widget", widget: { prompt: "Which edition should I cite?", options: [{ label: "2003 edition", value: "2003" }, { label: "2015 edition", value: "2015", description: "Newer page numbers" }] } }, 20 * MIN, "titus"),
+  me("g-ask", "All of you: CSA first, then Zinn. Theo, find sources.", 5 * HOUR),
+  says("g-piper", text("On it. **CSA 1.7** is next, then Zinn chapter 4."), 5 * HOUR - 2 * MIN, "piper"),
+  says("g-finch", text("Plan:\n\n| Task | Due |\n|---|---|\n| CSA 1.7 | Tonight |\n| Zinn Ch 4 | Friday |\n\n```js\nconst left = tasks.filter(t => !t.done);\n```"), 5 * HOUR - 4 * MIN, "finch"),
+  { id: "g-messaged", kind: "message", content: "Send me your Zinn notes.", author: { id: "finch", name: "Finch" }, toAgent: { id: "theo", name: "Theo" }, timestampMs: NOW - 4 * HOUR },
+  { id: "g-notice", kind: "notice", text: "Theo joined the group.", timestampMs: NOW - 4 * HOUR + MIN },
+  says("g-image", { ...text("Source map for chapter 4."), images: [{ url: `${FILES}/theo/attachments/source-chart.png`, alt: "Source chart" }] }, 3 * HOUR, "theo"),
+  says("g-choice", { type: "widget", widget: { prompt: "Which edition should I cite?", options: [{ label: "2003 edition", value: "2003" }, { label: "2015 edition", value: "2015", description: "Newer page numbers" }] } }, 20 * MIN, "theo"),
 ];
 
-const fridayEntries: TranscriptEntry[] = [
+const finchEntries: TranscriptEntry[] = [
   me("f-ask", "Did last night's homework submit?", 40 * MIN),
   says("f-reply", text("Checking now. So far:\n\n- CSA 1.5: **submitted**\n- CSA 1.6: *not found*"), 38 * MIN),
 ];
-const titusEntries: TranscriptEntry[] = [
+const theoEntries: TranscriptEntry[] = [
   me("t-ask", "Make the figures for the grant report.", 2 * HOUR),
   says("t-secret", { type: "secret-request", secretRequest: { label: "OpenAI API key", description: "Needed to generate the figures." } }, 40 * MIN),
 ];
 
 const OLDER = [
-  ["Book the dentist for next Tuesday.", "Booked **Tuesday 4:30 PM** with Dr. Lee.", "Also remind me about SAT registration.", "Reminder set for *Friday 9 AM*."],
+  ["Book the dentist for next Tuesday.", "Booked **Tuesday 4:30 PM** with Dr. Lee.", "Also remind me about SAT registration.", "Reminder set for *Finch 9 AM*."],
   ["What is on my calendar Thursday?", "Robotics at 3, then the `CSA` study group at 6.", "Move the study group to 7.", "Done. Everyone got the new time."],
   ["Start tracking my reading list.", "Started a list with 3 books:\n\n1. *Dune*\n2. *Zinn*\n3. *Gödel, Escher, Bach*", "Add The Martian.", "Added. That is 4 books."],
 ];
@@ -170,11 +170,11 @@ function target(id: string, entries: TranscriptEntry[], older: TranscriptEntry[]
   return { id, name: a.name, group: !!a.isGroup, members: a.memberIds ?? [], base: conv.boundThread(items), live: [], older: pages, full };
 }
 const targets = {
-  pepper: target("pepper", pepperEntries, olderPages("pepper")),
+  piper: target("piper", piperEntries, olderPages("piper")),
   g1: target("g1", groupEntries, olderPages("g1", group.members)),
-  friday: target("friday", fridayEntries),
-  jerome: target("jerome", []),
-  titus: target("titus", titusEntries),
+  finch: target("finch", finchEntries),
+  jasper: target("jasper", []),
+  theo: target("theo", theoEntries),
 };
 const liveTemplates = [
   "Live update **#LIVEN**: still working through the deck.",
@@ -257,7 +257,7 @@ const htmlOf = (card: Card) => card._voiceos_glance.blocks[0].html;
 // Cursors: 300 → the first older page. The show card bakes 6-entry tails (like
 // grokbot_show), so its cursor 350 points at the rest of the newest page.
 const OLDER_CURSOR = 300, SHOW_CURSOR = 350, SHOW_TAIL = 6;
-const showEntries: Record<string, TranscriptEntry[]> = { pepper: pepperEntries, friday: fridayEntries, jerome: [], titus: titusEntries, g1: groupEntries };
+const showEntries: Record<string, TranscriptEntry[]> = { piper: piperEntries, finch: finchEntries, jasper: [], theo: theoEntries, g1: groupEntries };
 // The roster card as grokbot_show bakes it (6-entry tails); `open` bakes the opened conversation's
 // longer page first, the way voice (grokbot_send / grokbot_group / grokbot_thread show) opens it.
 const showOf = (open?: Parameters<typeof cards.showCard>[4], full?: string) => cards.showCard(
@@ -267,43 +267,43 @@ const showOf = (open?: Parameters<typeof cards.showCard>[4], full?: string) => c
   open,
 ) as Card;
 const show = showOf();
-const voicePepper = showOf({ open: { bot: "pepper" }, message: "Keep this draft while the chat refreshes" }, "pepper");
-// "Send a message to Pepper": voice already sent it, so it flies from the box into the orb on open.
-const voiceSent = showOf({ open: { bot: "pepper" }, message: "Can you send me the Q3 numbers?", sent: true }, "pepper");
+const voicePiper = showOf({ open: { bot: "piper" }, message: "Keep this draft while the chat refreshes" }, "piper");
+// "Send a message to Piper": voice already sent it, so it flies from the box into the orb on open.
+const voiceSent = showOf({ open: { bot: "piper" }, message: "Can you send me the Q3 numbers?", sent: true }, "piper");
 const voiceGroup = showOf({ open: { group: "g1" } }, "g1");
-// A "Pepper replied." notification's Open: the same card, marked from an hour ago (the last three replies are new).
-const reminderPepper = showOf({ open: { bot: "pepper", newSince: NOW - 60 * MIN } }, "pepper");
-const voiceGroupEdit = showOf({ open: { group: "g1", members: ["pepper", "friday", "jerome"], groupName: "Study crew" }, message: "Jerome joins us today" }, "g1");
-const voiceNewGroup = showOf({ open: { members: ["pepper", "jerome"], groupName: "" }, message: "Kick off the launch plan" });
+// A "Piper replied." notification's Open: the same card, marked from an hour ago (the last three replies are new).
+const reminderPiper = showOf({ open: { bot: "piper", newSince: NOW - 60 * MIN } }, "piper");
+const voiceGroupEdit = showOf({ open: { group: "g1", members: ["piper", "finch", "jasper"], groupName: "Study crew" }, message: "Jasper joins us today" }, "g1");
+const voiceNewGroup = showOf({ open: { members: ["piper", "jasper"], groupName: "" }, message: "Kick off the launch plan" });
 
 type Scenario = {
   slug: string; title: string; blurb: string; hint: string; html: string; glance?: number;
   theme: "dark" | "light"; invoke: boolean; initArgs: Record<string, unknown>; confirmation?: boolean;
 };
 const scenarios: Scenario[] = [
-  { slug: "voice-1to1", title: "Voice → Pepper's chat", theme: "dark", invoke: true, html: htmlOf(voicePepper), glance: cards.glanceChars(voicePepper), initArgs: {},
-    blurb: "What \"Message Pepper…\" opens: the roster card, already on Pepper's chat pane (no slide), with the draft in the box. Every message type: text, images, files, requests, choices, a Messaged row, a notice, a deferred huge message.",
-    hint: "Send: the message flies into Pepper's orb and shows at once. Back slides to the roster. Close + reopen: you come back to the same pane, draft and messages kept, and the voice draft does not return after a send." },
-  { slug: "voice-sent", title: "Voice send → Pepper's chat", theme: "dark", invoke: true, html: htmlOf(voiceSent), glance: cards.glanceChars(voiceSent), initArgs: {},
-    blurb: "What \"Send a message to Pepper…\" opens now: voice already sent the message, so the card opens on Pepper's chat and the message flies from the box into the orb.",
+  { slug: "voice-1to1", title: "Voice → Piper's chat", theme: "dark", invoke: true, html: htmlOf(voicePiper), glance: cards.glanceChars(voicePiper), initArgs: {},
+    blurb: "What \"Message Piper…\" opens: the roster card, already on Piper's chat pane (no slide), with the draft in the box. Every message type: text, images, files, requests, choices, a Messaged row, a notice, a deferred huge message.",
+    hint: "Send: the message flies into Piper's orb and shows at once. Back slides to the roster. Close + reopen: you come back to the same pane, draft and messages kept, and the voice draft does not return after a send." },
+  { slug: "voice-sent", title: "Voice send → Piper's chat", theme: "dark", invoke: true, html: htmlOf(voiceSent), glance: cards.glanceChars(voiceSent), initArgs: {},
+    blurb: "What \"Send a message to Piper…\" opens now: voice already sent the message, so the card opens on Piper's chat and the message flies from the box into the orb.",
     hint: "The box stays empty. Close + reopen: the message does not fly in again." },
-  { slug: "reminder-open", title: "Notification Open → Pepper's chat", theme: "dark", invoke: true, html: htmlOf(reminderPepper), glance: cards.glanceChars(reminderPepper), initArgs: {},
-    blurb: "What Open on a \"Pepper replied.\" notification shows in the notch: Pepper's chat pane with a red New messages line above the replies the user has not seen.",
-    hint: "The line sits above the sign-in request (50 min ago). Back and reopen Pepper: the line is gone. Close + reopen the notch: the line is gone (the saved pane drops it)." },
+  { slug: "reminder-open", title: "Notification Open → Piper's chat", theme: "dark", invoke: true, html: htmlOf(reminderPiper), glance: cards.glanceChars(reminderPiper), initArgs: {},
+    blurb: "What Open on a \"Piper replied.\" notification shows in the notch: Piper's chat pane with a red New messages line above the replies the user has not seen.",
+    hint: "The line sits above the sign-in request (50 min ago). Back and reopen Piper: the line is gone. Close + reopen the notch: the line is gone (the saved pane drops it)." },
   { slug: "voice-group", title: "Voice → group chat", theme: "dark", invoke: true, html: htmlOf(voiceGroup), glance: cards.glanceChars(voiceGroup), initArgs: {},
-    blurb: "What \"Message the Homework crew…\" opens: the group's chat pane on the roster card.",
+    blurb: "What \"Message the Study group…\" opens: the group's chat pane on the roster card.",
     hint: "Groups get live refresh and older messages, but NO + button and NO Open computer button. Tap the avatars to edit members; tap the name to rename. Edits save on the next send." },
   { slug: "voice-group-edit", title: "Voice → edit a group", theme: "dark", invoke: true, html: htmlOf(voiceGroupEdit), glance: cards.glanceChars(voiceGroupEdit), initArgs: {},
-    blurb: "What \"Add Jerome to the Homework crew, drop Titus, rename it Study crew…\" opens: the group's chat pane with those edits pending.",
+    blurb: "What \"Add Jasper to the Study group, drop Theo, rename it Study crew…\" opens: the group's chat pane with those edits pending.",
     hint: "The header shows the new members and name, and the status line says they save on send. Send: the log shows one grokbot_card_send with group + members + groupName; the roster behind it updates." },
   { slug: "voice-new-group", title: "Voice → new group", theme: "dark", invoke: true, html: htmlOf(voiceNewGroup), glance: cards.glanceChars(voiceNewGroup), initArgs: {},
-    blurb: "What \"Message Pepper and Jerome…\" opens when no such group exists: the new-group pane. Tap the avatars to pick bots, name it, and the first send creates the group.",
+    blurb: "What \"Message Piper and Jasper…\" opens when no such group exists: the new-group pane. Tap the avatars to pick bots, name it, and the first send creates the group.",
     hint: "After the first send the pane turns into the new group's live chat, and the roster behind it lists the group." },
   { slug: "show-roster", title: "Roster → chat pane", theme: "dark", invoke: true, html: htmlOf(show), glance: cards.glanceChars(show), initArgs: demoArgs(htmlOf(show)),
-    blurb: "The show card. Pepper has a baked thread; Friday, Jerome and Titus load theirs from the first refresh when you open them.",
+    blurb: "The show card. Piper has a baked thread; Finch, Jasper and Theo load theirs from the first refresh when you open them.",
     hint: "Click a bot inside the card to open its chat pane. Type a draft, go Back, open another bot, come back: the draft must return. Close + reopen on the roster stays on the roster." },
-  { slug: "no-invoke", title: "Host without invokeTool", theme: "dark", invoke: false, html: htmlOf(voicePepper), glance: cards.glanceChars(voicePepper), initArgs: {},
-    blurb: "Pepper's chat on a host whose capabilities.invokeTool is false.",
+  { slug: "no-invoke", title: "Host without invokeTool", theme: "dark", invoke: false, html: htmlOf(voicePiper), glance: cards.glanceChars(voicePiper), initArgs: {},
+    blurb: "Piper's chat on a host whose capabilities.invokeTool is false.",
     hint: "The card must not call any tool: no refresh, no image loads. Sending shows its unavailable message. Every invokeTool line here is a bug." },
 ];
 

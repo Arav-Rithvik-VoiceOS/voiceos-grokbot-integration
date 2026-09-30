@@ -9,7 +9,7 @@ function payload(data: any, args: any) {
     boot() {}, stage() {}, wireComposer() {}, addEventListener() {}, data, args,
   });
 }
-const old = { tool: "grokbot_send", bots: [{ id: "p", name: "Pepper" }], groups: [], threads: {} };
+const old = { tool: "grokbot_send", bots: [{ id: "p", name: "Piper" }], groups: [], threads: {} };
 test("unknown confirmation recipients produce an error, never a fabricated bot", () => {
   const r = payload(old, { bot: "James" });
   expect(r.error).toBeTruthy();
@@ -65,10 +65,10 @@ function bootPinned(tool: string, args: any) {
   listener({ source: parent, data: { type: "voiceos:init", args }, stopImmediatePropagation() {} });
   return edits;
 }
-const live = JSON.stringify({ bots: [{ id: "p", name: "Pepper" }], groups: [{ id: "g", name: "Crew", members: ["p"] }], threads: {} });
+const live = JSON.stringify({ bots: [{ id: "p", name: "Piper" }], groups: [{ id: "g", name: "Crew", members: ["p"] }], threads: {} });
 test("a send confirmation keeps staging the recipient name the intent approved", () => {
-  expect(bootPinned("grokbot_send", { bot: "Pepper", message: "Hi", confirmationContext: live }))
-    .toEqual([{ type: "voiceos:updateInput", key: "bot", value: "Pepper" }]);
+  expect(bootPinned("grokbot_send", { bot: "Piper", message: "Hi", confirmationContext: live }))
+    .toEqual([{ type: "voiceos:updateInput", key: "bot", value: "Piper" }]);
 });
 test("group confirmations still stage resolved IDs", () => {
   expect(bootPinned("grokbot_group", { group: "Crew", message: "Hi", confirmationContext: live }))

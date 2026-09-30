@@ -138,7 +138,7 @@ child.on("error", (e) => {
 // Send `initialize` once the pipe is open.
 child.stdin.write(JSON.stringify({
   jsonrpc: "2.0", id: 1, method: "initialize",
-  params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "friday-boot-check", version: "1.0.0" } },
+  params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "grokbot-boot-check", version: "1.0.0" } },
 }) + "\n");
 
 const timer = setTimeout(() => finish(true), BOOT_TIMEOUT_MS);

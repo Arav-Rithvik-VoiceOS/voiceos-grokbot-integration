@@ -20,7 +20,7 @@ const PRIVATE = ["file://", "/Users/arav", "/home/box"];
 const picture: TranscriptEntry = {
   id: "picture",
   kind: "send-message",
-  author: { id: "p", name: "Pepper" },
+  author: { id: "p", name: "Piper" },
   timestampMs: Date.now() - 5 * 60_000,
   message: {
     type: "text",
@@ -83,7 +83,7 @@ describe("card items", () => {
     const items = toCardThread([picture, upload, answered, approval]);
     const json = JSON.stringify(items);
     for (const secret of PRIVATE) expect(json).not.toContain(secret);
-    expect(items[0]).toMatchObject({ id: "picture", from: "bot", bot: "p", sender: "Pepper", timestampMs: picture.timestampMs });
+    expect(items[0]).toMatchObject({ id: "picture", from: "bot", bot: "p", sender: "Piper", timestampMs: picture.timestampMs });
     // index = the position in entryMedia(entry), which grokbot_card_image resolves.
     expect(items[0].media).toEqual([
       { kind: "image", name: "Concept A", index: 0 },

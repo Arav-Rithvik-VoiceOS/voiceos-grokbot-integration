@@ -2,16 +2,16 @@
 import { renderCard, toBot, toThread, threadCard, groupComposeCard, groupThreadCard, sentCard, sentGroupCard } from "../cards.ts";
 import type { Agent, TranscriptEntry } from "../client.ts";
 const bots: Agent[] = [
-  { id: "pepper", name: "Pepper", title: "EA", avatarColor: "orange", isRunning: true },
-  { id: "friday", name: "Friday", title: "School", avatarColor: "green", avatarShape: "hex" },
-  { id: "jerome", name: "Jerome", title: "BISV Hacks", avatarColor: "red" },
-  { id: "titus", name: "Titus", title: "Research", avatarColor: "blue", avatarShape: "tablet" },
+  { id: "piper", name: "Piper", title: "EA", avatarColor: "orange", isRunning: true },
+  { id: "finch", name: "Finch", title: "School", avatarColor: "green", avatarShape: "hex" },
+  { id: "jasper", name: "Jasper", title: "BISV Hacks", avatarColor: "red" },
+  { id: "theo", name: "Theo", title: "Research", avatarColor: "blue", avatarShape: "tablet" },
 ];
 const history: TranscriptEntry[] = [
   { kind: "message", role: "user", content: "What should we work on first?" },
-  { kind: "message", role: "assistant", content: "Start with **CSA 1.7**, then check the remaining deadlines.", fromAgent: { id: "pepper" } },
+  { kind: "message", role: "assistant", content: "Start with **CSA 1.7**, then check the remaining deadlines.", fromAgent: { id: "piper" } },
 ];
-const group = { id: "g1", name: "Homework crew", members: ["pepper", "friday"] };
+const group = { id: "g1", name: "Study group", members: ["piper", "finch"] };
 const many = [...bots, ...Array.from({ length: 30 }, (_, i) => ({ id: `extra-${i}`, name: `Extra bot ${i} with a very long name`, title: "Research", avatarColor: "blue" }))];
 const cardHtml = (card: ReturnType<typeof threadCard>) => card._voiceos_glance.blocks[0].html;
 const escape = (s: string) => JSON.stringify(s).replace(/</g, '\\u003c');
@@ -21,9 +21,9 @@ const frozenBots = JSON.parse(sendConfirmation.html.match(/const DEMO=(.*);/)[1]
 function confirmationPreview(mode: string) {
   const isGroup = mode !== 'direct';
   const tool = isGroup ? 'grokbot_group' : 'grokbot_send';
-  const args = !isGroup ? {bot:'Pepper',message:'Reply pong.'}
+  const args = !isGroup ? {bot:'Piper',message:'Reply pong.'}
     : mode === 'group' ? {group:group.name,message:'Review our work.'}
-    : {members:['Jerome','Titus'],groupName:'',message:'Split the research.'};
+    : {members:['Jasper','Theo'],groupName:'',message:'Split the research.'};
   const html = !isGroup ? sendConfirmation.html : renderCard('thread', {data:{confirmation:true,tool,
     bots:many.map(toBot),groups:[group],threads:{g1:toThread(history)}}});
   return `<!doctype html><meta charset="utf-8"><title>Manifest confirmation QA</title>
@@ -60,7 +60,7 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 4175, async fetch(req) {
     return Response.json({ sent: true, receipt: card._voiceos_glance.blocks[0] });
   }
   const mode = url.searchParams.get("mode") || "direct";
-  const card = mode === "new" ? groupComposeCard(bots, ["jerome", "titus"], "", "Split the research and check in by 9.")
+  const card = mode === "new" ? groupComposeCard(bots, ["jasper", "theo"], "", "Split the research and check in by 9.")
     : mode === "stress" ? groupThreadCard(many, { ...group, name: "A very long group name that must fit inside the frame", members: many.slice(0, 8).map(b => b.id) }, Array.from({length: 24}, () => history).flat(), "A long draft")
     : mode === "group" ? groupThreadCard(bots, group, history, "Both of you: CSA first, then Zinn.")
     : threadCard(bots[0], history, "CSA 1.7 first, then Zinn. Ping me when submitted.");

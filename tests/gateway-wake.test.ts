@@ -32,7 +32,7 @@ test("user calls wake a parked box; background polls do not, and fail as parked"
     Bun.serve({ port: ${port}, fetch: req =>
       req.headers.get("x-anyrun-hibernation-lower-bound-s") === "900" &&
       req.headers.get("x-anyrun-hibernation-upper-bound-s") === "18000"
-        ? Response.json([{ id: "p", name: "Pepper" }])
+        ? Response.json([{ id: "p", name: "Piper" }])
         : new Response("", { status: 417 }) });
     const user = await gateway("listAgents", {});
     const background = await withoutWaking(() => gateway("listAgents", {})).catch(e => ({ kind: e.kind, message: e.message }));
@@ -45,7 +45,7 @@ test("user calls wake a parked box; background polls do not, and fail as parked"
     timeout: 20000,
   });
   const { user, background } = JSON.parse(run.stdout.trim().split("\n").pop()!);
-  expect(user).toEqual([{ id: "p", name: "Pepper" }]);
+  expect(user).toEqual([{ id: "p", name: "Piper" }]);
   expect(background.kind).toBe("parked");
   expect(background.message).toContain("asleep");
 }, 25000);

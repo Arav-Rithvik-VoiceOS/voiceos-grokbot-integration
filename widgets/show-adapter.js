@@ -63,7 +63,7 @@ function gbRoster(){gbRosterDue=!CAN_INVOKE;if(gbRosterDue)return;
 function gbOpen(p,instant){const panes=$('#panes');if(instant)panes.classList.add('gb-instant');
  // A reply notification's Open: the pane it opens marks the unseen replies, once (the saved pane drops it).
  gbNewSince=typeof p.newSince==='number'?{id:p.bot||p.group,t:p.newSince}:null;
- // {bot, screen}: "show me Jerome's screen" lands on the screen pane, the chat one Back away.
+ // {bot, screen}: "show me Jasper's screen" lands on the screen pane, the chat one Back away.
  if(p.bot){const b=(D.bots||[]).find(x=>x.id===p.bot);if(b){openChat(b);if(p.screen)gbOpenScreen(b)}}
  else if(p.group){const g=(D.groups||[]).find(x=>x.id===p.group);if(g){lcGroup=g.id;openChat(gbGroupRef(g));gbPending(p)}}
  else if(p.members)gbOpenNew(p);

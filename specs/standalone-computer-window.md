@@ -244,8 +244,8 @@ chromeless webview window, scaled up to fill.
 
 ## Definition of done
 
-- Saying "open Pepper's computer in a window" (and the equivalent tool call) opens a
-  **chromeless window** showing Pepper's live desktop **enlarged, view-only**.
+- Saying "open Piper's computer in a window" (and the equivalent tool call) opens a
+  **chromeless window** showing Piper's live desktop **enlarged, view-only**.
 - When the bot's computer is not running, the user gets a clear message, not a blank
   window.
 - Reuses the existing view-only `widgets/rfb.b64` and `screen.html` connect logic —

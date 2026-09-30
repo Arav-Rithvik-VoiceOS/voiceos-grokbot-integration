@@ -141,8 +141,8 @@ test("the native host independently rejects an unsafe socket before creating a v
     });
     child.stdin.write(`${JSON.stringify({
       requestId: "unsafe-test",
-      botId: "pepper-id",
-      botName: "Pepper",
+      botId: "piper-id",
+      botName: "Piper",
       wsUrl: "ws://127.0.0.1/websockify?token=5&network_token=secret",
       html: "<html></html>",
     })}\n`);

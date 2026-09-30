@@ -45,13 +45,13 @@ test("live enums include individual names, excluding ambiguous names and oversiz
 
 test("send choices carry each bot's role and resolve back to that one bot", async () => {
   const team: Agent[] = [
-    { id: "pepper", name: "Pepper", title: "EA", description: "Chief of Staff.\n Calendar and  handoffs." },
-    { id: "friday", name: "F.R.I.D.A.Y.", title: "School", description: "Assignments, tests, deadlines. ".repeat(10) },
+    { id: "piper", name: "Piper", title: "EA", description: "Chief of Staff.\n Calendar and  handoffs." },
+    { id: "finch", name: "F.I.N.C.H.", title: "School", description: "Assignments, tests, deadlines. ".repeat(10) },
     { id: "bare", name: "Bare" },
-    { id: "g", name: "Pepper — EA: Chief of Staff. Calendar and handoffs.", isGroup: true },
+    { id: "g", name: "Piper — EA: Chief of Staff. Calendar and handoffs.", isGroup: true },
   ];
   const labels = botIntentLabels(team);
-  expect(labels).toEqual(["Bare", expect.stringMatching(/^F\.R\.I\.D\.A\.Y\. — School: Assignments/), "Pepper — EA: Chief of Staff. Calendar and handoffs."]);
+  expect(labels).toEqual(["Bare", expect.stringMatching(/^F\.I\.N\.C\.H\. — School: Assignments/), "Piper — EA: Chief of Staff. Calendar and handoffs."]);
   expect(labels.every(l => l.length <= 200)).toBe(true);
   expect(labels[1].endsWith("…")).toBe(true);
   // A label that reads as another bot's name would resolve to that bot: keep the plain name.
@@ -62,8 +62,8 @@ test("send choices carry each bot's role and resolve back to that one bot", asyn
   const published: { names: string[]; labels: string[] }[] = [];
   roster.onChoices = c => published.push(c);
   await roster.refresh();
-  expect(published).toEqual([{ names: ["Bare", "F.R.I.D.A.Y.", "Pepper"], labels }]);
-  for (const [label, id] of [[labels[2], "pepper"], [labels[1], "friday"], ["Pepper", "pepper"]]) {
+  expect(published).toEqual([{ names: ["Bare", "F.I.N.C.H.", "Piper"], labels }]);
+  for (const [label, id] of [[labels[2], "piper"], [labels[1], "finch"], ["Piper", "piper"]]) {
     const r = await roster.beforeTool(hook({ bot: label, message: "Hi" }));
     expect(r.updatedArgs).toMatchObject({ bot: label, recipientId: id });
     expect(resolveApprovedRecipient(label, id, team).id).toBe(id);

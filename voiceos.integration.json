@@ -92,7 +92,7 @@
       },
       {
         "type": "text",
-        "text": "Turn on \"Show notifications from bots\" below to get a ping when a bot replies. To mute one bot, say \"Turn off Pepper's notifications\"."
+        "text": "Turn on \"Show notifications from bots\" below to get a ping when a bot replies. To mute one bot, say \"Turn off Piper's notifications\"."
       }
     ]
   },
@@ -101,13 +101,13 @@
       "name": "view_bot_desktop_live",
       "title": "View a bot's live screen",
       "hidePermissionToggle": true,
-      "description": "Show a live view of a Grok Bot teammate's computer while it works. Use when the user asks to see a bot's screen, watch what a bot is doing, or what a bot is working on right now — e.g. \"show me Pepper's screen\", \"what's Jerome working on\".",
+      "description": "Show a live view of a Grok Bot teammate's computer while it works. Use when the user asks to see a bot's screen, watch what a bot is doing, or what a bot is working on right now — e.g. \"show me Piper's screen\", \"what's Jasper working on\".",
       "inputSchema": {
         "type": "object",
         "properties": {
           "bot": {
             "type": "string",
-            "description": "The bot's name as the user said it, e.g. 'Pepper'."
+            "description": "The bot's name as the user said it, e.g. 'Piper'."
           }
         },
         "required": [
@@ -125,7 +125,7 @@
         "properties": {
           "bot": {
             "type": "string",
-            "description": "A bot's name as the user said it, e.g. 'Pepper'. Omit to list every bot."
+            "description": "A bot's name as the user said it, e.g. 'Piper'. Omit to list every bot."
           }
         }
       }
@@ -220,7 +220,7 @@
       "title": "Message a bot",
       "hidePermissionToggle": true,
       "uiCallable": true,
-      "description": "Send the user's message to one Grok Bot right away, then open its live chat, where the user keeps chatting. The message goes out as written, so write it TO the bot the way the user would type it ('ask Pepper how the test is going' → 'How's the test going?'). Use when the user asks to message, ask, or tell one bot something. Accepts a known bot name or an exact ID from grokbot_prepare_message. For one named bot, call this directly, not grokbot_prepare_message first. If the user names no bot ('send this task to Grok Bot': Grok Bot is the app, not a bot), first call grokbot_prepare_message with no arguments and pick the one bot whose role fits. Send long tasks whole, with their line breaks. Unknown, ambiguous, or group recipients are rejected; do not substitute another bot. After it returns, tell the user the message was sent.",
+      "description": "Send the user's message to one Grok Bot right away, then open its live chat, where the user keeps chatting. The message goes out as written, so write it TO the bot the way the user would type it ('ask Piper how the test is going' → 'How's the test going?'). Use when the user asks to message, ask, or tell one bot something. Accepts a known bot name or an exact ID from grokbot_prepare_message. For one named bot, call this directly, not grokbot_prepare_message first. If the user names no bot ('send this task to Grok Bot': Grok Bot is the app, not a bot), first call grokbot_prepare_message with no arguments and pick the one bot whose role fits. Send long tasks whole, with their line breaks. Unknown, ambiguous, or group recipients are rejected; do not substitute another bot. After it returns, tell the user the message was sent.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -234,7 +234,7 @@
           },
           "message": {
             "type": "string",
-            "description": "The message or task, composed the way the user would type it — their meaning kept, lead-in verbs like 'tell Pepper to' dropped."
+            "description": "The message or task, composed the way the user would type it — their meaning kept, lead-in verbs like 'tell Piper to' dropped."
           },
           "recipientId": {
             "type": "string",
@@ -601,7 +601,7 @@
         "properties": {
           "bot": {
             "type": "string",
-            "description": "The bot's name or identifier as the user said it, e.g. 'Pepper'."
+            "description": "The bot's name or identifier as the user said it, e.g. 'Piper'."
           }
         },
         "required": [
@@ -705,7 +705,7 @@
     {
       "name": "send_message",
       "tool": "grokbot_send",
-      "description": "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. A name the user says wins, even if another bot's role fits better. If the user names no bot, or the name is unclear or misheard, pick the one bot whose role clearly fits the task (school work → the school bot); 'Grok Bot', 'a bot' or 'my bot' is the app, not a name. If two bots fit equally or none fits, do not pick. 'Send this task to …' and 'dispatch …' are sends. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask Pepper how the test is going' → 'How's the test going?'). Drop the lead-in, keep the meaning and line breaks, capital first letter, right end punctuation. A long task is one whole message. Reject groups, multiple recipients, or separate actions outside the message.",
+      "description": "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. A name the user says wins, even if another bot's role fits better. If the user names no bot, or the name is unclear or misheard, pick the one bot whose role clearly fits the task (school work → the school bot); 'Grok Bot', 'a bot' or 'my bot' is the app, not a name. If two bots fit equally or none fits, do not pick. 'Send this task to …' and 'dispatch …' are sends. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask Piper how the test is going' → 'How's the test going?'). Drop the lead-in, keep the meaning and line breaks, capital first letter, right end punctuation. A long task is one whole message. Reject groups, multiple recipients, or separate actions outside the message.",
       "utterances": {
         "en": [
           "Send a message to {bot} asking {message}",

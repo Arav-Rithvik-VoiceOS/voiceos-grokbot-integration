@@ -525,7 +525,7 @@ const showTool = server.registerTool(
       bot: z
         .string()
         .optional()
-        .describe("A bot's name as the user said it, e.g. 'Pepper'. Omit to list every bot."),
+        .describe("A bot's name as the user said it, e.g. 'Piper'. Omit to list every bot."),
     },
     annotations: { readOnlyHint: true },
     _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: [] } },
@@ -698,7 +698,7 @@ const threadTool = server.registerTool(
       const entries = tail.entries ?? [];
       const { thread, truncated } = threadForModel(bot, entries);
       // No card unless asked: a glance on a read step parks the confirmation of
-      // a send that follows it ("summarize what Pepper said and tell Friday").
+      // a send that follows it ("summarize what Piper said and tell Finch").
       return result(
         {
           bot: bot.name,
@@ -802,8 +802,8 @@ async function sendToBot(bot: Agent, message: string, base?: { entries?: Transcr
 }
 
 // ── WRITE: grokbot_send — voice sends at once, then opens the bot's chat ──
-// No confirmation card and no draft to approve: "Send a message to Pepper"
-// sends, and the card opens on Pepper's chat with the message flying from the
+// No confirmation card and no draft to approve: "Send a message to Piper"
+// sends, and the card opens on Piper's chat with the message flying from the
 // box into the orb, the same as a tap send. No `readOnlyHint` (it sends), and
 // no `confirmation`, so the host's ask switch defaults to "Don't ask".
 const sendTool = server.registerTool(
@@ -818,7 +818,7 @@ const sendTool = server.registerTool(
       message: z
         .string()
         .optional()
-        .describe("The message or task, written TO the bot the way the user would type it: meaning kept, lead-in verbs like 'tell Pepper to' dropped, reported speech made direct ('ask Pepper how the test is going' → 'How's the test going?')."),
+        .describe("The message or task, written TO the bot the way the user would type it: meaning kept, lead-in verbs like 'tell Piper to' dropped, reported speech made direct ('ask Piper how the test is going' → 'How's the test going?')."),
       // Must be declared here too (not just the manifest): the MCP layer parses
       // args against THIS schema and strips anything not listed, so without it
       // the card's via:"card" never reaches the handler.
@@ -1050,9 +1050,9 @@ const screenTool = server.registerTool(
   {
     title: "View a bot's live screen",
     description:
-      "Show a live view of a Grok Bot teammate's computer while it works. Use when the user asks to see a bot's screen, watch what a bot is doing, or what a bot is working on right now — e.g. \"show me Pepper's screen\", \"what's Jerome working on\".",
+      "Show a live view of a Grok Bot teammate's computer while it works. Use when the user asks to see a bot's screen, watch what a bot is doing, or what a bot is working on right now — e.g. \"show me Piper's screen\", \"what's Jasper working on\".",
     inputSchema: {
-      bot: z.string().describe("The bot's name as the user said it, e.g. 'Pepper'."),
+      bot: z.string().describe("The bot's name as the user said it, e.g. 'Piper'."),
     },
     annotations: { readOnlyHint: true },
   },
@@ -1096,7 +1096,7 @@ server.registerTool(
     description:
       "Internal — invoked by the show card's live screen pane when the user taps it, to open that bot's computer in a larger window. Do not call from voice.",
     inputSchema: {
-      bot: z.string().describe("The bot's name or identifier as the user said it, e.g. 'Pepper'."),
+      bot: z.string().describe("The bot's name or identifier as the user said it, e.g. 'Piper'."),
     },
     annotations: { readOnlyHint: true },
   },

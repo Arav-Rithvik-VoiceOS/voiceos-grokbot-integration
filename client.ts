@@ -694,10 +694,10 @@ export async function pollForBotReply(
 
 // ── Spoken name → bot id ─────────────────────────────────────────────────────
 //
-// Voice users say "Pepper", not a UUID. A wrong guess would message the wrong
+// Voice users say "Piper", not a UUID. A wrong guess would message the wrong
 // bot, so ambiguity is an error ("which one?"), never a coin flip.
 
-/** "F.R.I.D.A.Y." / "friday" / "Friday" → one comparable token. */
+/** "F.I.N.C.H." / "finch" / "Finch" → one comparable token. */
 export const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /** Resolve one spoken name to exactly one bot, or throw a spoken error. */
