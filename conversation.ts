@@ -100,6 +100,17 @@ export function toThread(entries: TranscriptEntry[]): ThreadItem[] {
       });
       continue;
     }
+    // Another bot's message to this one: a "Received message from <bot>" row, like the
+    // "Messaged <bot>" row above. Its text stays out of the card (the model still reads it).
+    if (e.kind === "message" && e.fromAgent) {
+      const { id, name } = e.fromAgent;
+      items.push(
+        id
+          ? { ...item, sys: "Received message from", bot: id, sender: name }
+          : { ...item, sys: `Received message from ${name || "another bot"}` },
+      );
+      continue;
+    }
     if (e.kind === "notice") {
       items.push({ ...item, sys: string(e.text) });
       continue;

@@ -86,6 +86,17 @@ describe("Grok conversation event parity", () => {
       ])[0].text,
     ).toBeUndefined();
   });
+  test("shows a message from another bot as a Received row, without its text", () => {
+    const [row] = toThread([
+      { kind: "message", id: "in", role: "user", content: "Secret handoff", fromAgent: { id: "f", name: "Finch" } },
+    ]);
+    expect(row).toMatchObject({ sys: "Received message from", bot: "f", sender: "Finch", from: "bot" });
+    expect(row.text).toBeUndefined();
+    expect(row.html).toBeUndefined();
+    expect(
+      toThread([{ kind: "message", role: "user", content: "x", fromAgent: { name: "Finch" } }])[0].sys,
+    ).toBe("Received message from Finch");
+  });
   test("renders image-only messages, user uploads, files, notices, and unknown request types", () => {
     const rows = toThread([
       {

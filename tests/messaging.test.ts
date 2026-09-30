@@ -558,7 +558,7 @@ test("confirmation rows never draw an empty bubble or a nameless orb", async () 
     expect(rows[2]).toMatchObject({ from: "me", text: "Q3 report.pdf" });
     expect(rows[3]).toMatchObject({ text: "Concept A" });
     expect(rows[4]).toMatchObject({ text: "Approve command" });
-    expect(rows[5]).toMatchObject({ bot: "f", html: expect.stringContaining("From Finch") });
+    expect(rows[5]).toEqual({ id: "fri", from: "bot", bot: "f", sys: "Received message from" });
     expect(JSON.stringify(rows)).not.toContain("/Users/arav");
   }
 });
