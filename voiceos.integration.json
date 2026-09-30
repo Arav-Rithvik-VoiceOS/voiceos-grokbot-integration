@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "com.arav.bot",
-  "version": "2.2.3",
+  "version": "2.2.4",
   "name": "Grok Bot",
   "summary": "Talk to your Grok Bot AI teammates by voice.",
   "description": "See your Grok Bot teammates, message one, catch up on what a bot said, create a new bot, or start a group chat with several at once — all by voice, from the notch.",
@@ -180,7 +180,7 @@
       "name": "grokbot_prepare_message",
       "title": "Check message recipients",
       "hidePermissionToggle": true,
-      "description": "Check the live Grok Bot roster before opening a message. Use FIRST for group messages or when recipient identity is uncertain; single-bot fast intents can call grokbot_send directly. Pass names as the user said them. This read-only lookup does not send. On success call nextTool with the returned args. On failure stop and explain the recipient could not be found; do not guess another bot, create a bot, or retry automatically.",
+      "description": "Check the live Grok Bot roster before a group message, or when the user names no bot. Use FIRST for group messages. For ONE named bot, skip this and call grokbot_send directly: its hook verifies the name. When the user names no bot ('send this task to Grok Bot': Grok Bot is the app, not a bot), call this with no arguments to get every bot's role. Never pass the message here: write it once, in the next tool call. Pass names as the user said them. This read-only lookup does not send. On success call nextTool with the returned args plus the message. On failure stop and explain the recipient could not be found; do not guess another bot, create a bot, or retry automatically.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -209,10 +209,6 @@
           "groupName": {
             "type": "string",
             "description": "A new group name, composed as the user would type it."
-          },
-          "message": {
-            "type": "string",
-            "description": "The draft, composed as the user would type it, with lead-in commands removed."
           }
         },
         "required": []
@@ -224,7 +220,7 @@
       "title": "Message a bot",
       "hidePermissionToggle": true,
       "uiCallable": true,
-      "description": "Send the user's message to one Grok Bot right away, then open its live chat, where the user keeps chatting. The message goes out as written, so write it TO the bot the way the user would type it ('ask Pepper how the test is going' → 'How's the test going?'). Use when the user asks to message, ask, or tell one bot something. Accepts a known bot name or an exact ID from grokbot_prepare_message. Unknown, ambiguous, or group recipients are rejected; do not substitute another bot. After it returns, tell the user the message was sent.",
+      "description": "Send the user's message to one Grok Bot right away, then open its live chat, where the user keeps chatting. The message goes out as written, so write it TO the bot the way the user would type it ('ask Pepper how the test is going' → 'How's the test going?'). Use when the user asks to message, ask, or tell one bot something. Accepts a known bot name or an exact ID from grokbot_prepare_message. For one named bot, call this directly, not grokbot_prepare_message first. If the user names no bot ('send this task to Grok Bot': Grok Bot is the app, not a bot), first call grokbot_prepare_message with no arguments and pick the one bot whose role fits. Send long tasks whole, with their line breaks. Unknown, ambiguous, or group recipients are rejected; do not substitute another bot. After it returns, tell the user the message was sent.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -436,7 +432,7 @@
       "title": "Message a group chat",
       "hidePermissionToggle": true,
       "uiCallable": true,
-      "description": "Send the user's message to a Grok Bot group chat right away (an existing group, or a new one created from two or more named bots), then open that group's live chat. Use when the user asks to message several bots or a group. Spoken member or name changes are saved before it sends. Without a message, or with fewer than two bots for a new group, it only opens the group pane. Use AFTER grokbot_prepare_message succeeds for this request, copying its returned args including resolved group/member IDs. Never call after a missing or ambiguous recipient lookup.",
+      "description": "Send the user's message to a Grok Bot group chat right away (an existing group, or a new one created from two or more named bots), then open that group's live chat. Use when the user asks to message several bots or a group. Spoken member or name changes are saved before it sends. Without a message, or with fewer than two bots for a new group, it only opens the group pane. Use AFTER grokbot_prepare_message succeeds for this request, copying its returned args including resolved group/member IDs, and adding the message. Never call after a missing or ambiguous recipient lookup.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -664,7 +660,7 @@
     {
       "name": "list_bots",
       "tool": "grokbot_show",
-      "description": "List the user's Grok Bot teammates and group chats. Only list bots, without sending a message or opening a bot's computer.",
+      "description": "List the user's Grok Bot teammates and group chats. Only list bots, without sending a message or opening a bot's computer. Never when the user gives a task or message to send, even one that names no bot ('send this task to Grok Bot').",
       "utterances": {
         "en": [
           "Show my Grok bots",
@@ -684,7 +680,7 @@
     {
       "name": "show_bot",
       "tool": "grokbot_show",
-      "description": "Open one known Grok Bot's conversation and current progress. Do not send a message or show its computer screen.",
+      "description": "Open one known Grok Bot's conversation and current progress. Do not send a message or show its computer screen. Never when the user gives a task or message to send.",
       "utterances": {
         "en": [
           "Show Grok bot {bot}",
@@ -709,7 +705,7 @@
     {
       "name": "send_message",
       "tool": "grokbot_send",
-      "description": "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. Pick the bot: a name the user says wins, even if another bot's role fits better. If the user names no bot, or the name is unclear or misheard, pick the one bot whose role clearly fits the task (school work → the school bot). If two bots fit equally or none fits, do not pick. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask Pepper how the screen test is going' → 'How's the screen test going?'; 'tell Pepper to check the build' → 'Check the build.'). Drop the lead-in, keep the meaning, capital first letter, right end punctuation. Several questions in one message are one send. Reject groups, multiple recipients, or separate actions outside the message.",
+      "description": "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. A name the user says wins, even if another bot's role fits better. If the user names no bot, or the name is unclear or misheard, pick the one bot whose role clearly fits the task (school work → the school bot); 'Grok Bot', 'a bot' or 'my bot' is the app, not a name. If two bots fit equally or none fits, do not pick. 'Send this task to …' and 'dispatch …' are sends. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask Pepper how the test is going' → 'How's the test going?'). Drop the lead-in, keep the meaning and line breaks, capital first letter, right end punctuation. A long task is one whole message. Reject groups, multiple recipients, or separate actions outside the message.",
       "utterances": {
         "en": [
           "Send a message to {bot} asking {message}",
@@ -720,7 +716,13 @@
           "Tell Grok bot {bot} to {message}",
           "Grok Bot send {bot} {message}",
           "Have {bot} {message}",
-          "Get {bot} to {message}"
+          "Get {bot} to {message}",
+          "Send this task to {bot}: {message}",
+          "Send this to {bot}: {message}",
+          "Dispatch a task to {bot}: {message}",
+          "Dispatch {message} to {bot}",
+          "Give {bot} this task: {message}",
+          "Give {bot} a task to {message}"
         ]
       },
       "slots": {

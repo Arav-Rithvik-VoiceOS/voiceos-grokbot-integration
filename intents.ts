@@ -10,21 +10,21 @@ import { defineHooks, INTENT_SLOT_VALUES_META_KEY, INTENT_REFRESH_NOTIFICATION_M
 export const intents: IntentDefinition[] = [
   {
     name: "list_bots", tool: "grokbot_show",
-    description: "List the user's Grok Bot teammates and group chats. Only list bots, without sending a message or opening a bot's computer.",
+    description: "List the user's Grok Bot teammates and group chats. Only list bots, without sending a message or opening a bot's computer. Never when the user gives a task or message to send, even one that names no bot ('send this task to Grok Bot').",
     utterances: { en: ["Show my Grok bots", "List my bots", "Show my bots", "Show me my bots", "List my Grok bots", "What bots do I have", "Grok Bot show", "Show Grok Bots"] },
     response: { en: "Getting your bots." },
   },
   {
     name: "show_bot", tool: "grokbot_show",
-    description: "Open one known Grok Bot's conversation and current progress. Do not send a message or show its computer screen.",
+    description: "Open one known Grok Bot's conversation and current progress. Do not send a message or show its computer screen. Never when the user gives a task or message to send.",
     utterances: { en: ["Show Grok bot {bot}", "Show me {bot}", "What is {bot} doing", "Show {bot}'s progress", "How is {bot} doing", "What's {bot}'s status"] },
     slots: { bot: { type: "enum", valuesFrom: "tool", required: true } },
     response: { en: "Opening {bot}." },
   },
   {
     name: "send_message", tool: "grokbot_send",
-    description: "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. Pick the bot: a name the user says wins, even if another bot's role fits better. If the user names no bot, or the name is unclear or misheard, pick the one bot whose role clearly fits the task (school work → the school bot). If two bots fit equally or none fits, do not pick. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask Pepper how the screen test is going' → 'How's the screen test going?'; 'tell Pepper to check the build' → 'Check the build.'). Drop the lead-in, keep the meaning, capital first letter, right end punctuation. Several questions in one message are one send. Reject groups, multiple recipients, or separate actions outside the message.",
-    utterances: { en: ["Send a message to {bot} asking {message}", "Ask {bot} {message}", "Ask {bot} to {message}", "Message {bot} saying {message}", "Send {bot} a message saying {message}", "Tell Grok bot {bot} to {message}", "Grok Bot send {bot} {message}", "Have {bot} {message}", "Get {bot} to {message}"] },
+    description: "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. A name the user says wins, even if another bot's role fits better. If the user names no bot, or the name is unclear or misheard, pick the one bot whose role clearly fits the task (school work → the school bot); 'Grok Bot', 'a bot' or 'my bot' is the app, not a name. If two bots fit equally or none fits, do not pick. 'Send this task to …' and 'dispatch …' are sends. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask Pepper how the test is going' → 'How's the test going?'). Drop the lead-in, keep the meaning and line breaks, capital first letter, right end punctuation. A long task is one whole message. Reject groups, multiple recipients, or separate actions outside the message.",
+    utterances: { en: ["Send a message to {bot} asking {message}", "Ask {bot} {message}", "Ask {bot} to {message}", "Message {bot} saying {message}", "Send {bot} a message saying {message}", "Tell Grok bot {bot} to {message}", "Grok Bot send {bot} {message}", "Have {bot} {message}", "Get {bot} to {message}", "Send this task to {bot}: {message}", "Send this to {bot}: {message}", "Dispatch a task to {bot}: {message}", "Dispatch {message} to {bot}", "Give {bot} this task: {message}", "Give {bot} a task to {message}"] },
     slots: {
       bot: { type: "enum", valuesFrom: "tool", required: true },
       message: { type: "string", required: true, examples: ["How's the screen test going?", "Summarize today's updates.", "Can you check the latest build?"] },

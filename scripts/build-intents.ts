@@ -1,5 +1,5 @@
 import { intents } from "../intents.ts";
-import { PREPARE_DESCRIPTION, SEND_DESCRIPTION } from "../messaging.ts";
+import { GROUP_DESCRIPTION, PREPARE_DESCRIPTION, SEND_DESCRIPTION } from "../messaging.ts";
 import { intentErrors } from "../sdk/intents.ts";
 const path = new URL("../voiceos.integration.json", import.meta.url);
 const manifest = await Bun.file(path).json();
@@ -9,6 +9,7 @@ if (!manifest.permissions.some((p: { kind: string }) => p.kind === "transcript")
   manifest.permissions.push({ kind: "transcript", scope: "agent" });
 for (const tool of manifest.tools) {
   if (tool.name === "grokbot_prepare_message") tool.description = PREPARE_DESCRIPTION;
+  if (tool.name === "grokbot_group") tool.description = GROUP_DESCRIPTION;
   if (tool.name !== "grokbot_send") continue;
   tool.description = SEND_DESCRIPTION;
   tool.inputSchema.properties.bot.description = "One Grok Bot's name as spoken, or its exact ID from grokbot_prepare_message. The SDK hook verifies the recipient.";

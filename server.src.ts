@@ -721,7 +721,8 @@ server.registerTool("grokbot_prepare_message", {
     group: z.string().optional().describe("An existing group's name as the user said it, or its ID."),
     members: z.union([z.array(z.string()), z.string()]).optional().describe("Group members as the user said them, or their IDs."),
     groupName: z.string().optional().describe("A new group name, composed as the user would type it."),
-    message: z.string().optional().describe("The draft, composed as the user would type it, with lead-in commands removed."),
+    // No `message`: the model writes it once, in grokbot_send / grokbot_group.
+    // Taking it here too made a long task get typed twice (~15 s more).
   },
   annotations: { readOnlyHint: true },
 }, async (args: MessageArgs) => handle("grokbot_prepare_message", async () => {
@@ -729,18 +730,29 @@ server.registerTool("grokbot_prepare_message", {
   if (args.bot !== undefined && (args.group !== undefined || args.members !== undefined)) {
     throw new IntegrationError("not_found", "Choose one bot or a group of bots.");
   }
+  // No recipient at all ("send this task to Grok Bot"): hand back each bot's
+  // role so the model picks one. Plain JSON, no glance: grokbot_show would
+  // put the roster card on screen before the send's card.
+  if (args.bot === undefined && args.group === undefined && args.members === undefined && args.groupName === undefined) {
+    const bots = agents.filter(a => !a.isGroup);
+    if (!bots.length) throw new IntegrationError("not_found", "You don't have any Grok bots yet.");
+    return result({ ready: false, nextTool: "grokbot_send",
+      bots: bots.map(b => ({ id: b.id, name: b.name, role: [b.title, b.description].map(t => (t ?? "").trim()).filter(Boolean).join(": ") })),
+      message: "The user named no bot. Pick the one bot whose role fits the task and call grokbot_send with its id as bot and the whole message. If none or several fit, ask the user which bot." });
+  }
   let target: Agent | undefined;
   let resolved: MessageArgs;
   if (args.bot !== undefined) {
     target = resolveMessageRecipient(args.bot, agents.filter(a => !a.isGroup));
-    resolved = { bot: target.id, ...(args.message !== undefined ? { message: args.message } : {}) };
+    resolved = { bot: target.id };
   } else {
     const { existing, memberIds } = resolveMessageGroup(args, agents);
     target = existing;
     if (!existing && !memberIds.length && args.members === undefined && args.groupName === undefined) {
       throw new IntegrationError("not_found", "Which bot or group do you want to message?");
     }
-    resolved = { ...args, ...(existing ? { group: existing.id } : {}), members: memberIds };
+    const { message: _dropped, ...rest } = args;
+    resolved = { ...rest, ...(existing ? { group: existing.id } : {}), members: memberIds };
   }
   const threads: Record<string, ConfirmRow[]> = {};
   if (target) {
@@ -754,7 +766,7 @@ server.registerTool("grokbot_prepare_message", {
   // result on screen, and the chat card grokbot_send / grokbot_group opens
   // a moment later must be the one the user sees.
   return result({ ready: true, nextTool: args.bot !== undefined ? "grokbot_send" : "grokbot_group",
-    args: { ...resolved, confirmationContext: context }, message: "Recipients verified. Use the returned args to open the message card." });
+    args: { ...resolved, confirmationContext: context }, message: "Recipients verified. Call nextTool with the returned args plus the message." });
 }));
 
 // ── WRITE: the one 1:1 send path — only the card's send arrow reaches it ──

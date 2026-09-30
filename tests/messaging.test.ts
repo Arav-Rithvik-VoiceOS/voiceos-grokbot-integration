@@ -182,7 +182,8 @@ test("live lookup supplies a newly registered bot to an old confirmation", async
   const r = await call("grokbot_prepare_message", { bot: "James", message: "Hello" });
   expect(r.nextTool).toBe("grokbot_send");
   expect(r.args.bot).toBe("j");
-  expect(r.args.message).toBe("Hello");
+  // The message is written once, in the send itself, never passed through.
+  expect(r.args.message).toBeUndefined();
   expect(JSON.parse(r.args.confirmationContext).bots).toContainEqual(expect.objectContaining({ id: "j", name: "James" }));
   expect(writes).toEqual([]);
 });
@@ -213,7 +214,16 @@ test("group lookup rejects every unresolved member before a confirmation", async
 test("group lookup preserves drafts and returns resolved member IDs", async () => {
   const r = await call("grokbot_prepare_message", { members: ["Pepper", "Titus"], groupName: "Research", message: "Hello" });
   expect(r.nextTool).toBe("grokbot_group");
-  expect(r.args).toMatchObject({ members: ["p", "t"], groupName: "Research", message: "Hello" });
+  expect(r.args).toMatchObject({ members: ["p", "t"], groupName: "Research" });
+  expect(r.args.message).toBeUndefined();
+  expect(writes).toEqual([]);
+});
+test("a lookup with no recipient returns every bot's role as plain JSON, never the roster card", async () => {
+  const r = await call("grokbot_prepare_message", {});
+  expect(r.ready).toBe(false);
+  expect(r.nextTool).toBe("grokbot_send");
+  expect(r.bots.map((b: any) => b.id)).toEqual(agents.filter(a => !a.isGroup).map(a => a.id));
+  expect(r._voiceos_glance).toBeUndefined();
   expect(writes).toEqual([]);
 });
 test("a voice toggle flips one bot's Notify on updates switch, and skips a no-op write", async () => {
@@ -621,6 +631,8 @@ test("a spoken message is tidied before it goes out; typed card sends are sent a
   expect(tidySpoken("check the latest build")).toBe("Check the latest build.");
   expect(tidySpoken("iPhone build looks off")).toBe("iPhone build looks off.");
   expect(tidySpoken("Done!")).toBe("Done!");
+  // A long pasted task keeps its paragraphs; only spaces and blank-line runs shrink.
+  expect(tidySpoken("  run  the radar.\r\n\n\n\nReply-review phase:  \n check replies ")).toBe("Run the radar.\n\nReply-review phase:\ncheck replies.");
   const r = await call("grokbot_send", { bot: "Pepper", message: "how's the screen test going" });
   expect(writes).toEqual([["send", "p", "How's the screen test going?"]]);
   expect(cardData(r).args.message).toBe("How's the screen test going?");
