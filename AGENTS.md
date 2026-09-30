@@ -89,6 +89,22 @@ Then in VoiceOS: Dashboard → Agent tab → Integration Studio → My
 Integrations → open **Grok Bot** → **Reload**. The agent sees your
 changes on its next turn — just talk to it.
 
+## Versioning
+
+The manifest `version` uses semver. Bump it in `voiceos.integration.json`
+whenever a change ships:
+
+- **Patch (2.2.x)**: a fix or polish. Nothing new for the user.
+- **Minor (2.x.0)**: a new feature. Example: a new tool, a new pane in the
+  roster card, a new setting.
+- **Major (x.0.0)**: a redesign that changes how the user uses Grok Bot.
+
+The 2.x line began with the one-card redesign (no confirmation cards, roster
+card as the only chat). Old numbers map like this: `1.0.32` = 2.0.0,
+`1.0.35` = 2.1.0, `1.0.38` = 2.2.0, `1.0.39` = 2.2.1, `1.0.40` = 2.2.2.
+Older commit messages still say "manifest 1.0.xx"; do not rewrite pushed
+history. Local git tags (`v2.0.0`, `v2.1.0`, `v2.2.0`, `v2.2.1`) mark the map.
+
 ## After every change Arav needs to test
 
 VoiceOS loads the MAIN folder (`/Users/arav/Vault/voiceOS-grokbot-integration`),
