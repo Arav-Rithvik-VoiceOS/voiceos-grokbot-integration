@@ -16,6 +16,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { pbkdf2Sync, createDecipheriv } from "node:crypto";
 import {
   openComputerWindow as launchComputerWindow,
@@ -44,6 +45,7 @@ export type FailureKind =
   | "rate_limited"
   | "timeout"
   | "network"
+  | "parked" // the cloud box is hibernated and this call did not wake it
   | "upstream";
 
 /**
@@ -261,6 +263,20 @@ interface ForeverBoxStatus {
 const VNC_PRIMARY_PORT = "6080";
 const VNC_FORK_PORT = "6081";
 const VNC_RESUME = "resume_lower_s=900&resume_upper_s=18000";
+/** The same resume window as headers. The Grok Bot app parks (hibernates) the
+ * cloud box while you seem away, and the box answers 417 until woken; the
+ * app's viewer wakes it by sending these on its requests, so every gateway
+ * call does too. */
+const WAKE_HEADERS = {
+  "x-anyrun-hibernation-lower-bound-s": "900",
+  "x-anyrun-hibernation-upper-bound-s": "18000",
+};
+const quiet = new AsyncLocalStorage<true>();
+/** Runs background work (polls, watches) without waking a parked box, so it
+ * never keeps the box on after the app parks it. It then fails as "parked". */
+export const withoutWaking = <T>(work: () => Promise<T>): Promise<T> => quiet.run(true, work);
+export const isWaking = () => quiet.getStore() !== true;
+const wakeHeaders = () => (isWaking() ? WAKE_HEADERS : {});
 
 /**
  * Turn the gateway's localhost-form VNC URL into public cloud URLs, exactly the
@@ -358,6 +374,7 @@ export async function gateway<T = unknown>(
         Authorization: `Bearer ${creds.token}`,
         "Content-Type": "application/json",
         ...(creds.networkToken ? { "x-anyrun-network-token": creds.networkToken } : {}),
+        ...wakeHeaders(),
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
@@ -417,6 +434,7 @@ function curlPost(
         "-H", `Authorization: Bearer ${creds.token}`,
         "-H", "Content-Type: application/json",
         ...(creds.networkToken ? ["-H", `x-anyrun-network-token: ${creds.networkToken}`] : []),
+        ...Object.entries(wakeHeaders()).flatMap(([name, value]) => ["-H", `${name}: ${value}`]),
         "-d", JSON.stringify(body),
         `${creds.baseUrl}/api/${command}`,
       ],
@@ -443,6 +461,9 @@ function classifyStatus(status: number, text: string): IntegrationError {
   }
   const low = detail.toLowerCase();
 
+  if (status === 417) {
+    return new IntegrationError("parked", `${SERVICE_NAME}'s cloud computer is asleep. Open the Grok Bot app to wake it, then try again.`);
+  }
   if (status === 429 || /rate limit|too many requests/.test(low)) {
     return new IntegrationError("rate_limited", `${SERVICE_NAME} is busy — wait a moment and try again.`);
   }

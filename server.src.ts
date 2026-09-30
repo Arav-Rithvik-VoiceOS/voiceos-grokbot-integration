@@ -14,6 +14,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import {
   IntegrationError,
+  withoutWaking,
   SERVICE_NAME,
   TOOLKIT,
   type Agent,
@@ -221,7 +222,8 @@ const summarize = (text: string, max = 140): string => {
  */
 function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, ourText: string): void {
   if (!notificationsEnabled() || !botNotifies(bot)) return; // nothing to ping, so don't poll
-  void (async () => {
+  // Background: never wakes a box the Grok Bot app parked.
+  void withoutWaking(async () => {
     const known = new Set(seen);
     const t0 = Date.now();
     let sawActivity = false; // saw it working, or saw at least one reply
@@ -303,7 +305,7 @@ function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, o
     } catch (error) {
       log("thread watch failed:", error);
     }
-  })();
+  });
 }
 
 // ── Automation watch: ping when a scheduled task ("automation") finishes ──────
@@ -355,7 +357,8 @@ async function automationResultText(agentId: string, run: AutomationRun): Promis
  */
 function startAutomationWatch(): void {
   if (!notificationsEnabled()) return; // env is fixed at process start; nothing to ping
-  void (async () => {
+  // Background: never wakes a box the Grok Bot app parked.
+  void withoutWaking(async () => {
     const pinged = new Set<string>(); // finished run ids already handled
     let baselined = false;
     let armedUntil = 0; // stay in short-poll until this time (survives a late fire)
@@ -421,7 +424,7 @@ function startAutomationWatch(): void {
         await sleep(AUTO_MAX_IDLE_MS); // app not signed in / gateway down → back off
       }
     }
-  })();
+  });
 }
 
 // ── Failure policy, in one place ─────────────────────────────────────────────

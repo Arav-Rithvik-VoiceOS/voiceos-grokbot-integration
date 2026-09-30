@@ -7,7 +7,7 @@ import { z } from "zod";
 import { intentErrors, resolveIntentSlots, matchIntentTemplate, INTENT_SLOT_VALUES_META_KEY, INTENT_REFRESH_NOTIFICATION_METHOD } from "./sdk/intents.ts";
 import type { PreToolUseHookInput } from "./sdk/hooks.ts";
 import { intents, IntentRoster, botIntentNames, botIntentLabels, resolveApprovedRecipient, registerIntentSupport } from "./intents.ts";
-import type { Agent } from "./client.ts";
+import { type Agent, IntegrationError, withoutWaking } from "./client.ts";
 import { GROK_COLOR_HEX } from "./cards.ts";
 import manifest from "./voiceos.integration.json";
 
@@ -90,10 +90,65 @@ test("roster changes publish new choices once; outages clear old names", async (
   expect((await roster.beforeTool(hook({ bot: "New Terry" }))).decision).toBe("block");
 });
 
+test("a stale or failed roster reloads before a send is judged, as after the Mac sleeps", async () => {
+  let now = 1000;
+  let reads = 0;
+  let read: () => Promise<Agent[]> = async () => { throw new Error("Couldn't reach Grok Bot — is the Grok Bot app running?"); };
+  const roster = new IntentRoster(() => { reads++; return read(); }, () => now);
+  // The boot load failed (Wi-Fi not back yet): the send's hook tries again.
+  await expect(roster.refresh()).rejects.toThrow("Couldn't reach");
+  read = async () => agents;
+  expect((await roster.beforeTool(hook({ bot: "Terry" }))).updatedArgs).toMatchObject({ recipientId: "terry" });
+  expect(reads).toBe(2);
+  // Timers stop while the Mac sleeps, so the cache is old on wake: reload it.
+  now += 15 * 60_000;
+  expect((await roster.beforeTool(hook({ bot: "Terry" }))).updatedArgs).toMatchObject({ recipientId: "terry" });
+  expect(reads).toBe(3);
+  // A fresh cache is used as it is.
+  await roster.beforeTool(hook({ bot: "Terry" }));
+  expect(reads).toBe(3);
+  // Still unreachable: block, and say why.
+  now += 15 * 60_000;
+  read = async () => { throw new Error("Couldn't reach Grok Bot — is the Grok Bot app running?"); };
+  expect(await roster.beforeTool(hook({ bot: "Terry" }))).toEqual({
+    decision: "block", responseText: "Couldn't reach Grok Bot — is the Grok Bot app running?",
+  });
+  // A reload that hangs never eats the host's 2 s hook budget.
+  read = () => new Promise(() => {});
+  const started = Date.now();
+  expect((await roster.beforeTool(hook({ bot: "Terry" }))).decision).toBe("block");
+  expect(Date.now() - started).toBeLessThan(1_500);
+});
+
+test("a parked box keeps the bot names, and a send uses the last roster while the box wakes", async () => {
+  let now = 1000;
+  let read: () => Promise<Agent[]> = async () => agents;
+  const roster = new IntentRoster(() => read(), () => now);
+  const published: string[][] = [];
+  roster.onChoices = ({ names }) => published.push(names);
+  await roster.refresh();
+  // The Grok Bot app parks the box: a background poll gets 417 ("parked").
+  now += 15 * 60_000;
+  read = async () => { throw new IntegrationError("parked", "Grok Bot's cloud computer is asleep."); };
+  await expect(withoutWaking(() => roster.refresh())).rejects.toThrow("asleep");
+  expect(published).toEqual([["SEO Master", "Terry"]]);
+  // Waking takes ~3 s, past the hook's budget: the send pins from the last roster.
+  let woke = 0;
+  read = () => new Promise(done => setTimeout(() => { woke++; done(agents); }, 1_500));
+  const started = Date.now();
+  expect((await roster.beforeTool(hook({ bot: "Terry" }))).updatedArgs).toMatchObject({ recipientId: "terry" });
+  expect(Date.now() - started).toBeLessThan(1_500);
+  // A waking read never waits on a background one that cannot wake the box.
+  read = () => new Promise(() => {});
+  const quiet = withoutWaking(() => roster.refresh());
+  read = async () => agents;
+  await roster.refresh();
+  void quiet;
+});
+
 test("preparation keeps the enum name, supplies native identity, and leaves approval to VoiceOS", async () => {
   let now = 1000;
   const roster = new IntentRoster(async () => agents, () => now);
-  expect((await roster.beforeTool(hook({ bot: "Terry" }))).decision).toBe("block");
   await roster.refresh();
   const prepared = await roster.beforeTool(hook({ bot: "Terry", message: "Check the draft" }));
   expect(prepared.decision).toBeUndefined();
@@ -107,8 +162,6 @@ test("preparation keeps the enum name, supplies native identity, and leaves appr
   expect((await roster.beforeTool(hook({ bot: "Missing" }))).decision).toBe("block");
   expect((await roster.beforeTool(hook({ bot: "Blog Generation" }))).decision).toBe("block");
   expect(await roster.beforeTool({ ...hook({}), toolName: "grokbot_show" })).toEqual({});
-  now += 90_001;
-  expect((await roster.beforeTool(hook({ bot: "Terry" }))).decision).toBe("block");
 });
 
 const ctx = (r: { updatedArgs?: Record<string, unknown> }) => JSON.parse(r.updatedArgs!.confirmationContext as string);

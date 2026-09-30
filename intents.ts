@@ -1,6 +1,6 @@
 import type { IntentDefinition } from "./sdk/intents.ts";
 import type { PreToolUseHookInput, HookResult } from "./sdk/hooks.ts";
-import { type Agent, normalize, IntegrationError } from "./client.ts";
+import { type Agent, normalize, IntegrationError, log, isWaking, withoutWaking } from "./client.ts";
 import { confirmationContext, confirmationRows, type ConfirmRow } from "./cards.ts";
 import { resolveMessageRecipient, botChoiceLabel } from "./messaging.ts";
 import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -115,6 +115,10 @@ export interface BotChoices { names: string[]; labels: string[] }
  * a bounded wait, never the send. */
 const RECENT_WAIT_MS = 800;
 const ROSTER_MAX_AGE_MS = 90_000;
+/** How long a hook waits to reload a stale or failed roster. Timers stop while
+ * the Mac sleeps, so on wake the cache is always old, and the first reload can
+ * fail before Wi-Fi is back. Plus RECENT_WAIT_MS, this stays inside the 2 s. */
+const ROSTER_WAIT_MS = 1_000;
 
 /** A model-copied confirmationContext, or undefined when missing or mangled. */
 function copiedContext(value: unknown): Record<string, any> | undefined {
@@ -129,6 +133,7 @@ export class IntentRoster {
   private agents: Agent[] = [];
   private updatedAt = 0;
   private pending?: Promise<Agent[]>;
+  private pendingWakes = false;
   private signature = "";
   onChoices: (choices: BotChoices) => void = () => {};
   /** The recipient's recent confirmation rows; the server wires the gateway in. */
@@ -136,20 +141,29 @@ export class IntentRoster {
 
   constructor(private readonly read: () => Promise<Agent[]>, private readonly now = Date.now) {}
 
+  /** A background read (see withoutWaking) never wakes a parked box, so a
+   * read that may wake it does not wait on one. Only the latest read lands. */
   refresh(): Promise<Agent[]> {
-    if (this.pending) return this.pending;
-    this.pending = this.read().then(agents => {
+    const wakes = isWaking();
+    if (this.pending && (this.pendingWakes || !wakes)) return this.pending;
+    const pending: Promise<Agent[]> = this.read().then(agents => {
+      if (this.pending !== pending) return agents;
       this.agents = agents;
       this.updatedAt = this.now();
       this.publish({ names: botIntentNames(agents), labels: botIntentLabels(agents) });
       return agents;
     }, error => {
-      this.agents = [];
-      this.updatedAt = 0;
-      this.publish({ names: [], labels: [] });
+      // A parked box still has the same bots: keep their names, stay stale.
+      if (this.pending === pending && !(error instanceof IntegrationError && error.kind === "parked")) {
+        this.agents = [];
+        this.updatedAt = 0;
+        this.publish({ names: [], labels: [] });
+      }
       throw error;
-    }).finally(() => { this.pending = undefined; });
-    return this.pending;
+    }).finally(() => { if (this.pending === pending) this.pending = undefined; });
+    this.pending = pending;
+    this.pendingWakes = wakes;
+    return pending;
   }
 
   private publish(choices: BotChoices) {
@@ -159,9 +173,24 @@ export class IntentRoster {
     this.onChoices(choices);
   }
 
-  private fresh() {
-    if (!this.updatedAt || this.now() - this.updatedAt > ROSTER_MAX_AGE_MS)
-      throw new Error("Grok Bot's roster is unavailable. Try again once the bots are connected.");
+  /** The cached roster, reloaded first when it is stale or its last load
+   * failed. A reload that is slow (a parked box takes ~3 s to wake) or finds
+   * the box parked falls back to the last roster: the send re-checks the
+   * recipient against the live one before it runs. With no roster at all, the
+   * reload error is thrown as it is, so the block says why. */
+  private async fresh() {
+    if (this.updatedAt && this.now() - this.updatedAt <= ROSTER_MAX_AGE_MS) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.refresh(),
+        new Promise((_, fail) => {
+          timer = setTimeout(() => fail(new Error("Grok Bot is slow to answer. Try again in a moment.")), ROSTER_WAIT_MS);
+        }),
+      ]);
+    } catch (error) {
+      if (!this.agents.length) throw error;
+    } finally { clearTimeout(timer); }
   }
 
   private async recent(botId: string): Promise<ConfirmRow[] | undefined> {
@@ -185,7 +214,7 @@ export class IntentRoster {
     if (input.toolName === "grokbot_group") return this.beforeGroup(input);
     if (input.toolName !== "grokbot_send") return {};
     try {
-      this.fresh();
+      await this.fresh();
       if (typeof input.args.bot !== "string") throw new Error("Choose a Grok Bot to message.");
       const individuals = this.agents.filter(a => !a.isGroup);
       const bot = resolveMessageRecipient(input.args.bot, individuals);
@@ -210,9 +239,9 @@ export class IntentRoster {
 
   /** A group send's recipients are verified when it runs; here its prepared
    * context is only made safe to draw: roster from the live cache, rows rebuilt. */
-  private beforeGroup(input: PreToolUseHookInput): HookResult {
+  private async beforeGroup(input: PreToolUseHookInput): Promise<HookResult> {
     if (input.args.confirmationContext === undefined) return {};
-    try { this.fresh(); }
+    try { await this.fresh(); }
     catch (error) { return { decision: "block", responseText: (error as Error).message }; }
     const copied = copiedContext(input.args.confirmationContext)?.threads;
     const threads: Record<string, ConfirmRow[]> = {};
@@ -231,8 +260,17 @@ export function registerIntentSupport(server: McpServer, tools: { named: IntentT
     for (const tool of tools.named) tool.update({ _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: names } } });
     for (const tool of tools.labeled) tool.update({ _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: labels } } });
   };
-  defineHooks(server, { preToolUse: (input: PreToolUseHookInput) => roster.beforeTool(input) });
-  const refresh = () => { void roster.refresh().catch(onError); };
+  defineHooks(server, {
+    preToolUse: async (input: PreToolUseHookInput) => {
+      const result = await roster.beforeTool(input);
+      // stderr only: names and shapes, never message text.
+      if (result.decision === "block")
+        log(`preToolUse blocked ${input.toolName}: ${result.responseText}`, { input: Object.keys(input ?? {}), args: Object.keys(input?.args ?? {}), bot: typeof input?.args?.bot });
+      return result;
+    },
+  });
+  // Background: keeps names current, never wakes a parked box.
+  const refresh = () => { void withoutWaking(() => roster.refresh()).catch(onError); };
   server.server.setNotificationHandler(z.object({ method: z.literal(INTENT_REFRESH_NOTIFICATION_METHOD) }), refresh);
   let timer: ReturnType<typeof setInterval> | undefined;
   return {
