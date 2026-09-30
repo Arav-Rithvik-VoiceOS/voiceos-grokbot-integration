@@ -328,7 +328,19 @@ export async function agentScreen(
     log("getForeverBoxStatus failed:", error);
     return { live: false };
   }
-  const localUrl = box?.vncUrl ?? box?.windows?.find((w) => w.vncUrl)?.vncUrl ?? null;
+  let localUrl = box?.vncUrl ?? box?.windows?.find((w) => w.vncUrl)?.vncUrl ?? null;
+  if (!localUrl && isWaking()) {
+    // A bot's box stays "absent" until something boots it; the app does that
+    // (ensureForeverBox) whenever its screen opens. Do the same, or the screen
+    // reads "not running" until the user opens the app. Background probes skip
+    // this so they never boot boxes nobody asked to see.
+    try {
+      box = await gateway<ForeverBoxStatus | null>("ensureForeverBox", { id: agentId }, { timeoutMs: 15_000 });
+      localUrl = box?.vncUrl ?? box?.windows?.find((w) => w.vncUrl)?.vncUrl ?? null;
+    } catch (error) {
+      log("ensureForeverBox failed:", error);
+    }
+  }
   if (!localUrl) return { live: false, boxState: box?.state };
   const urls = await publicVncUrls(localUrl);
   if (!urls) {
