@@ -9,7 +9,7 @@ import { defineHooks, INTENT_SLOT_VALUES_META_KEY, INTENT_REFRESH_NOTIFICATION_M
 
 export const intents: IntentDefinition[] = [
   {
-    name: "list_bots", tool: "grokbot_show",
+    name: "list_bots", tool: "grokbot_list",
     description: "List the user's Grok Bot teammates and group chats. Only list bots, without sending a message or opening a bot's computer. Never when the user gives a task or message to send, even one that names no bot ('send this task to Grok Bot').",
     utterances: { en: ["Show my Grok bots", "List my bots", "Show my bots", "Show me my bots", "List my Grok bots", "What bots do I have", "Grok Bot show", "Show Grok Bots"] },
     response: { en: "Getting your bots." },

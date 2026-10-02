@@ -484,6 +484,17 @@ test("the roster card opens chat panes populated with card items and their curso
   expect(JSON.stringify(data)).not.toContain("file://");
   expect(r.groups).toEqual([{ name: "Study group", members: ["p", "f"] }]);
 });
+test("grokbot_list, the list_bots intent's own tool, returns the same roster as grokbot_show", async () => {
+  tail = [...EARLIER, PICTURE];
+  tailCursor = 31;
+  const list = await call("grokbot_list", {});
+  const show = await call("grokbot_show", {});
+  expect(list.bots).toEqual(show.bots);
+  expect(list.groups).toEqual(show.groups);
+  expect(list.message).toBe(show.message);
+  expect(cardData(list).data.bots.map((b: any) => b.id)).toEqual(["p", "f", "t"]);
+  expect(cardData(list).args.open).toBeUndefined();
+});
 test("showing one bot opens its conversation on the roster card; a group opens in group mode", async () => {
   tailCursor = 8;
   const one = await call("grokbot_show", { bot: "Piper" });

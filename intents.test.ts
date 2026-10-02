@@ -304,6 +304,9 @@ test("actual MCP tools/list metadata and refresh notification carry current enum
 test("upstream screen, chat and create shortcuts coexist with verified sends", () => {
   const byName = Object.fromEntries(intents.map(intent => [intent.name, intent]));
   expect(byName.view_screen.tool).toBe("view_bot_desktop_live");
+  // Its own tool: the host fast path never matched list_bots while it shared grokbot_show with show_bot.
+  expect(byName.list_bots.tool).toBe("grokbot_list");
+  expect(byName.show_bot.tool).toBe("grokbot_show");
   expect(byName.open_chat.fixedArgs).toEqual({ show: true });
   expect(byName.create_bot.tool).toBe("grokbot_create");
   expect(byName.send_message.tool).toBe("grokbot_send");
