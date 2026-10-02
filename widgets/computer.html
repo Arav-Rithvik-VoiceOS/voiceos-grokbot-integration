@@ -109,7 +109,22 @@
       let retries = 0;
       let clearing = false;
 
-      const botName = config && typeof config.botName === "string" ? config.botName : "";
+      // The native host ships config as JSON.parse(atob(base64)). atob returns
+      // one char per BYTE, so a UTF-8 name like "Мария" arrives as "ÐÂÐ..."
+      // Re-decode those bytes as UTF-8. Strict mode throws on anything that is
+      // not valid UTF-8, so already-correct names (é, Мария) pass through.
+      const fixUtf8 = (s) => {
+        if (!/[\u0080-ÿ]/.test(s)) return s;
+        for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) > 0xff) return s;
+        try {
+          return new TextDecoder("utf-8", { fatal: true }).decode(
+            Uint8Array.from(s, (c) => c.charCodeAt(0)),
+          );
+        } catch {
+          return s;
+        }
+      };
+      const botName = config && typeof config.botName === "string" ? fixUtf8(config.botName) : "";
       const setState = (kind, label, detail = "") => {
         live.dataset.state = kind;
         liveText.textContent = (botName ? botName + " " : "") + label;
