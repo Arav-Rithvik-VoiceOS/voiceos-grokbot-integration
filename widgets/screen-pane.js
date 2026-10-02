@@ -71,7 +71,8 @@ const ScreenPane=(()=>{
    setStatus(statusText(bot));Motion.set(capAv,bot.status==='idle'?'idle':'working')}
   function goIdle(msg){if(dead)return;isLive=false;const l=q('#sp-live');l.classList.add('paused');l.lastChild.textContent='OFFLINE';
    q('#sp-cv').style.display='none';setWhat(host,msg||(bot.name+'’s computer is off right now'));
-   setStatus('Idle');Motion.set(capAv,'idle')}
+   /* The feed being down says nothing about the bot: it can be mid-task with no stream. Keep its real status. */
+   setStatus(statusText(bot));Motion.set(capAv,bot.status==='idle'?'idle':'working')}
 
   const probe=()=>invoke('grokbot_card_screen',{bot:bot.id}).then(r=>{if(dead)return;let b=null;try{b=unpackResult(r)}catch(_){}
    if(b&&b.live&&b.wsUrl&&b.viewer)goLive(b);else goIdle(b&&b.message)})
