@@ -549,20 +549,41 @@ const showTool = server.registerTool(
           await conversationCard(agents, openOf(bot), tail),
         );
       }
-      const { recent, cursors } = await rosterThreads(agents);
-      const card = showCard(agents, undefined, recent, cursors);
-      const bots = agents.filter((a) => !a.isGroup);
-      const groups = agents.filter((a) => a.isGroup);
-      return result(
-        {
-          count: bots.length,
-          bots: bots.map((b) => ({ name: b.name, status: statusWord(b) })),
-          groups: groups.map(g => ({ name: g.name, members: g.memberIds ?? [] })),
-          message: bots.length === 0 && groups.length === 0 ? "You don't have any Grok bots or group chats yet." : `You have ${bots.length} bot${bots.length === 1 ? "" : "s"} and ${groups.length} group chat${groups.length === 1 ? "" : "s"}.`,
-        },
-        card,
-      );
+      return rosterResult(agents);
     }),
+);
+
+/** Every bot and group on the roster card: what "Show my bots" opens. */
+async function rosterResult(agents: Agent[]) {
+  const { recent, cursors } = await rosterThreads(agents);
+  const card = showCard(agents, undefined, recent, cursors);
+  const bots = agents.filter((a) => !a.isGroup);
+  const groups = agents.filter((a) => a.isGroup);
+  return result(
+    {
+      count: bots.length,
+      bots: bots.map((b) => ({ name: b.name, status: statusWord(b) })),
+      groups: groups.map(g => ({ name: g.name, members: g.memberIds ?? [] })),
+      message: bots.length === 0 && groups.length === 0 ? "You don't have any Grok bots or group chats yet." : `You have ${bots.length} bot${bots.length === 1 ? "" : "s"} and ${groups.length} group chat${groups.length === 1 ? "" : "s"}.`,
+    },
+    card,
+  );
+}
+
+// ── READ: grokbot_list ───────────────────────────────────────────────────────
+// The list_bots intent's own tool. The host's fast path never matched "Show my
+// bots" while list_bots and show_bot shared grokbot_show; view_screen, the one
+// intent with a tool to itself, did. Same roster card as grokbot_show with no bot.
+server.registerTool(
+  "grokbot_list",
+  {
+    title: "List bots",
+    description:
+      "List every Grok Bot teammate and group chat on one card. Use when the user asks to see their bots or what bots they have.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true },
+  },
+  async () => handle("grokbot_list", async () => rosterResult(await listAgents())),
 );
 
 // ── READ: grokbot_help ───────────────────────────────────────────────────────

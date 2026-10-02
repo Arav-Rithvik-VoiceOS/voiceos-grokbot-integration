@@ -9,7 +9,7 @@ import { defineHooks, INTENT_SLOT_VALUES_META_KEY, INTENT_REFRESH_NOTIFICATION_M
 
 export const intents: IntentDefinition[] = [
   {
-    name: "list_bots", tool: "grokbot_show",
+    name: "list_bots", tool: "grokbot_list",
     description: "List the user's Grok Bot teammates and group chats. Only list bots, without sending a message or opening a bot's computer. Never when the user gives a task or message to send, even one that names no bot ('send this task to Grok Bot').",
     utterances: { en: ["Show my Grok bots", "List my bots", "Show my bots", "Show me my bots", "List my Grok bots", "What bots do I have", "Grok Bot show", "Show Grok Bots"] },
     response: { en: "Getting your bots." },
@@ -24,7 +24,7 @@ export const intents: IntentDefinition[] = [
   {
     name: "send_message", tool: "grokbot_send",
     description: "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. A name the user says wins, even if another bot's role fits better. If the user names no bot, or the name is unclear or misheard, pick the one bot whose role clearly fits the task (school work → the school bot); 'Grok Bot', 'a bot' or 'my bot' is the app, not a name. If two bots fit equally or none fits, do not pick. 'Send this task to …' and 'dispatch …' are sends. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask <bot> how the test is going' → 'How's the test going?'). Drop the lead-in, keep the meaning and line breaks, capital first letter, right end punctuation. A long task is one whole message. Reject groups, multiple recipients, or separate actions outside the message.",
-    utterances: { en: ["Send a message to {bot} asking {message}", "Ask {bot} {message}", "Ask {bot} to {message}", "Message {bot} saying {message}", "Send {bot} a message saying {message}", "Tell Grok bot {bot} to {message}", "Grok Bot send {bot} {message}", "Have {bot} {message}", "Get {bot} to {message}", "Send this task to {bot}: {message}", "Send this to {bot}: {message}", "Dispatch a task to {bot}: {message}", "Dispatch {message} to {bot}", "Give {bot} this task: {message}", "Give {bot} a task to {message}"] },
+    utterances: { en: ["Send a message to {bot} asking {message}", "Ask {bot} {message}", "Ask {bot} to {message}", "Message {bot} saying {message}", "Send {bot} a message saying {message}", "Tell Grok bot {bot} to {message}", "Grok Bot send {bot} {message}", "Have {bot} {message}", "Get {bot} to {message}", "Send this task to {bot}: {message}", "Send this to {bot}: {message}", "Dispatch a task to {bot}: {message}", "Dispatch {message} to {bot}", "Give {bot} this task: {message}", "Give {bot} a task to {message}", "Tell {bot} {message}", "Tell {bot} to {message}", "Say {message} to {bot}", "Message {bot} {message}", "Text {bot} {message}"] },
     slots: {
       bot: { type: "enum", valuesFrom: "tool", required: true },
       message: { type: "string", required: true, examples: ["How's the screen test going?", "Summarize today's updates.", "Can you check the latest build?"] },
@@ -122,6 +122,10 @@ const ROSTER_WAIT_MS = 1_000;
 
 /** A turn that may be for Grok Bot: it names the app, a bot, or dispatching. */
 const GROK_TURN = /\bgrok\b|\bbots?\b|\bdispatch/i;
+/** A turn that gives a bot work. "Show my bots" and "What bots do I have" are not:
+ * the roles only help pick a bot for a send, and any hook context turns off the
+ * host's intent fast path for that turn. */
+const SEND_TURN = /\b(?:send|ask|tell|message|text|dispatch|task|assign|give)|(?:^|\b(?:can|could|will|would) you |\bplease )(?:have|get|make)\b/i;
 /** The host keeps at most 2,000 characters of one hook's context. */
 const ROSTER_CONTEXT_MAX = 2_000;
 const ROSTER_CONTEXT_HEAD = "Grok Bot routing (current, from the live Grok Bot app): Grok Bot is an app with several bots. 'Grok Bot', 'my bot' or 'my Grok bot' is never another name for one bot, even if saved memory or earlier turns say so: that is out of date. If the user names a bot, use that bot. If not, choose by role below: call grokbot_send with the one bot whose role fits the task best, and never fall back to a usual or default bot. If two fit equally or none fits, ask which bot. Bots (name — role):";
@@ -243,7 +247,8 @@ export class IntentRoster {
    * 500 ms, too little for a gateway read. */
   transcriptContext(transcript: string): string | undefined {
     const bots = this.agents.filter(a => !a.isGroup);
-    if (!bots.length || !GROK_TURN.test(transcript)) return undefined;
+    // A named bot needs no routing help, so a named send can take the fast path too.
+    if (!bots.length || !GROK_TURN.test(transcript) || !SEND_TURN.test(transcript) || namesABot(transcript, bots)) return undefined;
     let text = ROSTER_CONTEXT_HEAD;
     for (const b of bots) {
       const line = `\n- ${botChoiceLabel(b)}`;

@@ -29,8 +29,15 @@ export function validateDesktopWebSocketUrl(raw: string): string {
 
   const host = url.hostname.toLowerCase();
   const trustedHost = host === "cursorvm.com" || host.endsWith(".cursorvm.com");
-  const token = url.searchParams.getAll("token");
-  const networkToken = url.searchParams.getAll("network_token");
+  const one = (name: string) => {
+    const v = url.searchParams.getAll(name);
+    return v.length === 1 && Boolean(v[0]);
+  };
+  const none = (name: string) => !url.searchParams.has(name);
+  // Two signed shapes exist: a bot's own box (fork proxy, token + network_token)
+  // and the shared computer (primary proxy, one port_token). Exactly one, never mixed.
+  const forkSigned = one("token") && one("network_token") && none("port_token");
+  const primarySigned = one("port_token") && none("token") && none("network_token");
   if (
     url.protocol !== "wss:" ||
     !trustedHost ||
@@ -38,10 +45,7 @@ export function validateDesktopWebSocketUrl(raw: string): string {
     (url.port !== "" && url.port !== "443") ||
     url.pathname !== "/websockify" ||
     Boolean(url.hash) ||
-    token.length !== 1 ||
-    !token[0] ||
-    networkToken.length !== 1 ||
-    !networkToken[0]
+    !(forkSigned || primarySigned)
   ) {
     return fail();
   }

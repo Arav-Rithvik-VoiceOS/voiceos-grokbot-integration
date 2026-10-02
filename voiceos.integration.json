@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "com.arav.bot",
-  "version": "2.2.9",
+  "version": "2.2.12",
   "name": "Grok Bot",
   "summary": "Talk to your Grok Bot AI teammates by voice.",
   "description": "See your Grok Bot teammates, message one, catch up on what a bot said, create a new bot, or start a group chat with several at once — all by voice, from the notch.",
@@ -128,6 +128,16 @@
             "description": "A bot's name as the user said it, e.g. 'Piper'. Omit to list every bot."
           }
         }
+      }
+    },
+    {
+      "name": "grokbot_list",
+      "title": "List bots",
+      "hidePermissionToggle": true,
+      "description": "List every Grok Bot teammate and group chat on one card. Use when the user asks to see their bots or what bots they have.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
       }
     },
     {
@@ -659,7 +669,7 @@
   "intents": [
     {
       "name": "list_bots",
-      "tool": "grokbot_show",
+      "tool": "grokbot_list",
       "description": "List the user's Grok Bot teammates and group chats. Only list bots, without sending a message or opening a bot's computer. Never when the user gives a task or message to send, even one that names no bot ('send this task to Grok Bot').",
       "utterances": {
         "en": [
@@ -722,7 +732,12 @@
           "Dispatch a task to {bot}: {message}",
           "Dispatch {message} to {bot}",
           "Give {bot} this task: {message}",
-          "Give {bot} a task to {message}"
+          "Give {bot} a task to {message}",
+          "Tell {bot} {message}",
+          "Tell {bot} to {message}",
+          "Say {message} to {bot}",
+          "Message {bot} {message}",
+          "Text {bot} {message}"
         ]
       },
       "slots": {

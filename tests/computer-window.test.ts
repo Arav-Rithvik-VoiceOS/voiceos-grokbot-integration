@@ -18,6 +18,13 @@ test("desktop websocket validation accepts the trusted websockify shape", () => 
   expect(computerWindow.validateDesktopWebSocketUrl(raw)).toBe(raw);
 });
 
+test("desktop websocket validation accepts the shared computer's port_token shape", () => {
+  // A bot whose box is the shared computer (local port 6080) streams through the
+  // descriptor's primary proxy, which signs the socket with one port_token.
+  const raw = "wss://pod-7.cursorvm.com/websockify?port_token=secret&resume_lower_s=900&resume_upper_s=18000";
+  expect(computerWindow.validateDesktopWebSocketUrl(raw)).toBe(raw);
+});
+
 test("desktop websocket validation rejects non-TLS, private, credentialed, and malformed targets", () => {
   const invalid = [
     "ws://pod-7.cursorvm.com/websockify?token=5&network_token=secret",
@@ -31,6 +38,11 @@ test("desktop websocket validation rejects non-TLS, private, credentialed, and m
     "wss://pod-7.cursorvm.com/websockify?network_token=secret",
     "wss://pod-7.cursorvm.com/websockify?token=5",
     "wss://pod-7.cursorvm.com/websockify?token=5&token=6&network_token=secret",
+    "wss://pod-7.cursorvm.com/websockify?port_token=",
+    "wss://pod-7.cursorvm.com/websockify?port_token=a&port_token=b",
+    "wss://pod-7.cursorvm.com/websockify?port_token=a&token=5&network_token=secret",
+    "ws://pod-7.cursorvm.com/websockify?port_token=a",
+    "wss://cursorvm.com.evil.test/websockify?port_token=a",
     "not a url",
   ];
 
