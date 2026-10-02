@@ -1183,7 +1183,11 @@ server.registerTool(
         wsUrl: live ? probe.wsUrl! : "",
         // The gzip+base64 noVNC client, only when there is a stream to show.
         viewer: live ? RFB_B64 : "",
-        message: live ? undefined : `${bot.name}'s computer is not running right now.`,
+        message: live
+          ? undefined
+          : probe.boxState && probe.boxState !== "absent"
+            ? `${bot.name}'s computer is still starting. Try again in a moment.`
+            : `${bot.name}'s computer is not running right now.`,
       });
     }),
 );

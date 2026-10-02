@@ -263,6 +263,10 @@ interface ForeverBoxStatus {
 const VNC_PRIMARY_PORT = "6080";
 const VNC_FORK_PORT = "6081";
 const VNC_RESUME = "resume_lower_s=900&resume_upper_s=18000";
+/** How long opening a screen waits for a box to boot. VoiceOS cancels a card's
+ * tool call after 60 s, and the call also resolves the bot and checks the feed. */
+const BOOT_WAIT_MS = 40_000;
+const BOOT_POLL_MS = 1_500;
 /** The same resume window as headers. The Grok Bot app parks (hibernates) the
  * cloud box while you seem away, and the box answers 417 until woken; the
  * app's viewer wakes it by sending these on its requests, so every gateway
@@ -328,17 +332,34 @@ export async function agentScreen(
     log("getForeverBoxStatus failed:", error);
     return { live: false };
   }
-  let localUrl = box?.vncUrl ?? box?.windows?.find((w) => w.vncUrl)?.vncUrl ?? null;
+  const desktopOf = (b: ForeverBoxStatus | null) => b?.vncUrl ?? b?.windows?.find((w) => w.vncUrl)?.vncUrl ?? null;
+  let localUrl = desktopOf(box);
   if (!localUrl && isWaking()) {
     // A bot's box stays "absent" until something boots it; the app does that
     // (ensureForeverBox) whenever its screen opens. Do the same, or the screen
     // reads "not running" until the user opens the app. Background probes skip
     // this so they never boot boxes nobody asked to see.
-    try {
-      box = await gateway<ForeverBoxStatus | null>("ensureForeverBox", { id: agentId }, { timeoutMs: 15_000 });
-      localUrl = box?.vncUrl ?? box?.windows?.find((w) => w.vncUrl)?.vncUrl ?? null;
-    } catch (error) {
-      log("ensureForeverBox failed:", error);
+    // On a parked pod the ensure reply can take far longer than the boot
+    // itself, so — like the app — don't hang on it: poll the status too, and
+    // take the desktop from whichever answers first.
+    let ensured: ForeverBoxStatus | null | undefined;
+    gateway<ForeverBoxStatus | null>("ensureForeverBox", { id: agentId }, { timeoutMs: BOOT_WAIT_MS })
+      .then((b) => { ensured = b; }, (error) => { log("ensureForeverBox failed:", error); ensured = null; });
+    const deadline = Date.now() + BOOT_WAIT_MS;
+    while (!localUrl && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, BOOT_POLL_MS));
+      if (ensured) {
+        box = ensured;
+        localUrl = desktopOf(box);
+        if (localUrl) break;
+      }
+      try {
+        box = await gateway<ForeverBoxStatus | null>("getForeverBoxStatus", { id: agentId });
+        localUrl = desktopOf(box);
+      } catch (error) {
+        log("getForeverBoxStatus failed while booting:", error);
+      }
+      if (ensured !== undefined && !localUrl) break; // the boot answered with no desktop: stop waiting
     }
   }
   if (!localUrl) return { live: false, boxState: box?.state };
@@ -453,7 +474,9 @@ function curlPost(
       { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
       (error, out) => {
         if (error) {
-          log(`curl fallback for ${command} failed:`, error);
+          // Never log the error object: its `cmd` holds the bearer and network tokens.
+          const code = (error as { code?: unknown }).code;
+          log(`curl fallback for ${command} failed (curl exit ${String(code ?? "?")})`);
           return resolve(null);
         }
         const nl = out.lastIndexOf("\n");

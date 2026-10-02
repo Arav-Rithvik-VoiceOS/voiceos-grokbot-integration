@@ -74,18 +74,22 @@ const ScreenPane=(()=>{
    /* The feed being down says nothing about the bot: it can be mid-task with no stream. Keep its real status. */
    setStatus(statusText(bot));Motion.set(capAv,bot.status==='idle'?'idle':'working')}
 
-  const probe=()=>invoke('grokbot_card_screen',{bot:bot.id}).then(r=>{if(dead)return;let b=null;try{b=unpackResult(r)}catch(_){}
+  /* A probe is slow only when the bot's computer has to boot (up to ~40 s on a parked pod): say so. */
+  let slowT=0,graceT=0;
+  const probe=()=>{clearTimeout(graceT);slowT=setTimeout(()=>{if(!dead&&!isLive)setWhat(host,'Starting '+bot.name+'’s computer…')},3000);
+   return invoke('grokbot_card_screen',{bot:bot.id}).then(r=>{if(dead)return;let b=null;try{b=unpackResult(r)}catch(_){}
    if(b&&b.live&&b.wsUrl&&b.viewer)goLive(b);else goIdle(b&&b.message)})
-   .catch(e=>{if(!dead)goIdle((e&&(e.error||e.message))||undefined)});
+   .catch(e=>{if(!dead)goIdle((e&&(e.error||e.message))||undefined)}).finally(()=>clearTimeout(slowT))};
   /* VoiceOS can boot a card before it grants tools (the grant rides a later voiceos:init), and a reopened
-     notch restores this pane during that boot. Stay on "Connecting…" and probe once the grant lands
-     (o.whenReady), instead of giving up for good. */
+     notch restores this pane during that boot. Probe once the grant lands (o.whenReady). If it has not
+     landed in 10 s, stop saying "Connecting…" forever; a late grant still probes. */
   let unready=null;
   if(CAN_INVOKE)probe();
-  else if(o.whenReady)unready=o.whenReady(()=>{if(unready){unready();unready=null}if(!dead)probe()});
+  else if(o.whenReady){unready=o.whenReady(()=>{if(unready){unready();unready=null}if(!dead)probe()});
+   graceT=setTimeout(()=>{if(!dead&&!isLive)goIdle('Open this card again to reconnect to Grok Bot.')},10000)}
   else goIdle('Live screen isn’t available in this host');
 
-  return {destroy(){dead=true;if(unready)unready();if(feed)feed.disconnect()}};
+  return {destroy(){dead=true;clearTimeout(slowT);clearTimeout(graceT);if(unready)unready();if(feed)feed.disconnect()}};
  }
  function safe(r){try{return unpackResult(r)}catch(_){return null}}
  return {mount};
