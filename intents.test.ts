@@ -336,6 +336,18 @@ test("a Grok Bot turn gets each bot's role; other turns and an empty roster get 
   for (const turn of ["Ask my bot about the venue", "Dispatch a task: research venues"]) expect(roster.transcriptContext(turn)).toBe(context);
   expect(roster.transcriptContext("What's the weather tomorrow?")).toBeUndefined();
 });
+test("list turns and named sends get no roster, so they can take the host's fast path", async () => {
+  const roster = new IntentRoster(async () => [
+    { id: "j", name: "Jasper", title: "BISV Hacks EA", description: "Sponsorships, fundraising, and venue." },
+    { id: "p", name: "Piper", title: "EA", description: "Chief of Staff." },
+  ]);
+  await roster.refresh();
+  for (const turn of ["Yo, can you show me my bots?", "What bots do I have", "Show Grok Bots", "List my Grok bots",
+    "Grok Bot send Jasper the venue list", "Ask my bot Piper about the schedule"])
+    expect(roster.transcriptContext(turn)).toBeUndefined();
+  for (const turn of ["Can you have my bot find a venue?", "Tell my Grok bot to email sponsors", "Give Grok Bot a task: find sponsors"])
+    expect(roster.transcriptContext(turn)).toBeDefined();
+});
 test("the roster context stays inside the host's 2,000-character limit", async () => {
   const many: Agent[] = Array.from({ length: 30 }, (_, i) => ({ id: `b${i}`, name: `Bot ${i}`, title: "Role", description: "x".repeat(180) }));
   const roster = new IntentRoster(async () => many);

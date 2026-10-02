@@ -122,6 +122,10 @@ const ROSTER_WAIT_MS = 1_000;
 
 /** A turn that may be for Grok Bot: it names the app, a bot, or dispatching. */
 const GROK_TURN = /\bgrok\b|\bbots?\b|\bdispatch/i;
+/** A turn that gives a bot work. "Show my bots" and "What bots do I have" are not:
+ * the roles only help pick a bot for a send, and any hook context turns off the
+ * host's intent fast path for that turn. */
+const SEND_TURN = /\b(?:send|ask|tell|message|text|dispatch|task|assign|give)|(?:^|\b(?:can|could|will|would) you |\bplease )(?:have|get|make)\b/i;
 /** The host keeps at most 2,000 characters of one hook's context. */
 const ROSTER_CONTEXT_MAX = 2_000;
 const ROSTER_CONTEXT_HEAD = "Grok Bot routing (current, from the live Grok Bot app): Grok Bot is an app with several bots. 'Grok Bot', 'my bot' or 'my Grok bot' is never another name for one bot, even if saved memory or earlier turns say so: that is out of date. If the user names a bot, use that bot. If not, choose by role below: call grokbot_send with the one bot whose role fits the task best, and never fall back to a usual or default bot. If two fit equally or none fits, ask which bot. Bots (name — role):";
@@ -243,7 +247,8 @@ export class IntentRoster {
    * 500 ms, too little for a gateway read. */
   transcriptContext(transcript: string): string | undefined {
     const bots = this.agents.filter(a => !a.isGroup);
-    if (!bots.length || !GROK_TURN.test(transcript)) return undefined;
+    // A named bot needs no routing help, so a named send can take the fast path too.
+    if (!bots.length || !GROK_TURN.test(transcript) || !SEND_TURN.test(transcript) || namesABot(transcript, bots)) return undefined;
     let text = ROSTER_CONTEXT_HEAD;
     for (const b of bots) {
       const line = `\n- ${botChoiceLabel(b)}`;
