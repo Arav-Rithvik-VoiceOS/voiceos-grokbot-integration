@@ -13,6 +13,10 @@ const bots: actual.Agent[] = [
   { id: "t", name: "Theo", avatarColor: "blue" },
 ];
 let agents: actual.Agent[], writes: any[], rejectSend: boolean;
+let rosterError: actual.IntegrationError | undefined;
+let signedInState: boolean | undefined;
+let appOpens = 0;
+let rosterReadWakes: boolean[] = [];
 let publishCreated = true;
 const EARLIER: actual.TranscriptEntry[] = [{ kind: "message", role: "user", content: "Earlier message", id: "old" }];
 let tail: actual.TranscriptEntry[] = EARLIER;
@@ -34,7 +38,10 @@ mock.module("@modelcontextprotocol/sdk/server/mcp.js", () => ({ McpServer: class
 mock.module("../client.ts", () => ({
   ...actual,
   log: () => {},
-  listAgents: async () => agents,
+  listAgents: async () => { rosterReadWakes.push(actual.isWaking()); if (rosterError) throw rosterError; return agents; },
+  grokBotSignIn: () => signedInState,
+  hasGrokBotApp: () => true,
+  openGrokBotApp: () => { appOpens++; },
   listAllAutomations: async () => [],
   createAgent: async (name: string) => {
     const bot = { id: "created", name };
@@ -100,6 +107,7 @@ const cardData = (r: any) => demoOf(r._voiceos_glance.blocks[0].html);
 beforeEach(() => {
   agents = [...bots.map(a => ({ ...a })), { id: "g", name: "Study group", isGroup: true, memberIds: ["p", "f"] }];
   writes = []; rejectSend = false;
+  rosterError = undefined; signedInState = undefined; appOpens = 0; rosterReadWakes = [];
   publishCreated = true;
   tail = EARLIER;
   tailCursor = undefined;
@@ -253,7 +261,7 @@ test("creation reports pending registration without inventing a roster entry", a
 test("voice send sends at once and opens the bot's chat pane with the message marked sent (it flies in)", async () => {
   const r = await call("grokbot_send", { bot: "Piper", message: "Hello." });
   expect(writes).toEqual([["send", "p", "Hello."]]);
-  expect(r).toMatchObject({ sent: true, bot: "Piper", sentMessage: "Hello." });
+  expect(r).toMatchObject({ sent: true, bot: "Piper", botId: "p", sentMessage: "Hello." });
   expect(cardData(r).args).toEqual({ open: { bot: "p" }, message: "Hello.", sent: true });
   // History is read before the send, so the card never shows the message twice.
   expect(cardData(r).data.threads.p.map((i: any) => i.text)).not.toContain("Hello.");
@@ -293,7 +301,7 @@ test("host string member edits are saved on an existing group before a card send
 });
 test("voice send and group with no message still open (never error) and never write", async () => {
   const send = await call("grokbot_send", { bot: "Piper" });
-  expect(send).toMatchObject({ opened: true, sent: false });
+  expect(send).toMatchObject({ opened: true, sent: false, bot: "Piper", botId: "p" });
   const group = await call("grokbot_group", { members: ["p", "t"] });
   expect(group).toMatchObject({ opened: true, sent: false, newGroup: true, draft: "" });
   expect(writes).toEqual([]);
@@ -313,7 +321,7 @@ test("unknown members cannot be silently omitted from the recipients", async () 
 test("card send delivers once and returns no receipt; the card stays open", async () => {
   const r = await call("grokbot_card_send", { bot: "Piper", message: "From the card" });
   expect(writes).toEqual([["send", "p", "From the card"]]);
-  expect(r).toMatchObject({ sent: true, bot: "Piper", sentMessage: "From the card" });
+  expect(r).toMatchObject({ sent: true, bot: "Piper", botId: "p", sentMessage: "From the card" });
   expect(r.receipt).toBeUndefined();
   expect(r._voiceos_glance).toBeUndefined();
 });
@@ -413,6 +421,7 @@ test("reading a thread gives the model the message text and no card by default",
     { kind: "message", role: "user", fromAgent: { id: "f", name: "Finch" }, content: "I can help too.", id: "4" },
   ];
   const r = await call("grokbot_thread", { bot: "Piper" });
+  expect(r).toMatchObject({ bot: "Piper", botId: "p" });
   expect(r._voiceos_glance).toBeUndefined();
   expect(r.thread).toEqual([
     { from: "user", text: "What is my homework?", at: new Date(1_000).toISOString() },
@@ -425,6 +434,18 @@ test("reading a thread shows the card only when the user asks to see it", async 
   const r = await call("grokbot_thread", { bot: "Piper", show: true });
   expect(cardData(r).args.open).toEqual({ bot: "p" });
   expect(r.thread).toEqual([{ from: "user", text: "Earlier message" }]);
+});
+test("saved bot IDs retain conversation identity after a rename and name reuse", async () => {
+  agents.find(a => a.id === "p")!.name = "Piper Renamed";
+  agents.push({ id: "new-piper", name: "Piper" });
+  const thread = await call("grokbot_thread", { bot: "p", show: true });
+  expect(thread).toMatchObject({ bot: "Piper Renamed", botId: "p" });
+  expect(cardData(thread).args.open).toEqual({ bot: "p" });
+  for (const tool of ["grokbot_send", "grokbot_card_send"]) {
+    const sent = await call(tool, { bot: "p", message: "Keep this conversation" });
+    expect(sent).toMatchObject({ sent: true, bot: "Piper Renamed", botId: "p" });
+  }
+  expect(writes.map(write => write[1])).toEqual(["p", "p"]);
 });
 test("a long thread keeps the newest messages inside the size limit", async () => {
   tail = Array.from({ length: 6 }, (_, i) => ({ kind: "send-message", message: { content: `${i}:` + "x".repeat(4998) }, id: String(i) }));
@@ -650,4 +671,51 @@ test("a spoken message is tidied before it goes out; typed card sends are sent a
   writes = [];
   await call("grokbot_card_send", { bot: "Piper", message: "lowercase on purpose" });
   expect(writes).toEqual([["send", "p", "lowercase on purpose"]]);
+});
+
+
+test("a parked connection failure does not become a Connect card", async () => {
+  rosterError = new actual.IntegrationError("session_unavailable", "Grok Bot's local connection isn't available.");
+  const r = await call("grokbot_show", {});
+  expect(r).toMatchObject({ isError: true, error: expect.stringContaining("local connection") });
+  expect(r.needsSetup).toBeUndefined();
+  expect(r._voiceos_glance).toBeUndefined();
+  expect(appOpens).toBe(0);
+});
+
+test("an explicit sign-out still displays the Connect card", async () => {
+  rosterError = new actual.IntegrationError("setup", "Grok Bot is signed out.");
+  const r = await call("grokbot_show", {});
+  expect(r).toMatchObject({ ok: false, needsSetup: true, message: "Grok Bot is signed out." });
+  expect(r._voiceos_glance.blocks[0].html).toContain("Connect Grok Bot to VoiceOS");
+  expect(appOpens).toBe(1);
+});
+
+test("the setup guide keeps sign-in checked while the local connection is unavailable", async () => {
+  signedInState = true;
+  rosterError = new actual.IntegrationError("session_unavailable", "Grok Bot's local connection isn't available.");
+  const r = await call("grokbot_help", {});
+  expect(cardData(r).data.setup.signedIn).toBe(true);
+  expect(r.botsUnknown).toBe(true);
+  expect(r.needsSetup).toBeUndefined();
+  expect(appOpens).toBe(0);
+});
+
+
+test("automatic card refreshes cannot wake a parked connection or open a setup card", async () => {
+  rosterError = new actual.IntegrationError("setup", "Grok Bot is signed out.");
+  const r = await call("grokbot_card_snapshot", {});
+  expect(r).toMatchObject({ ok: false, message: "Grok Bot is signed out." });
+  expect(rosterReadWakes).toEqual([false]);
+  expect(r.needsSetup).toBeUndefined();
+  expect(appOpens).toBe(0);
+});
+
+test("passive reply checks do not open the app when a session is rejected", async () => {
+  rosterError = new actual.IntegrationError("not_connected", "Grok Bot rejected the session.");
+  const r = await call("grokbot_reply_check", { bot: "Piper" });
+  expect(r.isError).toBe(true);
+  expect(rosterReadWakes).toEqual([false]);
+  expect(r.needsSetup).toBeUndefined();
+  expect(appOpens).toBe(0);
 });

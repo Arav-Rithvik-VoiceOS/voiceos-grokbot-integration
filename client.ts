@@ -46,6 +46,7 @@ export type FailureKind =
   | "timeout"
   | "network"
   | "parked" // the cloud box is hibernated and this call did not wake it
+  | "session_unavailable" // a missing local route is not evidence of logout
   | "upstream";
 
 /**
@@ -67,12 +68,25 @@ export class IntegrationError extends Error {
 // ── Local session: descriptor + Keychain → gateway creds ─────────────────────
 
 const DESCRIPTOR_PATH = `${process.env.HOME}/Library/Application Support/Grok Bot/gateway-descriptor.json`;
-/** True once the Grok Bot app has signed in on this Mac (it writes the
- * descriptor then). A file check only: no Keychain read, so no prompt. */
+const DESKTOP_STATUS_PATH = `${process.env.HOME}/Library/Application Support/Grok Bot/desktop-status.json`;
+
+/** Grok Bot removes its transient route when the cloud computer parks. */
 export const hasGatewaySession = () => existsSync(DESCRIPTOR_PATH);
-/** True when the Grok Bot app is installed in either Applications folder. */
+function savedSignIn(): boolean | undefined {
+  try {
+    const status = JSON.parse(readFileSync(DESKTOP_STATUS_PATH, "utf8"));
+    return status.version === 1 && typeof status.signedIn === "boolean" ? status.signedIn : undefined;
+  } catch {
+    return undefined;
+  }
+}
+/** Only the app's explicit signed-out marker proves logout. Older versions
+ * export just a descriptor; when both are absent, sign-in state is unknown. */
+export const grokBotSignIn = (): boolean | undefined => savedSignIn() ?? (hasGatewaySession() ? true : undefined);
+export const hasGrokBotSignIn = grokBotSignIn;
 export const hasGrokBotApp = () =>
   existsSync("/Applications/Grok Bot.app") || existsSync(`${process.env.HOME}/Applications/Grok Bot.app`);
+
 // Chromium "Safe Storage" Keychain item the app writes its master key under.
 const KEYCHAIN_SERVICE = "Grok Bot Safe Storage";
 
@@ -93,70 +107,97 @@ interface GatewayCreds {
 let credsCache: { creds: GatewayCreds; at: number } | null = null;
 const CREDS_TTL_MS = 60_000;
 
-// `security` exits 44 when the Keychain item does not exist.
-const KEYCHAIN_ITEM_NOT_FOUND = 44;
+const DESCRIPTOR_RECOVERY_MS = 5_000;
+let descriptorRecovery: Promise<string> | null = null;
 let keychainRead: Promise<string> | null = null;
 
-/**
- * The Chromium master key, read from the login Keychain.
- *
- * Async on purpose. The first read raises the one-time macOS "Allow / Always
- * Allow" prompt, and `security` does not return until the user answers. The
- * boot-time intent refresh reaches this before the host's `initialize`, so a
- * sync spawn froze the event loop, the handshake timed out, and the host
- * dropped the server — taking the prompt with it. Concurrent callers share one
- * read, so the user gets one prompt, not one per caller.
- */
+function signedOutError(): IntegrationError {
+  return new IntegrationError("setup", `${SERVICE_NAME} is signed out. Open the Grok Bot app and sign in, then try again.`);
+}
+
+function descriptorUnavailable(error: unknown): IntegrationError {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  log(`gateway descriptor unavailable (${code ?? "read failed"})`);
+  if (code !== "ENOENT") {
+    return new IntegrationError("session_unavailable", `${SERVICE_NAME}'s local connection file could not be read. Open the Grok Bot app and try again.`);
+  }
+  const signedIn = savedSignIn();
+  if (signedIn === false) return signedOutError();
+  return new IntegrationError(
+    signedIn === true && !isWaking() ? "parked" : "session_unavailable",
+    `${SERVICE_NAME}'s local connection isn't available. Fully quit and reopen the Grok Bot app, then try again.`,
+  );
+}
+
+/** User requests share one bounded recovery; background refreshes never join
+ * it or launch the app. Re-read the route after opening the existing session. */
+async function readDescriptor(): Promise<string> {
+  try {
+    return readFileSync(DESCRIPTOR_PATH, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" || !isWaking() || savedSignIn() === false) {
+      throw descriptorUnavailable(error);
+    }
+  }
+  descriptorRecovery ??= (async () => {
+    openGrokBotApp();
+    const deadline = Date.now() + DESCRIPTOR_RECOVERY_MS;
+    for (;;) {
+      if (savedSignIn() === false) throw signedOutError();
+      try {
+        return readFileSync(DESCRIPTOR_PATH, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" || Date.now() >= deadline) {
+          throw descriptorUnavailable(error);
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  })().finally(() => { descriptorRecovery = null; });
+  return descriptorRecovery;
+}
+
+/** Async so a first-time Keychain prompt cannot block the MCP handshake.
+ * Concurrent reads share one prompt; denial is not evidence of signing out. */
 function keychainKey(): Promise<string> {
   keychainRead ??= new Promise<string>((resolve, reject) => {
-    // Absolute path: the VoiceOS-spawned sandbox resets PATH, so a bare
-    // `security` is "command not found". GROKBOT_SECURITY_BIN is a test seam.
     execFile(
       process.env.GROKBOT_SECURITY_BIN || "/usr/bin/security",
       ["find-generic-password", "-w", "-s", KEYCHAIN_SERVICE],
       { encoding: "utf8" },
       (error, stdout) => {
         if (!error) return resolve(stdout.trim());
-        log("keychain read failed:", error);
-        reject(
-          error.code === KEYCHAIN_ITEM_NOT_FOUND
-            ? new IntegrationError(
-                "setup",
-                `${SERVICE_NAME} isn't set up on this Mac yet. Open the Grok Bot app and sign in, then try again.`,
-              )
-            : new IntegrationError(
-                "setup",
-                `${SERVICE_NAME} needs Keychain access. Try again and click Always Allow when macOS asks.`,
-              ),
-        );
+        // Errors may include captured secrets, so log only the exit code.
+        log(`keychain read failed (${String(error.code ?? error.name)})`);
+        reject(new IntegrationError(
+          "session_unavailable",
+          error.code === 44
+            ? `${SERVICE_NAME}'s saved session key is unavailable. Open the Grok Bot app to refresh its connection, then try again.`
+            : `${SERVICE_NAME} needs Keychain access. Try again and click Always Allow when macOS asks.`,
+        ));
       },
     );
-  }).finally(() => {
-    keychainRead = null;
-  });
+  }).finally(() => { keychainRead = null; });
   return keychainRead;
 }
 
 /** Read + decrypt the descriptor into live gateway creds. */
 async function loadCreds(force = false): Promise<GatewayCreds> {
+  if (savedSignIn() === false) {
+    credsCache = null;
+    throw signedOutError();
+  }
   if (!force && credsCache && Date.now() - credsCache.at < CREDS_TTL_MS) {
     return credsCache.creds;
   }
-
-  let raw: string;
-  try {
-    raw = readFileSync(DESCRIPTOR_PATH, "utf8");
-  } catch {
-    // No descriptor → the app has never run / signed in on this account.
-    throw new IntegrationError(
-      "setup",
-      `${SERVICE_NAME} isn't signed in on this Mac. Open the Grok Bot app and sign in, then try again.`,
-    );
-  }
-
-  // Outside the try below: its catch would turn a Keychain error into the
-  // wrong "needs a refresh" message.
+  const raw = await readDescriptor();
+  // Keep Keychain failures out of the descriptor-decryption error handler.
   const masterKey = await keychainKey();
+  // Sign-out can happen while the user is answering a Keychain prompt.
+  if (savedSignIn() === false) {
+    credsCache = null;
+    throw signedOutError();
+  }
 
   let baseUrl: string;
   let token: string;
@@ -193,7 +234,8 @@ async function loadCreds(force = false): Promise<GatewayCreds> {
     vncPrimaryUrl = creds.vncProxy?.primaryUrl;
     vncForkBaseUrl = creds.vncProxy?.forkBaseUrl?.replace(/\/$/, "");
   } catch (error) {
-    log("descriptor decrypt failed:", error);
+    // Parse errors can contain decrypted session data. Never log their text.
+    log(`descriptor decrypt failed (${error instanceof Error ? error.name : "unknown error"})`);
     throw new IntegrationError(
       "not_connected",
       `${SERVICE_NAME} needs a refresh — open the Grok Bot app, then try again.`,

@@ -91,6 +91,21 @@ changes on its next turn — just talk to it.
 
 ## Versioning
 
+### Canonical source and VoiceOS production
+
+The canonical repository is
+[`Arav-Rithvik-VoiceOS/voiceos-grokbot-integration`](https://github.com/Arav-Rithvik-VoiceOS/voiceos-grokbot-integration).
+Use its reviewed `main` revision for releases. Personal copies are not release
+sources; use a fork only to submit changes back through a pull request.
+
+Keep this source and VoiceOS's production integration in sync. When a canonical
+change ships in VoiceOS, sync the maintained example source and the generated
+bundled runtime together, preserve only VoiceOS's required host manifest policy,
+and record the canonical commit, manifest version, and shipped file hashes in
+VoiceOS's Grok Bot release pin. Verify those pins before release. When fixing a
+production integration bug, submit the fix here too, so a later canonical sync
+cannot remove it. Do not describe a pending pull request as merged or deployed.
+
 The manifest `version` uses semver. Bump it in `voiceos.integration.json`
 whenever a change ships:
 
