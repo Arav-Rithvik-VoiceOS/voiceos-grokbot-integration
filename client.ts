@@ -125,7 +125,7 @@ function descriptorUnavailable(error: unknown): IntegrationError {
   if (signedIn === false) return signedOutError();
   return new IntegrationError(
     signedIn === true && !isWaking() ? "parked" : "session_unavailable",
-    `${SERVICE_NAME}'s local connection isn't available. Open a bot's computer in the Grok Bot app to wake its connection, then try again.`,
+    `${SERVICE_NAME}'s local connection isn't available. Fully quit and reopen the Grok Bot app, then try again.`,
   );
 }
 

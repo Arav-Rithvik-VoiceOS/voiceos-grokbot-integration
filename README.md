@@ -12,6 +12,16 @@ its maintained source, generated runtime, version, and release hashes updated
 together. Personal copies are not release sources. Fixes made for production
 must also be proposed here; see [AGENTS.md](AGENTS.md) for the release contract.
 
+## Grok Bot connection compatibility
+
+Grok Bot 0.70.2 and 0.71.2 can suppress the shared local connection independently
+of an individual bot's computer, even while the app remains signed in. If the
+connection stays unavailable, fully quit and reopen Grok Bot, then retry.
+This restored access in a live check; the restart also applied a pending update
+from 0.70.2 to 0.71.2. Both versions retain the export behavior, so restarting is
+a recovery workaround. The integration's bounded recovery prevents a missing
+route from being mistaken for logout, but cannot change Grok Bot's export behavior.
+
 ## Grok Bot setup: the Keychain popup
 
 The first time you use Grok Bot in VoiceOS, macOS asks for access to
