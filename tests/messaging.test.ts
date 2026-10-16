@@ -13,6 +13,10 @@ const bots: actual.Agent[] = [
   { id: "t", name: "Theo", avatarColor: "blue" },
 ];
 let agents: actual.Agent[], writes: any[], rejectSend: boolean;
+let rosterError: actual.IntegrationError | undefined;
+let signedInState: boolean | undefined;
+let appOpens = 0;
+let rosterReadWakes: boolean[] = [];
 let publishCreated = true;
 const EARLIER: actual.TranscriptEntry[] = [{ kind: "message", role: "user", content: "Earlier message", id: "old" }];
 let tail: actual.TranscriptEntry[] = EARLIER;
@@ -34,7 +38,10 @@ mock.module("@modelcontextprotocol/sdk/server/mcp.js", () => ({ McpServer: class
 mock.module("../client.ts", () => ({
   ...actual,
   log: () => {},
-  listAgents: async () => agents,
+  listAgents: async () => { rosterReadWakes.push(actual.isWaking()); if (rosterError) throw rosterError; return agents; },
+  grokBotSignIn: () => signedInState,
+  hasGrokBotApp: () => true,
+  openGrokBotApp: () => { appOpens++; },
   listAllAutomations: async () => [],
   createAgent: async (name: string) => {
     const bot = { id: "created", name };
@@ -100,6 +107,7 @@ const cardData = (r: any) => demoOf(r._voiceos_glance.blocks[0].html);
 beforeEach(() => {
   agents = [...bots.map(a => ({ ...a })), { id: "g", name: "Study group", isGroup: true, memberIds: ["p", "f"] }];
   writes = []; rejectSend = false;
+  rosterError = undefined; signedInState = undefined; appOpens = 0; rosterReadWakes = [];
   publishCreated = true;
   tail = EARLIER;
   tailCursor = undefined;
@@ -650,4 +658,51 @@ test("a spoken message is tidied before it goes out; typed card sends are sent a
   writes = [];
   await call("grokbot_card_send", { bot: "Piper", message: "lowercase on purpose" });
   expect(writes).toEqual([["send", "p", "lowercase on purpose"]]);
+});
+
+
+test("a parked connection failure does not become a Connect card", async () => {
+  rosterError = new actual.IntegrationError("session_unavailable", "Grok Bot's local connection isn't available.");
+  const r = await call("grokbot_show", {});
+  expect(r).toMatchObject({ isError: true, error: expect.stringContaining("local connection") });
+  expect(r.needsSetup).toBeUndefined();
+  expect(r._voiceos_glance).toBeUndefined();
+  expect(appOpens).toBe(0);
+});
+
+test("an explicit sign-out still displays the Connect card", async () => {
+  rosterError = new actual.IntegrationError("setup", "Grok Bot is signed out.");
+  const r = await call("grokbot_show", {});
+  expect(r).toMatchObject({ ok: false, needsSetup: true, message: "Grok Bot is signed out." });
+  expect(r._voiceos_glance.blocks[0].html).toContain("Connect Grok Bot to VoiceOS");
+  expect(appOpens).toBe(1);
+});
+
+test("the setup guide keeps sign-in checked while the local connection is unavailable", async () => {
+  signedInState = true;
+  rosterError = new actual.IntegrationError("session_unavailable", "Grok Bot's local connection isn't available.");
+  const r = await call("grokbot_help", {});
+  expect(cardData(r).data.setup.signedIn).toBe(true);
+  expect(r.botsUnknown).toBe(true);
+  expect(r.needsSetup).toBeUndefined();
+  expect(appOpens).toBe(0);
+});
+
+
+test("automatic card refreshes cannot wake a parked connection or open a setup card", async () => {
+  rosterError = new actual.IntegrationError("setup", "Grok Bot is signed out.");
+  const r = await call("grokbot_card_snapshot", {});
+  expect(r).toMatchObject({ ok: false, message: "Grok Bot is signed out." });
+  expect(rosterReadWakes).toEqual([false]);
+  expect(r.needsSetup).toBeUndefined();
+  expect(appOpens).toBe(0);
+});
+
+test("passive reply checks do not open the app when a session is rejected", async () => {
+  rosterError = new actual.IntegrationError("not_connected", "Grok Bot rejected the session.");
+  const r = await call("grokbot_reply_check", { bot: "Piper" });
+  expect(r.isError).toBe(true);
+  expect(rosterReadWakes).toEqual([false]);
+  expect(r.needsSetup).toBeUndefined();
+  expect(appOpens).toBe(0);
 });

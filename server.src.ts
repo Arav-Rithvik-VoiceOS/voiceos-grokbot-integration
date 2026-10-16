@@ -15,11 +15,12 @@ import { z } from "zod";
 import {
   IntegrationError,
   withoutWaking,
+  isWaking,
   SERVICE_NAME,
   TOOLKIT,
   type Agent,
   createAgent,
-  hasGatewaySession,
+  grokBotSignIn,
   hasGrokBotApp,
   createGroup,
   setGroupMembers,
@@ -430,12 +431,18 @@ function startAutomationWatch(): void {
 // ── Failure policy, in one place ─────────────────────────────────────────────
 // Serialize handlers so batched tool calls can't interleave shared state.
 let _toolChain: Promise<unknown> = Promise.resolve();
+// Automatic card refreshes may use a live route, but must not reopen the app.
+const PASSIVE_TOOLS = new Set([
+  "grokbot_card_snapshot", "grokbot_card_entry", "grokbot_card_image", "grokbot_reply_check",
+]);
 
 async function handle(
   tool: string,
   run: () => Promise<ReturnType<typeof result>>,
 ): Promise<ReturnType<typeof result>> {
-  const turn = _toolChain.then(() => runTool(tool, run));
+  const turn = _toolChain.then(() => PASSIVE_TOOLS.has(tool)
+    ? withoutWaking(() => runTool(tool, run))
+    : runTool(tool, run));
   _toolChain = turn.then(() => undefined, () => undefined);
   return turn;
 }
@@ -450,7 +457,7 @@ async function runTool(
     log(`${tool} failed:`, error);
     // "Not set up / needs a refresh" isn't a crash — it's the first-run state.
     // Speak the fix, open the app, and show the Connect card. No OAuth page.
-    if (error instanceof IntegrationError && (error.kind === "setup" || error.kind === "not_connected")) {
+    if (isWaking() && error instanceof IntegrationError && (error.kind === "setup" || error.kind === "not_connected")) {
       openGrokBotApp();
       return result({ ok: false, needsSetup: true, message: error.message }, connectCard());
     }
@@ -625,7 +632,7 @@ server.registerTool(
   },
   async (args: { page?: "setup" | "keychain" | "ideas" }) =>
     handle("grokbot_help", async () => {
-      const signedIn = hasGatewaySession();
+      const signedIn = grokBotSignIn();
       let agents: Agent[] = [];
       let bots: number | undefined;
       if (signedIn) {
@@ -643,8 +650,8 @@ server.registerTool(
         }
       }
       // A signed-in session proves the app is there even if it lives elsewhere.
-      const setup = { app: hasGrokBotApp() || signedIn, signedIn, ...(bots === undefined ? {} : { bots }), notifications: notificationsEnabled() };
-      const done: Record<string, boolean> = { app: setup.app, signedIn, bots: (bots ?? 0) > 0, notifications: setup.notifications };
+      const setup = { app: hasGrokBotApp() || signedIn === true, signedIn, ...(bots === undefined ? {} : { bots }), notifications: notificationsEnabled() };
+      const done: Record<string, boolean> = { app: setup.app, signedIn: signedIn === true, bots: (bots ?? 0) > 0, notifications: setup.notifications };
       const steps = HELP_STEPS.map((s) => ({ step: s.text, done: done[s.key], ...("optional" in s ? { optional: true } : {}) }));
       const next = steps.find((s) => !s.done && !s.optional);
       return result(

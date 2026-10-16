@@ -3,6 +3,15 @@
 The bare-bones starting point for every VoiceOS integration. Copy this folder,
 rename it, fill in every `{{PLACEHOLDER}}`, and you have a working voice tool.
 
+## Canonical Grok Bot source
+
+Maintain this integration in
+[`Arav-Rithvik-VoiceOS/voiceos-grokbot-integration`](https://github.com/Arav-Rithvik-VoiceOS/voiceos-grokbot-integration).
+VoiceOS production must track a reviewed revision from that repository, with
+its maintained source, generated runtime, version, and release hashes updated
+together. Personal copies are not release sources. Fixes made for production
+must also be proposed here; see [AGENTS.md](AGENTS.md) for the release contract.
+
 ## Grok Bot setup: the Keychain popup
 
 The first time you use Grok Bot in VoiceOS, macOS asks for access to
