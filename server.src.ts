@@ -721,7 +721,8 @@ const threadTool = server.registerTool(
   async (args: { bot: string; limit?: number; show?: boolean }) =>
     handle("grokbot_thread", async () => {
       const agents = await listAgents();
-      const bot = await resolveAgent(args.bot.trim(), agents);
+      const botRef = args.bot.trim();
+      const bot = agents.find(agent => agent.id === botRef) ?? await resolveAgent(botRef, agents);
       const tail = await transcriptTail(bot.id, args.limit ?? 20);
       const entries = tail.entries ?? [];
       const { thread, truncated } = threadForModel(bot, entries);
@@ -730,6 +731,7 @@ const threadTool = server.registerTool(
       return result(
         {
           bot: bot.name,
+          botId: bot.id,
           messages: thread.length,
           thread,
           truncated,
@@ -815,7 +817,7 @@ async function performSend(botRef: string, rawMessage: string | undefined) {
   }
 
   await sendToBot(bot, message);
-  return result({ sent: true, bot: bot.name, sentMessage: message, message: `Sent your message to ${bot.name}.` });
+  return result({ sent: true, bot: bot.name, botId: bot.id, sentMessage: message, message: `Sent your message to ${bot.name}.` });
 }
 
 /** Send once to one bot and start the reply watch. `base` is a transcript
@@ -862,12 +864,12 @@ const sendTool = server.registerTool(
       // message, which arrives as the fly-in and the live chat's next refresh.
       const tail = await transcriptTail(bot.id, 20);
       if (!text) {
-        return result({ opened: true, sent: false, bot: bot.name, message: `Opened ${bot.name}. Nothing was sent.` },
+        return result({ opened: true, sent: false, bot: bot.name, botId: bot.id, message: `Opened ${bot.name}. Nothing was sent.` },
           await conversationCard(agents, { bot: bot.id }, tail));
       }
       await sendToBot(bot, text, tail);
       return result(
-        { sent: true, bot: bot.name, sentMessage: text, message: `Sent your message to ${bot.name}.` },
+        { sent: true, bot: bot.name, botId: bot.id, sentMessage: text, message: `Sent your message to ${bot.name}.` },
         await conversationCard(agents, { bot: bot.id }, tail, text, true),
       );
     }),
