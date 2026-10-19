@@ -96,20 +96,38 @@ interface GatewayCreds {
   networkToken?: string;
   vncPrimaryUrl?: string; // noVNC viewer URL for the shared cloud computer (port 6080)
   vncForkBaseUrl?: string; // origin that serves every bot's OWN desktop (port 6081), token-addressed
+  remembered?: boolean; // served from memory because the app removed its route file
 }
 
 /**
  * The token rotates (~12h) and the pod host changes per session, so creds are
- * re-derived from disk, not hardcoded. Decrypting on EVERY call would re-spawn
- * `security` each time, so cache briefly and re-derive when the cache is stale
- * or the gateway rejects the token (see gateway()).
+ * re-derived from disk, not hardcoded. Cache briefly and re-derive when the
+ * cache is stale or the gateway rejects the token (see gateway()).
  */
 let credsCache: { creds: GatewayCreds; at: number } | null = null;
 const CREDS_TTL_MS = 60_000;
 
+/**
+ * The last route that decrypted, kept in memory only: never written or logged.
+ * Grok Bot deletes its route file when its cloud computer sleeps, and writes a
+ * new one only when the app reconnects while the computer is awake. A user
+ * request with no file would be stuck, because waking the computer needs the
+ * route. The remembered route lets that request send the wake headers itself.
+ * Any 401/403, or a network failure on the remembered route, forgets it.
+ */
+let rememberedRoute: GatewayCreds | null = null;
+
 const DESCRIPTOR_RECOVERY_MS = 5_000;
 let descriptorRecovery: Promise<string> | null = null;
+
+/** The Safe Storage key never changes, so one read serves the whole process.
+ * Re-reading it with every creds refresh re-prompted users who clicked
+ * "Allow" instead of "Always Allow" once a minute. */
+let masterKeyCache: string | null = null;
 let keychainRead: Promise<string> | null = null;
+/** A hidden prompt must not hold a request until VoiceOS cancels it (60 s).
+ * The read itself keeps waiting, so answering the prompt late still helps. */
+const KEYCHAIN_WAIT_MS = 30_000;
 
 function signedOutError(): IntegrationError {
   return new IntegrationError("setup", `${SERVICE_NAME} is signed out. Open the Grok Bot app and sign in, then try again.`);
@@ -125,8 +143,15 @@ function descriptorUnavailable(error: unknown): IntegrationError {
   if (signedIn === false) return signedOutError();
   return new IntegrationError(
     signedIn === true && !isWaking() ? "parked" : "session_unavailable",
-    `${SERVICE_NAME}'s local connection isn't available. Fully quit and reopen the Grok Bot app, then try again.`,
+    // Restarting alone is not enough: the app writes the route only when it
+    // connects while the cloud computer is awake, and messaging a bot wakes it.
+    `${SERVICE_NAME}'s local connection is off. Open Grok Bot and message any bot, then quit Grok Bot and open it again.`,
   );
+}
+
+function forgetSession(): void {
+  credsCache = null;
+  rememberedRoute = null;
 }
 
 /** User requests share one bounded recovery; background refreshes never join
@@ -160,6 +185,7 @@ async function readDescriptor(): Promise<string> {
 /** Async so a first-time Keychain prompt cannot block the MCP handshake.
  * Concurrent reads share one prompt; denial is not evidence of signing out. */
 function keychainKey(): Promise<string> {
+  if (masterKeyCache) return Promise.resolve(masterKeyCache);
   keychainRead ??= new Promise<string>((resolve, reject) => {
     execFile(
       process.env.GROKBOT_SECURITY_BIN || "/usr/bin/security",
@@ -177,25 +203,44 @@ function keychainKey(): Promise<string> {
         ));
       },
     );
-  }).finally(() => { keychainRead = null; });
-  return keychainRead;
+  }).then((key) => (masterKeyCache = key)).finally(() => { keychainRead = null; });
+  return waitForKeychain(keychainRead);
+}
+
+function waitForKeychain(read: Promise<string>): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const waited = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      log("keychain read still waiting; is the macOS prompt hidden?");
+      reject(new IntegrationError(
+        "session_unavailable",
+        `${SERVICE_NAME} is waiting for Keychain access. Look for the macOS Keychain popup, click Always Allow, then try again.`,
+      ));
+    }, KEYCHAIN_WAIT_MS);
+  });
+  return Promise.race([read, waited]).finally(() => clearTimeout(timer));
 }
 
 /** Read + decrypt the descriptor into live gateway creds. */
 async function loadCreds(force = false): Promise<GatewayCreds> {
   if (savedSignIn() === false) {
-    credsCache = null;
+    forgetSession();
     throw signedOutError();
   }
   if (!force && credsCache && Date.now() - credsCache.at < CREDS_TTL_MS) {
     return credsCache.creds;
+  }
+  // Only user requests may wake a computer the app put to sleep.
+  if (rememberedRoute && isWaking() && !hasGatewaySession()) {
+    log("route file missing; trying the remembered route");
+    return { ...rememberedRoute, remembered: true };
   }
   const raw = await readDescriptor();
   // Keep Keychain failures out of the descriptor-decryption error handler.
   const masterKey = await keychainKey();
   // Sign-out can happen while the user is answering a Keychain prompt.
   if (savedSignIn() === false) {
-    credsCache = null;
+    forgetSession();
     throw signedOutError();
   }
 
@@ -236,6 +281,8 @@ async function loadCreds(force = false): Promise<GatewayCreds> {
   } catch (error) {
     // Parse errors can contain decrypted session data. Never log their text.
     log(`descriptor decrypt failed (${error instanceof Error ? error.name : "unknown error"})`);
+    // A reinstalled app writes a new Safe Storage key; read it again next time.
+    masterKeyCache = null;
     throw new IntegrationError(
       "not_connected",
       `${SERVICE_NAME} needs a refresh — open the Grok Bot app, then try again.`,
@@ -244,6 +291,7 @@ async function loadCreds(force = false): Promise<GatewayCreds> {
 
   const creds = { baseUrl, token, networkToken, vncPrimaryUrl, vncForkBaseUrl };
   credsCache = { creds, at: Date.now() };
+  rememberedRoute = creds;
   return creds;
 }
 
@@ -463,16 +511,21 @@ export async function gateway<T = unknown>(
     if (curled) {
       status = curled.status;
       text = curled.text;
+    } else if (creds.remembered && !_retried) {
+      // The remembered route is gone; fall back to the app's own recovery.
+      rememberedRoute = null;
+      return gateway<T>(command, body, { timeoutMs, _retried: true });
     } else {
       throw classifyThrown(error, timeoutMs);
     }
   }
 
-  log(`${command} → ${status} in ${Math.round(performance.now() - started)}ms`);
+  log(`${command} → ${status} in ${Math.round(performance.now() - started)}ms${creds.remembered ? " (remembered route)" : ""}`);
 
   if (status === 401 || status === 403) {
+    // The remembered route holds this token (or an older one): drop both.
+    forgetSession();
     if (!_retried) {
-      credsCache = null;
       return gateway<T>(command, body, { timeoutMs, _retried: true });
     }
     throw new IntegrationError(

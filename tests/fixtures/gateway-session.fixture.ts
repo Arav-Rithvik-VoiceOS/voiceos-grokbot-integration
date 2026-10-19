@@ -9,7 +9,9 @@ const cipher = createCipheriv("aes-128-cbc", pbkdf2Sync("fixture-key", "saltysal
 const plain = scenario === "bad-plaintext" ? '{"token":"DO_NOT_LOG_SECRET",invalid}' : JSON.stringify({ baseUrl: "https://gateway.example.invalid", token: "fixture-token" });
 const encrypted = Buffer.concat([Buffer.from("v10"), cipher.update(plain), cipher.final()]).toString("base64");
 const descriptor = JSON.stringify({ entries: { fixture: { savedAtMs: 1, encrypted } } });
-const existing = new Set(["legacy", "signed-out-stale", "keychain-denied", "keychain-missing", "keychain-waits", "signout-during-keychain", "bad-plaintext", "wake-headers", "curl-wake-headers", "auth-rotation", "parked-response"]);
+const existing = new Set(["legacy", "signed-out-stale", "keychain-denied", "keychain-missing", "keychain-waits", "signout-during-keychain", "bad-plaintext", "wake-headers", "curl-wake-headers", "auth-rotation", "parked-response", "remembered", "remembered-rejected", "remembered-dead", "remembered-background", "keychain-once", "keychain-timeout"]);
+// Set when a scenario simulates Grok Bot deleting its route file mid-run.
+let routeGone = false;
 let opens = 0, keychainReads = 0, descriptorReads = 0, now = 0, eventLoopResponsive = false, signedOutDuringPrompt = false;
 const requests: Array<{ url: string; wake: boolean }> = [];
 const curls: string[][] = [];
@@ -17,7 +19,7 @@ const realRead = fs.readFileSync;
 const missing = (code = "ENOENT") => Object.assign(new Error("fixture unavailable"), { code });
 mock.module("node:fs", () => ({
   ...fs,
-  existsSync: (path: any) => String(path).endsWith("/Grok Bot/gateway-descriptor.json") && existing.has(scenario),
+  existsSync: (path: any) => String(path).endsWith("/Grok Bot/gateway-descriptor.json") && existing.has(scenario) && !routeGone,
   readFileSync: (path: any, ...args: any[]) => {
     const name = String(path);
     if (name.endsWith("/Grok Bot/desktop-status.json")) {
@@ -29,7 +31,7 @@ mock.module("node:fs", () => ({
     }
     if (name.endsWith("/Grok Bot/gateway-descriptor.json")) {
       descriptorReads++;
-      if (existing.has(scenario)) return descriptor;
+      if (existing.has(scenario) && !routeGone) return descriptor;
       if (["restored", "concurrent-background"].includes(scenario) && opens > 0 && now >= 200) return descriptor;
       throw missing(scenario === "unreadable" ? "EACCES" : "ENOENT");
     }
@@ -47,13 +49,15 @@ mock.module("node:child_process", () => ({
       const error = code ? Object.assign(new Error("DO_NOT_LOG_SECRET"), { code, stdout: "DO_NOT_LOG_SECRET" }) : null;
       const finish = () => done(error, error ? "" : "fixture-key", "");
       if (scenario === "signout-during-keychain") setTimeout(() => { signedOutDuringPrompt = true; finish(); }, 10);
+      else if (scenario === "keychain-timeout") { /* the prompt is never answered */ }
       else if (scenario === "keychain-waits") setTimeout(() => { eventLoopResponsive = true; finish(); }, 10);
       else queueMicrotask(finish);
       return {};
     }
     if (file === "/usr/bin/curl") {
       curls.push(args);
-      queueMicrotask(() => done(null, "[]\n200", ""));
+      if (scenario === "remembered-dead") queueMicrotask(() => done(Object.assign(new Error("fixture"), { code: 6 }), "", ""));
+      else queueMicrotask(() => done(null, "[]\n200", ""));
       return {};
     }
     throw Error(`Unexpected subprocess: ${file}`);
@@ -65,6 +69,8 @@ Date.now = () => now;
 const realSetTimeout = globalThis.setTimeout;
 globalThis.setTimeout = ((callback: Function, ms: number, ...args: any[]) => {
   if (ms === 100) { now += ms; return realSetTimeout(() => callback(...args), 0); }
+  // Fire the Keychain wait at once instead of after 30 s of wall-clock time.
+  if (ms === 30_000 && scenario === "keychain-timeout") return realSetTimeout(() => callback(...args), 0);
   return realSetTimeout(callback as any, ms, ...args);
 }) as typeof setTimeout;
 globalThis.fetch = (async (url: string, init?: RequestInit) => {
@@ -73,6 +79,8 @@ globalThis.fetch = (async (url: string, init?: RequestInit) => {
   if (scenario === "curl-wake-headers") throw new TypeError("Network fixture");
   if (scenario === "auth-rotation" && requests.length === 1) return Response.json({}, { status: 401 });
   if (scenario === "parked-response") return Response.json({}, { status: 417 });
+  if (scenario === "remembered-rejected" && routeGone) return Response.json({}, { status: 401 });
+  if (scenario === "remembered-dead" && routeGone) throw new TypeError("Network fixture");
   return Response.json([{ id: "fixture", name: "Fixture" }]);
 }) as typeof fetch;
 
@@ -83,6 +91,18 @@ let results: unknown[];
 if (scenario === "background") results = [await withoutWaking(call)];
 else if (scenario === "concurrent-background") results = await Promise.all([call(), withoutWaking(call), call()]);
 else if (["wake-headers", "curl-wake-headers"].includes(scenario)) results = await Promise.all([call(), withoutWaking(call)]);
-else if (scenario === "auth-rotation") results = [await call()];
+else if (scenario === "auth-rotation" || scenario === "keychain-timeout") results = [await call()];
+// Each later call is past the 60 s creds cache, after Grok Bot removed the route.
+else if (scenario.startsWith("remembered")) {
+  const first = await call();
+  routeGone = true;
+  now += 61_000;
+  results = [first, await (scenario === "remembered-background" ? withoutWaking(call) : call())];
+}
+else if (scenario === "keychain-once") {
+  const first = await call();
+  now += 61_000;
+  results = [first, await call()];
+}
 else results = await Promise.all([call(), call(), call()]);
 console.log(JSON.stringify({ signedIn, results, opens, keychainReads, descriptorReads, requests, curls, eventLoopResponsive, elapsed: now }));

@@ -132,7 +132,9 @@ test("read fallback preserves wake policy independently for concurrent requests"
 
 test("a rejected session still refreshes credentials once for a read", () => {
   const out = run("auth-rotation");
-  expect(out.keychainReads).toBe(2);
+  // The route file is read again; the unchanging Keychain key is not.
+  expect(out.descriptorReads).toBe(2);
+  expect(out.keychainReads).toBe(1);
   expect(out.requests).toHaveLength(2);
   expect(Array.isArray(out.results[0])).toBe(true);
 });
@@ -141,4 +143,50 @@ test("a sleeping gateway is classified as parked instead of signed out", () => {
   const out = run("parked-response");
   expect(out.results[0].error.kind).toBe("parked");
   expect(out.signedIn).toBe(true);
+});
+
+test("a removed route file reuses the remembered route so a user request can wake the computer", () => {
+  const out = run("remembered");
+  expect(out.results.every((result: unknown) => Array.isArray(result))).toBe(true);
+  expect(out.requests.map((request: any) => request.wake)).toEqual([true, true]);
+  expect(out.opens).toBe(0);
+  expect(out.keychainReads).toBe(1);
+});
+
+test("a rejected remembered route is forgotten and falls back to the guided recovery", () => {
+  const out = run("remembered-rejected");
+  expect(out.requests).toHaveLength(2);
+  expect(out.opens).toBe(1);
+  expect(out.results[1].error.kind).toBe("session_unavailable");
+  expect(out.results[1].error.message).toContain("message any bot");
+});
+
+test("an unreachable remembered route is forgotten and falls back to the guided recovery", () => {
+  const out = run("remembered-dead");
+  expect(out.requests).toHaveLength(2);
+  expect(out.curls).toHaveLength(1);
+  expect(out.opens).toBe(1);
+  expect(out.results[1].error.message).toContain("message any bot");
+});
+
+test("background reads never use the remembered route to wake a sleeping computer", () => {
+  const out = run("remembered-background");
+  expect(out.requests).toHaveLength(1);
+  expect(out.results[1].error.kind).toBe("parked");
+  expect(out.opens).toBe(0);
+});
+
+test("the Keychain is read once per process, not on every creds refresh", () => {
+  const out = run("keychain-once");
+  expect(out.descriptorReads).toBe(2);
+  expect(out.keychainReads).toBe(1);
+  expect(out.requests).toHaveLength(2);
+});
+
+test("an unanswered Keychain prompt fails the request with guidance instead of hanging", () => {
+  const out = run("keychain-timeout");
+  expect(out.keychainReads).toBe(1);
+  expect(out.requests).toEqual([]);
+  expect(out.results[0].error.kind).toBe("session_unavailable");
+  expect(out.results[0].error.message).toContain("Keychain popup");
 });

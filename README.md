@@ -14,13 +14,15 @@ must also be proposed here; see [AGENTS.md](AGENTS.md) for the release contract.
 
 ## Grok Bot connection compatibility
 
-Grok Bot 0.70.2 and 0.71.2 can suppress the shared local connection independently
-of an individual bot's computer, even while the app remains signed in. If the
-connection stays unavailable, fully quit and reopen Grok Bot, then retry.
-This restored access in a live check; the restart also applied a pending update
-from 0.70.2 to 0.71.2. Both versions retain the export behavior, so restarting is
-a recovery workaround. The integration's bounded recovery prevents a missing
-route from being mistaken for logout, but cannot change Grok Bot's export behavior.
+Grok Bot deletes its local route file (`gateway-descriptor.json`) when its cloud
+computer goes to sleep, and writes a new one only when the app connects while
+that computer is awake. Restarting Grok Bot while the computer sleeps does not
+bring the file back (checked live on 0.71.2, 2026-10-19).
+
+The integration keeps the last working route in memory only, so a user request
+can still wake the computer after the file is gone. If that route is rejected or
+unreachable, open Grok Bot and message any bot to wake its computer, then quit
+Grok Bot (Cmd+Q) and open it again. Background reads never wake the computer.
 
 ## Grok Bot setup: the Keychain popup
 
