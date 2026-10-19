@@ -97,7 +97,9 @@ The template ships one read tool (`list_items`) and one write tool
 (`create_item`) to show both shapes. Replace them with real ones. For each tool:
 
 - Declare it in the manifest (name, title, description, inputSchema).
-- Register it in `server.ts` with the **same name and wording**.
+- Register it in `server.ts` with the **same name**. A tool the user sees may
+  have a short manifest description and a longer routing description on the
+  server (see the rule below).
 - Give it a card in `cards.ts`.
 - If it acts on the user's behalf, add a `confirmation` card in the manifest.
   Read-only tools must not have one.
@@ -135,6 +137,11 @@ Composio is the auth + API transport. You never handle OAuth tokens yourself:
 
 - **Tool descriptions are routing rules.** Say what it does AND when to use it
   ("Use when the user asks …").
+  A tool the user can see keeps the manifest text short and plain (one or two
+  short sentences, like the Claude Code and Manus integrations). The longer
+  "Use when …" text lives on the server's `registerTool` description (the MCP
+  `tools/list` text). Tools with `"visibility": "agent"` are never shown to the user,
+  so their manifest text can stay long.
 - **Every result carries JSON for the model AND a card for the user.** Never
   put information only in the card.
 - **Cards are a 2-second read.** Max 3 blocks. Trim strings before the kit does.

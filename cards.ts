@@ -27,6 +27,7 @@ import {
 } from "./assets.generated.ts";
 import { toCardThread, boundThread, type CardItem } from "./conversation.ts";
 import { renderMarkdown } from "./markdown.ts";
+import { GROK_ALL_SHAPE_IDS, type GrokAnyShape, avatarCss } from "./avatarShapes.ts";
 
 type CardName = "connect" | "show" | "create" | "guide";
 
@@ -65,8 +66,9 @@ export const glanceChars = (card: { _voiceos_glance: { blocks: unknown[] } }) =>
 const STRIP_COMMENTS = new Set<CardName>(["show"]);
 
 /** The widget HTML with the real mark + real {data, args} injected. `fills`
- * replaces extra `__VOICEOS_<KEY>__` tokens (none today);
- * any token a widget declares but a call doesn't fill becomes the empty string. */
+ * replaces extra `__VOICEOS_<KEY>__` tokens; `__VOICEOS_SHAPES__` (the avatar
+ * CSS) fills itself from the card's bots unless a caller passes one.
+ * Any token a widget declares but a call doesn't fill becomes the empty string. */
 export function renderCard(
   name: CardName,
   payload: { data?: unknown; args?: unknown } = {},
@@ -80,6 +82,8 @@ export function renderCard(
   // fill, so only the template is touched). None of these templates has "/*"
   // inside a string — tests/cards.test.ts guards that.
   const template = STRIP_COMMENTS.has(name) ? WIDGETS[name].replace(/\/\*[\s\S]*?\*\/\n?/g, "") : WIDGETS[name];
+  if (template.includes("__VOICEOS_SHAPES__") && fills.SHAPES === undefined)
+    fills = { ...fills, SHAPES: avatarCss(cardShapes(name, payload.data)) };
   let html = injectMark(template).replace(/__VOICEOS_([A-Z]+)__/g, (token, key: string) => key === "DEMO" ? token : fills[key] ?? "");
   html = html.replace("__VOICEOS_DEMO__", () => json);
   if (name === "show") {
@@ -91,21 +95,18 @@ export function renderCard(
     html = html.replace("</script>", () => `\n(()=>{\n${LIVE_CHAT_JS}\n${SCREEN_PANE_JS}\n${SHOW_ADAPTER}\n})();\n</script>`)
       .replace("<script>", () => `<style>${MARKDOWN_CSS}\n${LIVE_CHAT_CSS}\n${SHOW_CSS}\n${SCREEN_PANE_CSS}</style>\n<script>`);
   }
-  return pruneShapeCss(name, payload.data, html);
+  return html;
 }
 
-/** Every widget ships clip-path polygons for all 8 Grok avatar shapes (~6.5KB).
- * A read card only needs the shapes its bots actually use, and every byte saved
- * leaves more of MAX_GLANCE_CHARS for the show card's conversations — so drop
- * the unused rules. The create card keeps all 8 (its picker
- * shows every shape), and so does the guide (its orbit shows every shape); `blob` always stays because adapters use it as the
- * placeholder shape for unresolved recipients. */
-function pruneShapeCss(name: CardName, data: unknown, html: string): string {
-  const bots = (data as { bots?: { shape?: string }[] } | undefined)?.bots;
-  if (name === "create" || name === "guide" || !Array.isArray(bots)) return html;
-  const used = new Set<string>(["blob", ...bots.map((b) => b.shape ?? "blob")]);
-  return html.replace(/\.av\.([a-z]+),\.shapes button\.\1\{clip-path:polygon\([^)]*\)\}/g, (rule, shape: string) =>
-    used.has(shape) ? rule : "");
+/** Which avatar shapes a card draws (avatarShapes.ts has the art for all 25,
+ * ~16KB). A card only carries the shapes its bots use, so every byte saved is
+ * left for the show card's conversations; `blob` always comes along, since it
+ * is every avatar's fallback. The guide also draws its own crew (guide.html's
+ * CREW, SAMPLE and Juno), which uses only the 8 shapes in GROK_DEFAULT_SHAPE_IDS. */
+function cardShapes(name: CardName, data: unknown): string[] {
+  const bots = (data as { bots?: { shape?: unknown }[] } | undefined)?.bots;
+  const used = Array.isArray(bots) ? bots.map((b) => String(b?.shape ?? "")) : [];
+  return name === "guide" ? [...GROK_DEFAULT_SHAPE_IDS, ...used] : used;
 }
 
 /** A read tool's glance: one widget block. Heights are a starting point — each
@@ -139,15 +140,25 @@ export const GROK_COLOR_HEX = {
 export type GrokColor = keyof typeof GROK_COLOR_HEX;
 export const GROK_COLOR_IDS = Object.keys(GROK_COLOR_HEX) as [GrokColor, ...GrokColor[]];
 
-// Shapes: the 8 Grok lets a user pick. Its bundle knows 10 more (bean, egg,
-// capsule, …) that only arrive via bot templates; those fall back to the
-// nearest pickable shape so nothing silently turns into a circle.
-export const GROK_SHAPE_IDS = ["blob", "pebble", "squircle", "tablet", "wedge", "hex", "cloud", "teardrop"] as const;
+// Shapes: Grok Bot can draw 25 (GROK_ALL_SHAPE_IDS, avatarShapes.ts) and our
+// cards draw every one of them with the app's own outline. Three lists matter:
+//  - GROK_PICKER_SHAPE_IDS: the 13 its avatar picker offers today (0.71 added
+//    square, sparkle, clover, flower, heart, house and star; pebble and
+//    squircle left the picker but stay valid). The rest arrive via templates.
+//  - GROK_DEFAULT_SHAPE_IDS: the 8 the app still derives a default from, for a
+//    bot that never picked a shape. The order is the hash's index space.
+//  - GROK_SHAPE_IDS: what our create card offers and the manifest's create
+//    schema advertises: the picker's 13. Keep the manifest's create card and
+//    shape enum in step with this list.
+export { GROK_ALL_SHAPE_IDS, type GrokAnyShape };
+export const GROK_PICKER_SHAPE_IDS = [
+  "blob", "cloud", "square", "sparkle", "clover", "heart", "flower", "teardrop", "tablet", "wedge", "house", "star", "hex",
+] as const satisfies readonly GrokAnyShape[];
+const GROK_DEFAULT_SHAPE_IDS = ["blob", "pebble", "squircle", "tablet", "wedge", "hex", "cloud", "teardrop"] as const satisfies readonly GrokAnyShape[];
+export const GROK_SHAPE_IDS = GROK_PICKER_SHAPE_IDS;
 export type GrokShape = (typeof GROK_SHAPE_IDS)[number];
-const SHAPE_FALLBACK: Record<string, GrokShape> = {
-  bean: "pebble", egg: "blob", capsule: "tablet", cylinder: "squircle", gem: "hex",
-  crystal: "hex", shield: "squircle", dome: "cloud", arch: "tablet", leaf: "teardrop",
-};
+type GrokDefaultShape = (typeof GROK_DEFAULT_SHAPE_IDS)[number];
+const isGrokShape = (s: string): s is GrokAnyShape => (GROK_ALL_SHAPE_IDS as readonly string[]).includes(s);
 
 // Grok stores avatarShape/avatarColor as null until the user picks one; its UI
 // derives a stable default from the bot's id on every render (a fixed orb/orange
@@ -167,13 +178,15 @@ const fnv1a32 = (s: string): number => {
 // index space of the color hash, so it must stay exactly as the bundle lists it —
 // this is deliberately not GROK_COLOR_IDS (a different order).
 const DEFAULT_COLOR_ORDER: GrokColor[] = ["brown", "red", "orange", "yellow", "green", "cyan", "blue", "violet", "magenta", "gray"];
-// pv(id): mix the FNV hash, index into the 8 pickable shapes (== Grok's `bu`).
-const defaultShapeId = (id: string): GrokShape => {
+// pv(id): mix the FNV hash, index into the 8 default shapes. Grok Bot 0.71
+// still does exactly this for an existing bot (its `BN`, over the old 8); only
+// its new-bot dialog seeds a random id over the 13 picker shapes.
+const defaultShapeId = (id: string): GrokDefaultShape => {
   let t = fnv1a32(id) | 0;
   t = Math.imul(t ^ (t >>> 16), 73244475);
   t = Math.imul(t ^ (t >>> 13), 3266489909);
   const h = (t ^ (t >>> 16)) >>> 0;
-  return GROK_SHAPE_IDS[h % GROK_SHAPE_IDS.length];
+  return GROK_DEFAULT_SHAPE_IDS[h % GROK_DEFAULT_SHAPE_IDS.length];
 };
 // fv(id) = B1[A3(T3(id))]: reseed a mulberry32 step from the hash, take one draw.
 const defaultColorId = (id: string): GrokColor => {
@@ -193,11 +206,9 @@ const colorHex = (c: string | null | undefined, id: string): string => {
   if (key in GROK_COLOR_HEX) return GROK_COLOR_HEX[key as GrokColor];
   return GROK_COLOR_HEX[defaultColorId(id)]; // null/unknown → Grok's id-derived default
 };
-const shapeKind = (s: string | null | undefined, id: string): GrokShape => {
+const shapeKind = (s: string | null | undefined, id: string): GrokAnyShape => {
   const key = (s ?? "").toLowerCase();
-  if ((GROK_SHAPE_IDS as readonly string[]).includes(key)) return key as GrokShape;
-  if (SHAPE_FALLBACK[key]) return SHAPE_FALLBACK[key]; // extended template shape → nearest pickable
-  return defaultShapeId(id); // null/unknown → Grok's id-derived default
+  return isGrokShape(key) ? key : defaultShapeId(id); // null/""/unknown → Grok's id-derived default
 };
 
 // ── Tolerant input → Grok id (what the create tool sends to the gateway) ─────
@@ -210,10 +221,12 @@ const LEGACY_COLOR: Record<string, GrokColor> = {
   purple: "violet", pink: "magenta", teal: "cyan", turquoise: "cyan", grey: "gray", black: "gray",
   gold: "yellow", amber: "orange", crimson: "red", navy: "blue",
 };
-const LEGACY_SHAPE: Record<string, GrokShape> = {
+// `square` is a real Grok shape now; `sq` stays the old design's squircle.
+const LEGACY_SHAPE: Record<string, GrokAnyShape> = {
   circ: "blob", circle: "blob", round: "blob", dot: "blob",
-  sq: "squircle", square: "squircle", rounded: "squircle", rect: "squircle",
+  sq: "squircle", rounded: "squircle", rect: "squircle",
   hexagon: "hex", triangle: "wedge", drop: "teardrop", tear: "teardrop", pill: "tablet",
+  home: "house", sparkles: "sparkle", twinkle: "sparkle", shamrock: "clover", diamond: "gem",
 };
 const hexToRgb = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 export function normalizeColorId(input?: string): GrokColor | undefined {
@@ -234,11 +247,10 @@ export function normalizeColorId(input?: string): GrokColor | undefined {
   }
   return undefined;
 }
-export function normalizeShapeId(input?: string): GrokShape | undefined {
+export function normalizeShapeId(input?: string): GrokAnyShape | undefined {
   const s = (input ?? "").trim().toLowerCase();
   if (!s) return undefined;
-  if ((GROK_SHAPE_IDS as readonly string[]).includes(s)) return s as GrokShape;
-  return LEGACY_SHAPE[s] ?? SHAPE_FALLBACK[s];
+  return isGrokShape(s) ? s : LEGACY_SHAPE[s];
 }
 
 function statusOf(a: Agent): "working" | "idle" | "thinking" | "waiting" {
@@ -284,6 +296,26 @@ export function toBot(a: Agent) {
     task: preview(a.lastMessagePreview),
     time: relTime(a.lastActivityAt),
   };
+}
+
+/** Bot pictures for a card, id → small data: URI (client.ts listAgents loads
+ * and shrinks them into `avatarImage`). They ride in their own `data.avatars`
+ * map, never in the bot entries: rosters are also copied into snapshots, saved
+ * card state and confirmation contexts, which must stay small. Past the cap,
+ * later bots keep their shape; `first` (the opened bot) is placed first. */
+export const AVATARS_MAX_CHARS = 96_000;
+const SAFE_PICTURE = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+=*$/;
+export function avatarMap(agents: Agent[], first?: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  let used = 0;
+  const ordered = first ? [...agents.filter((a) => a.id === first), ...agents.filter((a) => a.id !== first)] : agents;
+  for (const a of ordered) {
+    const img = a.avatarImage;
+    if (a.isGroup || !img || !SAFE_PICTURE.test(img) || used + img.length > AVATARS_MAX_CHARS) continue;
+    out[a.id] = img;
+    used += img.length;
+  }
+  return out;
 }
 
 /** One group in the card's `data.groups` shape. */
@@ -415,10 +447,11 @@ export function showCard(
   const groups = agents.filter((a) => a.isGroup).map(toGroup);
   const args = open ? { open: open.open, ...(open.message ? { message: open.message, ...(open.sent ? { sent: true } : {}) } : {}) } : {};
   const focus = open ? ("bot" in open.open ? open.open.bot : "group" in open.open ? open.open.group : undefined) : undefined;
+  const avatars = avatarMap(agents, focus);
   const card = (ids: string[], perThread: number, focusThread = perThread) => {
     const baked = Object.fromEntries(ids.map((id) => [id, withTime(boundThread(threads[id], id === focus ? focusThread : perThread))]));
     const seqs = Object.fromEntries(ids.filter((id) => typeof nextBeforeSeqs[id] === "number").map((id) => [id, nextBeforeSeqs[id]]));
-    return glance("show", { data: { bots, groups, me: me ?? "", threads: baked, nextBeforeSeqs: seqs }, args }, 320, "Grok Bot");
+    return glance("show", { data: { bots, groups, me: me ?? "", threads: baked, nextBeforeSeqs: seqs, avatars }, args }, 320, "Grok Bot");
   };
   // The opened conversation first, then roster order: the first rows are the ones on screen.
   const ids = [...(focus && threads[focus]?.length ? [focus] : []),
@@ -434,7 +467,7 @@ export function showCard(
   }
   const bare = card([], 0);
   if (fits(bare)) return bare;
-  // The roster is the content here, so every bot stays — as a name and a status.
+  // The roster is the content here, so every bot stays — as a name, a status and its shape (no pictures).
   const slim = glance("show", { data: { bots: slimRoster(bots, new Set()), groups: groups.map((g) => ({ ...g, last: "" })), me: me ?? "", threads: {}, nextBeforeSeqs: {} }, args }, 320, "Grok Bot");
   if (!fits(slim)) console.error(`show card is ${glanceChars(slim)} glance chars with a bare roster (cap ${MAX_GLANCE_CHARS}); VoiceOS will drop it`);
   return slim;
@@ -452,7 +485,8 @@ export type SetupState = { app?: boolean; signedIn?: boolean; bots?: number; not
 export function guideCard(setup: SetupState, bots: Agent[] = [], page: 0 | 1 | 2 = 0) {
   const cast = bots.filter((a) => !a.isGroup).slice(0, 3).map((a) => {
     const b = toBot(a);
-    return { name: b.name, color: b.color, shape: b.shape };
+    const img = avatarMap([a])[a.id];
+    return { name: b.name, color: b.color, shape: b.shape, ...(img ? { img } : {}) };
   });
   return glance("guide", { data: { setup, bots: cast, kcImg: KEYCHAIN_POPUP_DATA_URI }, args: { page } }, 410, "Grok Bot");
 }

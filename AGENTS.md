@@ -32,6 +32,11 @@ card** declared in the manifest, which the user can edit and approve.
 
 1. **Tool descriptions are routing rules for the model**: what it does + when
    to use it ("Use when the user asks …").
+   A tool the user can see has a short, plain manifest description; its
+   routing text lives on the server's `registerTool` description (for
+   `grokbot_send`: `SEND_DESCRIPTION` is the short manifest text and
+   `SEND_MODEL_DESCRIPTION` the routing text, both in `messaging.ts`). Agent-only
+   tools (`"visibility": "agent"`) keep the full routing text in both places.
 2. **Results carry data AND a glance card**: JSON the model reasons about,
    plus a `_voiceos_glance: { blocks: [...] }` key spread into the result
    for the user. Never put information only in the card.

@@ -15,9 +15,12 @@
  * PLAN.md for the design.
  */
 import { existsSync, readFileSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { pbkdf2Sync, createDecipheriv } from "node:crypto";
+import { pbkdf2Sync, createDecipheriv, createHash } from "node:crypto";
 import {
   openComputerWindow as launchComputerWindow,
   validateDesktopWebSocketUrl,
@@ -622,8 +625,13 @@ export interface Agent {
   description?: string;
   title?: string;
   avatarDataUrl?: string | null;
+  /** Set when the bot wears a picture instead of its shape (Grok Bot's own test). */
+  avatarVersion?: string | null;
   avatarShape?: string | null;
   avatarColor?: string | null;
+  /** Ours, not the gateway's: the bot's picture as a small data: URI, filled in
+   * by listAgents (see "Bot pictures" below). Absent → draw the shape. */
+  avatarImage?: string;
   isGroup?: boolean;
   memberIds?: string[];
   isRunning?: boolean;
@@ -664,7 +672,157 @@ export interface TranscriptEntry {
 }
 
 export async function listAgents() {
-  return gateway<Agent[]>("listAgents", {});
+  return withAvatarImages(await gateway<Agent[]>("listAgents", {}));
+}
+
+// ── Bot pictures ─────────────────────────────────────────────────────────────
+//
+// A Grok Bot user can give a bot a picture instead of its shape. The app's own
+// rule (its roster code): a bot has a picture when avatarDataUrl or
+// avatarVersion is set. avatarDataUrl, when present, IS the picture; otherwise
+// the app asks the gateway's getAgentAvatar → { dataUrl, version } (a
+// "background" command: it never wakes a parked computer) and caches it per
+// version. We do the same. Cards cannot reach the network, so the picture
+// travels inside the card as a data: URI, center-cropped to 72px (36px avatars
+// at 2x) with macOS's sips: PNG when it has transparency, JPEG otherwise.
+// Only inline raster images are used; anything else keeps the shape.
+
+export const getAgentAvatar = (id: string) =>
+  gateway<{ dataUrl?: string | null; version?: string | null } | null>("getAgentAvatar", { id });
+
+const AVATAR_PX = 72;
+const AVATAR_SOURCE_MAX_BYTES = 8 * 1024 * 1024;
+/** A shrunk picture over this many characters is not used (the shape is). */
+export const AVATAR_IMAGE_MAX_CHARS = 24_000;
+/** How long one roster read waits for pictures it has not seen yet. Loads
+ * that miss it keep going and land in the cache for the next read. */
+const AVATAR_WAIT_MS = 1_200;
+const AVATAR_RETRY_MS = 5 * 60_000;
+const AVATAR_CACHE_MAX = 200;
+/** key (bot id + picture version) → data URI, or null: no usable picture. */
+const avatarCache = new Map<string, string | null>();
+const avatarLoads = new Map<string, Promise<string | null>>();
+const avatarFailures = new Map<string, number>();
+/** Grok Bot's own sidebar fetches at most 3 pictures at a time. */
+let avatarSlots = 3;
+const avatarQueue: (() => void)[] = [];
+
+const hasPicture = (a: Agent) => !a.isGroup && (!!a.avatarDataUrl || !!a.avatarVersion);
+const pictureKey = (a: Agent) => [a.id, a.avatarVersion ?? "",
+  a.avatarDataUrl ? createHash("sha1").update(a.avatarDataUrl).digest("hex") : ""].join("\n");
+
+async function inAvatarSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (avatarSlots === 0) await new Promise<void>((resolve) => avatarQueue.push(resolve));
+  else avatarSlots--;
+  try {
+    return await work();
+  } finally {
+    const next = avatarQueue.shift();
+    if (next) next();
+    else avatarSlots++;
+  }
+}
+
+function sips(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("/usr/bin/sips", args, { encoding: "utf8", timeout: 5_000 }, (error, stdout) =>
+      error ? reject(error) : resolve(stdout));
+  });
+}
+
+/** An inline picture → a small square data: URI, or null when it is not a
+ * raster image sips can read. Never logs the picture or where it came from. */
+export async function shrinkAvatar(dataUrl: string): Promise<string | null> {
+  const head = /^data:image\/(?:png|jpe?g|gif|webp|heic|heif|tiff|bmp);base64,/i.exec(dataUrl);
+  if (!head) {
+    log("bot picture skipped: not an inline raster image");
+    return null;
+  }
+  const bytes = Buffer.from(dataUrl.slice(head[0].length), "base64");
+  if (bytes.length === 0 || bytes.length > AVATAR_SOURCE_MAX_BYTES) return null;
+  const dir = await mkdtemp(join(tmpdir(), "grokbot-avatar-"));
+  try {
+    const src = join(dir, "source");
+    await writeFile(src, bytes);
+    const info = await sips(["-g", "pixelWidth", "-g", "pixelHeight", "-g", "hasAlpha", src]);
+    const width = Number(/pixelWidth: (\d+)/.exec(info)?.[1]);
+    const height = Number(/pixelHeight: (\d+)/.exec(info)?.[1]);
+    if (!width || !height) return null;
+    const alpha = /hasAlpha: yes/.test(info);
+    const side = Math.min(width, height);
+    const size = Math.min(AVATAR_PX, side);
+    // Resample first (short side → size), then crop the middle square: sips
+    // applies the two in its own order within one call, so they are two calls.
+    let scaled = src;
+    if (side > size) {
+      scaled = join(dir, "scaled");
+      await sips(["-z", String(Math.round((height * size) / side)), String(Math.round((width * size) / side)), src, "--out", scaled]);
+    }
+    const out = join(dir, alpha ? "out.png" : "out.jpg");
+    await sips(["-c", String(size), String(size), "-s", "format", alpha ? "png" : "jpeg",
+      ...(alpha ? [] : ["-s", "formatOptions", "82"]), scaled, "--out", out]);
+    const uri = `data:image/${alpha ? "png" : "jpeg"};base64,${(await readFile(out)).toString("base64")}`;
+    return uri.length <= AVATAR_IMAGE_MAX_CHARS ? uri : null;
+  } catch (error) {
+    log(`bot picture could not be read (${error instanceof Error ? error.name : "error"})`);
+    return null;
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function loadPicture(a: Agent): Promise<string | null> {
+  const source = a.avatarDataUrl || (await inAvatarSlot(() => getAgentAvatar(a.id)))?.dataUrl;
+  return typeof source === "string" && source ? shrinkAvatar(source) : null;
+}
+
+function rememberPicture(key: string, uri: string | null): void {
+  avatarCache.delete(key);
+  avatarCache.set(key, uri);
+  if (avatarCache.size > AVATAR_CACHE_MAX) avatarCache.delete(avatarCache.keys().next().value!);
+}
+
+/** Fills `avatarImage` on bots that wear a picture. Cached pictures land at
+ * once; new ones get AVATAR_WAIT_MS, then the roster goes out without them
+ * (those bots show their shape this time). A failed read waits a few minutes
+ * before it is tried again. */
+export async function withAvatarImages(agents: Agent[]): Promise<Agent[]> {
+  if (!Array.isArray(agents)) return agents;
+  const pending: Promise<void>[] = [];
+  let waiting = true;
+  for (const a of agents) {
+    if (!a || typeof a !== "object" || !hasPicture(a)) continue;
+    const key = pictureKey(a);
+    if (avatarCache.has(key)) {
+      const uri = avatarCache.get(key);
+      if (uri) a.avatarImage = uri;
+      continue;
+    }
+    if (Date.now() - (avatarFailures.get(key) ?? 0) < AVATAR_RETRY_MS) continue;
+    let load = avatarLoads.get(key);
+    if (!load) {
+      load = loadPicture(a)
+        .then((uri) => { rememberPicture(key, uri); avatarFailures.delete(key); return uri; })
+        .catch(() => { avatarFailures.set(key, Date.now()); return null; })
+        .finally(() => avatarLoads.delete(key));
+      avatarLoads.set(key, load);
+    }
+    pending.push(load.then((uri) => { if (uri && waiting) a.avatarImage = uri; }));
+  }
+  if (pending.length) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([Promise.all(pending), new Promise((resolve) => { timer = setTimeout(resolve, AVATAR_WAIT_MS); })]);
+    clearTimeout(timer);
+    waiting = false;
+  }
+  return agents;
+}
+
+/** Tests only: forget every cached picture. */
+export function resetAvatarCache(): void {
+  avatarCache.clear();
+  avatarLoads.clear();
+  avatarFailures.clear();
 }
 
 // ── Automations (Grok's name for scheduled tasks) ────────────────────────────

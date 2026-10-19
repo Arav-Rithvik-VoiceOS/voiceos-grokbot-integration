@@ -45,7 +45,7 @@ import { recordCardPoll, cardCovers } from "./cardWatch.ts";
 import { RFB_B64 } from "./assets.generated.ts";
 import { connectCard, guideCard, showCard, type ShowOpen, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
-import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, SEND_BOT_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
+import { PREPARE_DESCRIPTION, SEND_MODEL_DESCRIPTION, SEND_BOT_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 import { conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
 import { needsAttention, toCardThread, type CardItem } from "./conversation.ts";
 import { IntentRoster, registerIntentSupport } from "./intents.ts";
@@ -839,8 +839,8 @@ async function sendToBot(bot: Agent, message: string, base?: { entries?: Transcr
 const sendTool = server.registerTool(
   "grokbot_send",
   {
-    title: "Send to a bot",
-    description: SEND_DESCRIPTION,
+    title: "Message a bot",
+    description: SEND_MODEL_DESCRIPTION,
     inputSchema: {
       confirmationContext: z.string().optional().describe(CONTEXT_DESCRIPTION),
       bot: z.string().describe(SEND_BOT_DESCRIPTION),
