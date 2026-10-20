@@ -5,11 +5,19 @@ import * as childProcess from "node:child_process";
 import { createCipheriv, pbkdf2Sync } from "node:crypto";
 
 const scenario = process.argv[2];
-const cipher = createCipheriv("aes-128-cbc", pbkdf2Sync("fixture-key", "saltysalt", 1003, 16, "sha1"), Buffer.alloc(16, 0x20));
 const plain = scenario === "bad-plaintext" ? '{"token":"DO_NOT_LOG_SECRET",invalid}' : JSON.stringify({ baseUrl: "https://gateway.example.invalid", token: "fixture-token" });
-const encrypted = Buffer.concat([Buffer.from("v10"), cipher.update(plain), cipher.final()]).toString("base64");
-const descriptor = JSON.stringify({ entries: { fixture: { savedAtMs: 1, encrypted } } });
-const existing = new Set(["legacy", "signed-out-stale", "keychain-denied", "keychain-missing", "keychain-waits", "signout-during-keychain", "bad-plaintext", "wake-headers", "curl-wake-headers", "auth-rotation", "parked-response", "remembered", "remembered-rejected", "remembered-dead", "remembered-background", "keychain-once", "keychain-timeout"]);
+function descriptorFor(key: string) {
+  const cipher = createCipheriv("aes-128-cbc", pbkdf2Sync(key, "saltysalt", 1003, 16, "sha1"), Buffer.alloc(16, 0x20));
+  const encrypted = Buffer.concat([Buffer.from("v10"), cipher.update(plain), cipher.final()]).toString("base64");
+  return JSON.stringify({ entries: { fixture: { savedAtMs: 1, encrypted } } });
+}
+// "keychain-rotated" simulates a reinstall: a new Safe Storage key, and a route
+// file encrypted with it, appear between two calls.
+let keychainKey = "fixture-key";
+let descriptor = descriptorFor(keychainKey);
+// desktop-status.json's mtime; the app rewrites the file on sign-out and sign-in.
+let statusStamp = 1;
+const existing = new Set(["legacy", "signed-out-stale", "keychain-denied", "keychain-missing", "keychain-waits", "signout-during-keychain", "bad-plaintext", "wake-headers", "curl-wake-headers", "auth-rotation", "parked-response", "remembered", "remembered-rejected", "remembered-dead", "remembered-background", "keychain-once", "keychain-timeout", "remembered-new-signin", "remembered-expired", "keychain-rotated"]);
 // Set when a scenario simulates Grok Bot deleting its route file mid-run.
 let routeGone = false;
 let opens = 0, keychainReads = 0, descriptorReads = 0, now = 0, eventLoopResponsive = false, signedOutDuringPrompt = false;
@@ -19,6 +27,8 @@ const realRead = fs.readFileSync;
 const missing = (code = "ENOENT") => Object.assign(new Error("fixture unavailable"), { code });
 mock.module("node:fs", () => ({
   ...fs,
+  statSync: (path: any, ...args: any[]) =>
+    String(path).endsWith("/Grok Bot/desktop-status.json") ? { mtimeMs: statusStamp } : (fs.statSync as any)(path, ...args),
   existsSync: (path: any) => String(path).endsWith("/Grok Bot/gateway-descriptor.json") && existing.has(scenario) && !routeGone,
   readFileSync: (path: any, ...args: any[]) => {
     const name = String(path);
@@ -47,7 +57,7 @@ mock.module("node:child_process", () => ({
       keychainReads++;
       const code = scenario === "keychain-denied" ? 128 : scenario === "keychain-missing" ? 44 : undefined;
       const error = code ? Object.assign(new Error("DO_NOT_LOG_SECRET"), { code, stdout: "DO_NOT_LOG_SECRET" }) : null;
-      const finish = () => done(error, error ? "" : "fixture-key", "");
+      const finish = () => done(error, error ? "" : keychainKey, "");
       if (scenario === "signout-during-keychain") setTimeout(() => { signedOutDuringPrompt = true; finish(); }, 10);
       else if (scenario === "keychain-timeout") { /* the prompt is never answered */ }
       else if (scenario === "keychain-waits") setTimeout(() => { eventLoopResponsive = true; finish(); }, 10);
@@ -97,7 +107,16 @@ else if (scenario.startsWith("remembered")) {
   const first = await call();
   routeGone = true;
   now += 61_000;
+  if (scenario === "remembered-new-signin") statusStamp = 2; // signed out, then in again
+  if (scenario === "remembered-expired") now += 12 * 60 * 60_000;
   results = [first, await (scenario === "remembered-background" ? withoutWaking(call) : call())];
+}
+else if (scenario === "keychain-rotated") {
+  const first = await call();
+  keychainKey = "reinstalled-key";
+  descriptor = descriptorFor(keychainKey);
+  now += 61_000;
+  results = [first, await call()];
 }
 else if (scenario === "keychain-once") {
   const first = await call();

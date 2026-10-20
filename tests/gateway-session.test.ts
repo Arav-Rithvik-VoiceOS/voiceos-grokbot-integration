@@ -190,3 +190,26 @@ test("an unanswered Keychain prompt fails the request with guidance instead of h
   expect(out.results[0].error.kind).toBe("session_unavailable");
   expect(out.results[0].error.message).toContain("Keychain popup");
 });
+
+test("a remembered route from an earlier sign-in is never reused", () => {
+  // Signing out and back in (maybe as another account) rewrites the status
+  // file; the old account's token must not go to the old computer.
+  const out = run("remembered-new-signin");
+  expect(out.requests).toHaveLength(1);
+  expect(out.opens).toBe(1);
+  expect(out.results[1].error.message).toContain("message any bot");
+});
+
+test("a remembered route older than the token's lifetime is forgotten", () => {
+  const out = run("remembered-expired");
+  expect(out.requests).toHaveLength(1);
+  expect(out.opens).toBe(1);
+  expect(out.results[1].error.message).toContain("message any bot");
+});
+
+test("a new Safe Storage key after a reinstall is read again without failing the request", () => {
+  const out = run("keychain-rotated");
+  expect(out.results.every((result: unknown) => Array.isArray(result))).toBe(true);
+  expect(out.keychainReads).toBe(2);
+  expect(out.requests).toHaveLength(2);
+});

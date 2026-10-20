@@ -14,7 +14,7 @@
  * user's OWN session on the user's OWN Mac. See SPIKE.md for the proof run and
  * PLAN.md for the design.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -117,8 +117,21 @@ const CREDS_TTL_MS = 60_000;
  * request with no file would be stuck, because waking the computer needs the
  * route. The remembered route lets that request send the wake headers itself.
  * Any 401/403, or a network failure on the remembered route, forgets it.
+ * It belongs to one sign-in: a later sign-in (the app rewrites its status
+ * file) or the token's ~12h lifetime passing forgets it too, so a request can
+ * never carry an earlier account's token to that account's computer.
  */
-let rememberedRoute: GatewayCreds | null = null;
+let rememberedRoute: { creds: GatewayCreds; signIn: number | null; at: number } | null = null;
+const REMEMBERED_ROUTE_MAX_AGE_MS = 12 * 60 * 60_000;
+
+/** When the app last wrote its sign-in status; changes on sign-out and sign-in. */
+function signInStamp(): number | null {
+  try {
+    return statSync(DESKTOP_STATUS_PATH).mtimeMs;
+  } catch {
+    return null;
+  }
+}
 
 const DESCRIPTOR_RECOVERY_MS = 5_000;
 let descriptorRecovery: Promise<string> | null = null;
@@ -225,7 +238,7 @@ function waitForKeychain(read: Promise<string>): Promise<string> {
 }
 
 /** Read + decrypt the descriptor into live gateway creds. */
-async function loadCreds(force = false): Promise<GatewayCreds> {
+async function loadCreds(force = false, keyRefreshed = false): Promise<GatewayCreds> {
   if (savedSignIn() === false) {
     forgetSession();
     throw signedOutError();
@@ -235,10 +248,19 @@ async function loadCreds(force = false): Promise<GatewayCreds> {
   }
   // Only user requests may wake a computer the app put to sleep.
   if (rememberedRoute && isWaking() && !hasGatewaySession()) {
-    log("route file missing; trying the remembered route");
-    return { ...rememberedRoute, remembered: true };
+    if (rememberedRoute.signIn === signInStamp() && Date.now() - rememberedRoute.at < REMEMBERED_ROUTE_MAX_AGE_MS) {
+      log("route file missing; trying the remembered route");
+      return { ...rememberedRoute.creds, remembered: true };
+    }
+    log("remembered route is from an earlier sign-in or too old; forgetting it");
+    rememberedRoute = null;
   }
+  // Stamped before the read, so a sign-in landing mid-read can't be credited
+  // to the route that came before it.
+  const signIn = signInStamp();
   const raw = await readDescriptor();
+  // A key cached by an earlier call may predate a reinstall; see the catch.
+  const keyWasCached = masterKeyCache !== null;
   // Keep Keychain failures out of the descriptor-decryption error handler.
   const masterKey = await keychainKey();
   // Sign-out can happen while the user is answering a Keychain prompt.
@@ -284,8 +306,10 @@ async function loadCreds(force = false): Promise<GatewayCreds> {
   } catch (error) {
     // Parse errors can contain decrypted session data. Never log their text.
     log(`descriptor decrypt failed (${error instanceof Error ? error.name : "unknown error"})`);
-    // A reinstalled app writes a new Safe Storage key; read it again next time.
+    // A reinstalled app writes a new Safe Storage key. Read it again now, once,
+    // rather than failing this request with a false "needs a refresh".
     masterKeyCache = null;
+    if (keyWasCached && !keyRefreshed) return loadCreds(force, true);
     throw new IntegrationError(
       "not_connected",
       `${SERVICE_NAME} needs a refresh — open the Grok Bot app, then try again.`,
@@ -294,7 +318,7 @@ async function loadCreds(force = false): Promise<GatewayCreds> {
 
   const creds = { baseUrl, token, networkToken, vncPrimaryUrl, vncForkBaseUrl };
   credsCache = { creds, at: Date.now() };
-  rememberedRoute = creds;
+  rememberedRoute = { creds, signIn, at: Date.now() };
   return creds;
 }
 
