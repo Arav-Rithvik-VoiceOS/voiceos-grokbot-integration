@@ -14,10 +14,13 @@
  * user's OWN session on the user's OWN Mac. See SPIKE.md for the proof run and
  * PLAN.md for the design.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { pbkdf2Sync, createDecipheriv } from "node:crypto";
+import { pbkdf2Sync, createDecipheriv, createHash } from "node:crypto";
 import {
   openComputerWindow as launchComputerWindow,
   validateDesktopWebSocketUrl,
@@ -46,6 +49,7 @@ export type FailureKind =
   | "timeout"
   | "network"
   | "parked" // the cloud box is hibernated and this call did not wake it
+  | "session_unavailable" // a missing local route is not evidence of logout
   | "upstream";
 
 /**
@@ -67,12 +71,25 @@ export class IntegrationError extends Error {
 // ── Local session: descriptor + Keychain → gateway creds ─────────────────────
 
 const DESCRIPTOR_PATH = `${process.env.HOME}/Library/Application Support/Grok Bot/gateway-descriptor.json`;
-/** True once the Grok Bot app has signed in on this Mac (it writes the
- * descriptor then). A file check only: no Keychain read, so no prompt. */
+const DESKTOP_STATUS_PATH = `${process.env.HOME}/Library/Application Support/Grok Bot/desktop-status.json`;
+
+/** Grok Bot removes its transient route when the cloud computer parks. */
 export const hasGatewaySession = () => existsSync(DESCRIPTOR_PATH);
-/** True when the Grok Bot app is installed in either Applications folder. */
+function savedSignIn(): boolean | undefined {
+  try {
+    const status = JSON.parse(readFileSync(DESKTOP_STATUS_PATH, "utf8"));
+    return status.version === 1 && typeof status.signedIn === "boolean" ? status.signedIn : undefined;
+  } catch {
+    return undefined;
+  }
+}
+/** Only the app's explicit signed-out marker proves logout. Older versions
+ * export just a descriptor; when both are absent, sign-in state is unknown. */
+export const grokBotSignIn = (): boolean | undefined => savedSignIn() ?? (hasGatewaySession() ? true : undefined);
+export const hasGrokBotSignIn = grokBotSignIn;
 export const hasGrokBotApp = () =>
   existsSync("/Applications/Grok Bot.app") || existsSync(`${process.env.HOME}/Applications/Grok Bot.app`);
+
 // Chromium "Safe Storage" Keychain item the app writes its master key under.
 const KEYCHAIN_SERVICE = "Grok Bot Safe Storage";
 
@@ -82,81 +99,175 @@ interface GatewayCreds {
   networkToken?: string;
   vncPrimaryUrl?: string; // noVNC viewer URL for the shared cloud computer (port 6080)
   vncForkBaseUrl?: string; // origin that serves every bot's OWN desktop (port 6081), token-addressed
+  remembered?: boolean; // served from memory because the app removed its route file
 }
 
 /**
  * The token rotates (~12h) and the pod host changes per session, so creds are
- * re-derived from disk, not hardcoded. Decrypting on EVERY call would re-spawn
- * `security` each time, so cache briefly and re-derive when the cache is stale
- * or the gateway rejects the token (see gateway()).
+ * re-derived from disk, not hardcoded. Cache briefly and re-derive when the
+ * cache is stale or the gateway rejects the token (see gateway()).
  */
 let credsCache: { creds: GatewayCreds; at: number } | null = null;
 const CREDS_TTL_MS = 60_000;
 
-// `security` exits 44 when the Keychain item does not exist.
-const KEYCHAIN_ITEM_NOT_FOUND = 44;
-let keychainRead: Promise<string> | null = null;
-
 /**
- * The Chromium master key, read from the login Keychain.
- *
- * Async on purpose. The first read raises the one-time macOS "Allow / Always
- * Allow" prompt, and `security` does not return until the user answers. The
- * boot-time intent refresh reaches this before the host's `initialize`, so a
- * sync spawn froze the event loop, the handshake timed out, and the host
- * dropped the server — taking the prompt with it. Concurrent callers share one
- * read, so the user gets one prompt, not one per caller.
+ * The last route that decrypted, kept in memory only: never written or logged.
+ * Grok Bot deletes its route file when its cloud computer sleeps, and writes a
+ * new one only when the app reconnects while the computer is awake. A user
+ * request with no file would be stuck, because waking the computer needs the
+ * route. The remembered route lets that request send the wake headers itself.
+ * Any 401/403, or a network failure on the remembered route, forgets it.
+ * It belongs to one sign-in: a later sign-in (the app rewrites its status
+ * file) or the token's ~12h lifetime passing forgets it too, so a request can
+ * never carry an earlier account's token to that account's computer.
  */
+let rememberedRoute: { creds: GatewayCreds; signIn: number | null; at: number } | null = null;
+const REMEMBERED_ROUTE_MAX_AGE_MS = 12 * 60 * 60_000;
+
+/** When the app last wrote its sign-in status; changes on sign-out and sign-in. */
+function signInStamp(): number | null {
+  try {
+    return statSync(DESKTOP_STATUS_PATH).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+const DESCRIPTOR_RECOVERY_MS = 5_000;
+let descriptorRecovery: Promise<string> | null = null;
+
+/** The Safe Storage key never changes, so one read serves the whole process.
+ * Re-reading it with every creds refresh re-prompted users who clicked
+ * "Allow" instead of "Always Allow" once a minute. */
+let masterKeyCache: string | null = null;
+let keychainRead: Promise<string> | null = null;
+/** A hidden prompt must not hold a request until VoiceOS cancels it (60 s).
+ * The read itself keeps waiting, so answering the prompt late still helps. */
+const KEYCHAIN_WAIT_MS = 30_000;
+
+function signedOutError(): IntegrationError {
+  return new IntegrationError("setup", `${SERVICE_NAME} is signed out. Open the Grok Bot app and sign in, then try again.`);
+}
+
+function descriptorUnavailable(error: unknown): IntegrationError {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  log(`gateway descriptor unavailable (${code ?? "read failed"})`);
+  if (code !== "ENOENT") {
+    return new IntegrationError("session_unavailable", `${SERVICE_NAME}'s local connection file could not be read. Open the Grok Bot app and try again.`);
+  }
+  const signedIn = savedSignIn();
+  if (signedIn === false) return signedOutError();
+  return new IntegrationError(
+    signedIn === true && !isWaking() ? "parked" : "session_unavailable",
+    // Restarting alone is not enough: the app writes the route only when it
+    // connects while the cloud computer is awake, and messaging a bot wakes it.
+    `${SERVICE_NAME}'s local connection is off. Open Grok Bot and message any bot, then quit Grok Bot and open it again.`,
+  );
+}
+
+function forgetSession(): void {
+  credsCache = null;
+  rememberedRoute = null;
+}
+
+/** User requests share one bounded recovery; background refreshes never join
+ * it or launch the app. Re-read the route after opening the existing session. */
+async function readDescriptor(): Promise<string> {
+  try {
+    return readFileSync(DESCRIPTOR_PATH, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" || !isWaking() || savedSignIn() === false) {
+      throw descriptorUnavailable(error);
+    }
+  }
+  descriptorRecovery ??= (async () => {
+    openGrokBotApp();
+    const deadline = Date.now() + DESCRIPTOR_RECOVERY_MS;
+    for (;;) {
+      if (savedSignIn() === false) throw signedOutError();
+      try {
+        return readFileSync(DESCRIPTOR_PATH, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" || Date.now() >= deadline) {
+          throw descriptorUnavailable(error);
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  })().finally(() => { descriptorRecovery = null; });
+  return descriptorRecovery;
+}
+
+/** Async so a first-time Keychain prompt cannot block the MCP handshake.
+ * Concurrent reads share one prompt; denial is not evidence of signing out. */
 function keychainKey(): Promise<string> {
+  if (masterKeyCache) return Promise.resolve(masterKeyCache);
   keychainRead ??= new Promise<string>((resolve, reject) => {
-    // Absolute path: the VoiceOS-spawned sandbox resets PATH, so a bare
-    // `security` is "command not found". GROKBOT_SECURITY_BIN is a test seam.
     execFile(
       process.env.GROKBOT_SECURITY_BIN || "/usr/bin/security",
       ["find-generic-password", "-w", "-s", KEYCHAIN_SERVICE],
       { encoding: "utf8" },
       (error, stdout) => {
         if (!error) return resolve(stdout.trim());
-        log("keychain read failed:", error);
-        reject(
-          error.code === KEYCHAIN_ITEM_NOT_FOUND
-            ? new IntegrationError(
-                "setup",
-                `${SERVICE_NAME} isn't set up on this Mac yet. Open the Grok Bot app and sign in, then try again.`,
-              )
-            : new IntegrationError(
-                "setup",
-                `${SERVICE_NAME} needs Keychain access. Try again and click Always Allow when macOS asks.`,
-              ),
-        );
+        // Errors may include captured secrets, so log only the exit code.
+        log(`keychain read failed (${String(error.code ?? error.name)})`);
+        reject(new IntegrationError(
+          "session_unavailable",
+          error.code === 44
+            ? `${SERVICE_NAME}'s saved session key is unavailable. Open the Grok Bot app to refresh its connection, then try again.`
+            : `${SERVICE_NAME} needs Keychain access. Try again and click Always Allow when macOS asks.`,
+        ));
       },
     );
-  }).finally(() => {
-    keychainRead = null;
+  }).then((key) => (masterKeyCache = key)).finally(() => { keychainRead = null; });
+  return waitForKeychain(keychainRead);
+}
+
+function waitForKeychain(read: Promise<string>): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const waited = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      log("keychain read still waiting; is the macOS prompt hidden?");
+      reject(new IntegrationError(
+        "session_unavailable",
+        `${SERVICE_NAME} is waiting for Keychain access. Look for the macOS Keychain popup, click Always Allow, then try again.`,
+      ));
+    }, KEYCHAIN_WAIT_MS);
   });
-  return keychainRead;
+  return Promise.race([read, waited]).finally(() => clearTimeout(timer));
 }
 
 /** Read + decrypt the descriptor into live gateway creds. */
-async function loadCreds(force = false): Promise<GatewayCreds> {
+async function loadCreds(force = false, keyRefreshed = false): Promise<GatewayCreds> {
+  if (savedSignIn() === false) {
+    forgetSession();
+    throw signedOutError();
+  }
   if (!force && credsCache && Date.now() - credsCache.at < CREDS_TTL_MS) {
     return credsCache.creds;
   }
-
-  let raw: string;
-  try {
-    raw = readFileSync(DESCRIPTOR_PATH, "utf8");
-  } catch {
-    // No descriptor → the app has never run / signed in on this account.
-    throw new IntegrationError(
-      "setup",
-      `${SERVICE_NAME} isn't signed in on this Mac. Open the Grok Bot app and sign in, then try again.`,
-    );
+  // Only user requests may wake a computer the app put to sleep.
+  if (rememberedRoute && isWaking() && !hasGatewaySession()) {
+    if (rememberedRoute.signIn === signInStamp() && Date.now() - rememberedRoute.at < REMEMBERED_ROUTE_MAX_AGE_MS) {
+      log("route file missing; trying the remembered route");
+      return { ...rememberedRoute.creds, remembered: true };
+    }
+    log("remembered route is from an earlier sign-in or too old; forgetting it");
+    rememberedRoute = null;
   }
-
-  // Outside the try below: its catch would turn a Keychain error into the
-  // wrong "needs a refresh" message.
+  // Stamped before the read, so a sign-in landing mid-read can't be credited
+  // to the route that came before it.
+  const signIn = signInStamp();
+  const raw = await readDescriptor();
+  // A key cached by an earlier call may predate a reinstall; see the catch.
+  const keyWasCached = masterKeyCache !== null;
+  // Keep Keychain failures out of the descriptor-decryption error handler.
   const masterKey = await keychainKey();
+  // Sign-out can happen while the user is answering a Keychain prompt.
+  if (savedSignIn() === false) {
+    forgetSession();
+    throw signedOutError();
+  }
 
   let baseUrl: string;
   let token: string;
@@ -193,7 +304,12 @@ async function loadCreds(force = false): Promise<GatewayCreds> {
     vncPrimaryUrl = creds.vncProxy?.primaryUrl;
     vncForkBaseUrl = creds.vncProxy?.forkBaseUrl?.replace(/\/$/, "");
   } catch (error) {
-    log("descriptor decrypt failed:", error);
+    // Parse errors can contain decrypted session data. Never log their text.
+    log(`descriptor decrypt failed (${error instanceof Error ? error.name : "unknown error"})`);
+    // A reinstalled app writes a new Safe Storage key. Read it again now, once,
+    // rather than failing this request with a false "needs a refresh".
+    masterKeyCache = null;
+    if (keyWasCached && !keyRefreshed) return loadCreds(force, true);
     throw new IntegrationError(
       "not_connected",
       `${SERVICE_NAME} needs a refresh — open the Grok Bot app, then try again.`,
@@ -202,6 +318,7 @@ async function loadCreds(force = false): Promise<GatewayCreds> {
 
   const creds = { baseUrl, token, networkToken, vncPrimaryUrl, vncForkBaseUrl };
   credsCache = { creds, at: Date.now() };
+  rememberedRoute = { creds, signIn, at: Date.now() };
   return creds;
 }
 
@@ -421,16 +538,21 @@ export async function gateway<T = unknown>(
     if (curled) {
       status = curled.status;
       text = curled.text;
+    } else if (creds.remembered && !_retried) {
+      // The remembered route is gone; fall back to the app's own recovery.
+      rememberedRoute = null;
+      return gateway<T>(command, body, { timeoutMs, _retried: true });
     } else {
       throw classifyThrown(error, timeoutMs);
     }
   }
 
-  log(`${command} → ${status} in ${Math.round(performance.now() - started)}ms`);
+  log(`${command} → ${status} in ${Math.round(performance.now() - started)}ms${creds.remembered ? " (remembered route)" : ""}`);
 
   if (status === 401 || status === 403) {
+    // The remembered route holds this token (or an older one): drop both.
+    forgetSession();
     if (!_retried) {
-      credsCache = null;
       return gateway<T>(command, body, { timeoutMs, _retried: true });
     }
     throw new IntegrationError(
@@ -527,8 +649,13 @@ export interface Agent {
   description?: string;
   title?: string;
   avatarDataUrl?: string | null;
+  /** Set when the bot wears a picture instead of its shape (Grok Bot's own test). */
+  avatarVersion?: string | null;
   avatarShape?: string | null;
   avatarColor?: string | null;
+  /** Ours, not the gateway's: the bot's picture as a small data: URI, filled in
+   * by listAgents (see "Bot pictures" below). Absent → draw the shape. */
+  avatarImage?: string;
   isGroup?: boolean;
   memberIds?: string[];
   isRunning?: boolean;
@@ -569,7 +696,157 @@ export interface TranscriptEntry {
 }
 
 export async function listAgents() {
-  return gateway<Agent[]>("listAgents", {});
+  return withAvatarImages(await gateway<Agent[]>("listAgents", {}));
+}
+
+// ── Bot pictures ─────────────────────────────────────────────────────────────
+//
+// A Grok Bot user can give a bot a picture instead of its shape. The app's own
+// rule (its roster code): a bot has a picture when avatarDataUrl or
+// avatarVersion is set. avatarDataUrl, when present, IS the picture; otherwise
+// the app asks the gateway's getAgentAvatar → { dataUrl, version } (a
+// "background" command: it never wakes a parked computer) and caches it per
+// version. We do the same. Cards cannot reach the network, so the picture
+// travels inside the card as a data: URI, center-cropped to 72px (36px avatars
+// at 2x) with macOS's sips: PNG when it has transparency, JPEG otherwise.
+// Only inline raster images are used; anything else keeps the shape.
+
+export const getAgentAvatar = (id: string) =>
+  gateway<{ dataUrl?: string | null; version?: string | null } | null>("getAgentAvatar", { id });
+
+const AVATAR_PX = 72;
+const AVATAR_SOURCE_MAX_BYTES = 8 * 1024 * 1024;
+/** A shrunk picture over this many characters is not used (the shape is). */
+export const AVATAR_IMAGE_MAX_CHARS = 24_000;
+/** How long one roster read waits for pictures it has not seen yet. Loads
+ * that miss it keep going and land in the cache for the next read. */
+const AVATAR_WAIT_MS = 1_200;
+const AVATAR_RETRY_MS = 5 * 60_000;
+const AVATAR_CACHE_MAX = 200;
+/** key (bot id + picture version) → data URI, or null: no usable picture. */
+const avatarCache = new Map<string, string | null>();
+const avatarLoads = new Map<string, Promise<string | null>>();
+const avatarFailures = new Map<string, number>();
+/** Grok Bot's own sidebar fetches at most 3 pictures at a time. */
+let avatarSlots = 3;
+const avatarQueue: (() => void)[] = [];
+
+const hasPicture = (a: Agent) => !a.isGroup && (!!a.avatarDataUrl || !!a.avatarVersion);
+const pictureKey = (a: Agent) => [a.id, a.avatarVersion ?? "",
+  a.avatarDataUrl ? createHash("sha1").update(a.avatarDataUrl).digest("hex") : ""].join("\n");
+
+async function inAvatarSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (avatarSlots === 0) await new Promise<void>((resolve) => avatarQueue.push(resolve));
+  else avatarSlots--;
+  try {
+    return await work();
+  } finally {
+    const next = avatarQueue.shift();
+    if (next) next();
+    else avatarSlots++;
+  }
+}
+
+function sips(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("/usr/bin/sips", args, { encoding: "utf8", timeout: 5_000 }, (error, stdout) =>
+      error ? reject(error) : resolve(stdout));
+  });
+}
+
+/** An inline picture → a small square data: URI, or null when it is not a
+ * raster image sips can read. Never logs the picture or where it came from. */
+export async function shrinkAvatar(dataUrl: string): Promise<string | null> {
+  const head = /^data:image\/(?:png|jpe?g|gif|webp|heic|heif|tiff|bmp);base64,/i.exec(dataUrl);
+  if (!head) {
+    log("bot picture skipped: not an inline raster image");
+    return null;
+  }
+  const bytes = Buffer.from(dataUrl.slice(head[0].length), "base64");
+  if (bytes.length === 0 || bytes.length > AVATAR_SOURCE_MAX_BYTES) return null;
+  const dir = await mkdtemp(join(tmpdir(), "grokbot-avatar-"));
+  try {
+    const src = join(dir, "source");
+    await writeFile(src, bytes);
+    const info = await sips(["-g", "pixelWidth", "-g", "pixelHeight", "-g", "hasAlpha", src]);
+    const width = Number(/pixelWidth: (\d+)/.exec(info)?.[1]);
+    const height = Number(/pixelHeight: (\d+)/.exec(info)?.[1]);
+    if (!width || !height) return null;
+    const alpha = /hasAlpha: yes/.test(info);
+    const side = Math.min(width, height);
+    const size = Math.min(AVATAR_PX, side);
+    // Resample first (short side → size), then crop the middle square: sips
+    // applies the two in its own order within one call, so they are two calls.
+    let scaled = src;
+    if (side > size) {
+      scaled = join(dir, "scaled");
+      await sips(["-z", String(Math.round((height * size) / side)), String(Math.round((width * size) / side)), src, "--out", scaled]);
+    }
+    const out = join(dir, alpha ? "out.png" : "out.jpg");
+    await sips(["-c", String(size), String(size), "-s", "format", alpha ? "png" : "jpeg",
+      ...(alpha ? [] : ["-s", "formatOptions", "82"]), scaled, "--out", out]);
+    const uri = `data:image/${alpha ? "png" : "jpeg"};base64,${(await readFile(out)).toString("base64")}`;
+    return uri.length <= AVATAR_IMAGE_MAX_CHARS ? uri : null;
+  } catch (error) {
+    log(`bot picture could not be read (${error instanceof Error ? error.name : "error"})`);
+    return null;
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function loadPicture(a: Agent): Promise<string | null> {
+  const source = a.avatarDataUrl || (await inAvatarSlot(() => getAgentAvatar(a.id)))?.dataUrl;
+  return typeof source === "string" && source ? shrinkAvatar(source) : null;
+}
+
+function rememberPicture(key: string, uri: string | null): void {
+  avatarCache.delete(key);
+  avatarCache.set(key, uri);
+  if (avatarCache.size > AVATAR_CACHE_MAX) avatarCache.delete(avatarCache.keys().next().value!);
+}
+
+/** Fills `avatarImage` on bots that wear a picture. Cached pictures land at
+ * once; new ones get AVATAR_WAIT_MS, then the roster goes out without them
+ * (those bots show their shape this time). A failed read waits a few minutes
+ * before it is tried again. */
+export async function withAvatarImages(agents: Agent[]): Promise<Agent[]> {
+  if (!Array.isArray(agents)) return agents;
+  const pending: Promise<void>[] = [];
+  let waiting = true;
+  for (const a of agents) {
+    if (!a || typeof a !== "object" || !hasPicture(a)) continue;
+    const key = pictureKey(a);
+    if (avatarCache.has(key)) {
+      const uri = avatarCache.get(key);
+      if (uri) a.avatarImage = uri;
+      continue;
+    }
+    if (Date.now() - (avatarFailures.get(key) ?? 0) < AVATAR_RETRY_MS) continue;
+    let load = avatarLoads.get(key);
+    if (!load) {
+      load = loadPicture(a)
+        .then((uri) => { rememberPicture(key, uri); avatarFailures.delete(key); return uri; })
+        .catch(() => { avatarFailures.set(key, Date.now()); return null; })
+        .finally(() => avatarLoads.delete(key));
+      avatarLoads.set(key, load);
+    }
+    pending.push(load.then((uri) => { if (uri && waiting) a.avatarImage = uri; }));
+  }
+  if (pending.length) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([Promise.all(pending), new Promise((resolve) => { timer = setTimeout(resolve, AVATAR_WAIT_MS); })]);
+    clearTimeout(timer);
+    waiting = false;
+  }
+  return agents;
+}
+
+/** Tests only: forget every cached picture. */
+export function resetAvatarCache(): void {
+  avatarCache.clear();
+  avatarLoads.clear();
+  avatarFailures.clear();
 }
 
 // ── Automations (Grok's name for scheduled tasks) ────────────────────────────

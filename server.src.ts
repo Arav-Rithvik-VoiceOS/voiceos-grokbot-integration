@@ -15,11 +15,12 @@ import { z } from "zod";
 import {
   IntegrationError,
   withoutWaking,
+  isWaking,
   SERVICE_NAME,
   TOOLKIT,
   type Agent,
   createAgent,
-  hasGatewaySession,
+  grokBotSignIn,
   hasGrokBotApp,
   createGroup,
   setGroupMembers,
@@ -44,7 +45,7 @@ import { recordCardPoll, cardCovers } from "./cardWatch.ts";
 import { RFB_B64 } from "./assets.generated.ts";
 import { connectCard, guideCard, showCard, type ShowOpen, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
-import { PREPARE_DESCRIPTION, SEND_DESCRIPTION, SEND_BOT_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
+import { PREPARE_DESCRIPTION, SEND_MODEL_DESCRIPTION, SEND_BOT_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 import { conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
 import { needsAttention, toCardThread, type CardItem } from "./conversation.ts";
 import { IntentRoster, registerIntentSupport } from "./intents.ts";
@@ -430,12 +431,18 @@ function startAutomationWatch(): void {
 // ── Failure policy, in one place ─────────────────────────────────────────────
 // Serialize handlers so batched tool calls can't interleave shared state.
 let _toolChain: Promise<unknown> = Promise.resolve();
+// Automatic card refreshes may use a live route, but must not reopen the app.
+const PASSIVE_TOOLS = new Set([
+  "grokbot_card_snapshot", "grokbot_card_entry", "grokbot_card_image", "grokbot_reply_check",
+]);
 
 async function handle(
   tool: string,
   run: () => Promise<ReturnType<typeof result>>,
 ): Promise<ReturnType<typeof result>> {
-  const turn = _toolChain.then(() => runTool(tool, run));
+  const turn = _toolChain.then(() => PASSIVE_TOOLS.has(tool)
+    ? withoutWaking(() => runTool(tool, run))
+    : runTool(tool, run));
   _toolChain = turn.then(() => undefined, () => undefined);
   return turn;
 }
@@ -450,7 +457,7 @@ async function runTool(
     log(`${tool} failed:`, error);
     // "Not set up / needs a refresh" isn't a crash — it's the first-run state.
     // Speak the fix, open the app, and show the Connect card. No OAuth page.
-    if (error instanceof IntegrationError && (error.kind === "setup" || error.kind === "not_connected")) {
+    if (isWaking() && error instanceof IntegrationError && (error.kind === "setup" || error.kind === "not_connected")) {
       openGrokBotApp();
       return result({ ok: false, needsSetup: true, message: error.message }, connectCard());
     }
@@ -625,7 +632,7 @@ server.registerTool(
   },
   async (args: { page?: "setup" | "keychain" | "ideas" }) =>
     handle("grokbot_help", async () => {
-      const signedIn = hasGatewaySession();
+      const signedIn = grokBotSignIn();
       let agents: Agent[] = [];
       let bots: number | undefined;
       if (signedIn) {
@@ -643,8 +650,8 @@ server.registerTool(
         }
       }
       // A signed-in session proves the app is there even if it lives elsewhere.
-      const setup = { app: hasGrokBotApp() || signedIn, signedIn, ...(bots === undefined ? {} : { bots }), notifications: notificationsEnabled() };
-      const done: Record<string, boolean> = { app: setup.app, signedIn, bots: (bots ?? 0) > 0, notifications: setup.notifications };
+      const setup = { app: hasGrokBotApp() || signedIn === true, signedIn, ...(bots === undefined ? {} : { bots }), notifications: notificationsEnabled() };
+      const done: Record<string, boolean> = { app: setup.app, signedIn: signedIn === true, bots: (bots ?? 0) > 0, notifications: setup.notifications };
       const steps = HELP_STEPS.map((s) => ({ step: s.text, done: done[s.key], ...("optional" in s ? { optional: true } : {}) }));
       const next = steps.find((s) => !s.done && !s.optional);
       return result(
@@ -714,7 +721,8 @@ const threadTool = server.registerTool(
   async (args: { bot: string; limit?: number; show?: boolean }) =>
     handle("grokbot_thread", async () => {
       const agents = await listAgents();
-      const bot = await resolveAgent(args.bot.trim(), agents);
+      const botRef = args.bot.trim();
+      const bot = agents.find(agent => agent.id === botRef) ?? await resolveAgent(botRef, agents);
       const tail = await transcriptTail(bot.id, args.limit ?? 20);
       const entries = tail.entries ?? [];
       const { thread, truncated } = threadForModel(bot, entries);
@@ -723,6 +731,7 @@ const threadTool = server.registerTool(
       return result(
         {
           bot: bot.name,
+          botId: bot.id,
           messages: thread.length,
           thread,
           truncated,
@@ -808,7 +817,7 @@ async function performSend(botRef: string, rawMessage: string | undefined) {
   }
 
   await sendToBot(bot, message);
-  return result({ sent: true, bot: bot.name, sentMessage: message, message: `Sent your message to ${bot.name}.` });
+  return result({ sent: true, bot: bot.name, botId: bot.id, sentMessage: message, message: `Sent your message to ${bot.name}.` });
 }
 
 /** Send once to one bot and start the reply watch. `base` is a transcript
@@ -830,8 +839,8 @@ async function sendToBot(bot: Agent, message: string, base?: { entries?: Transcr
 const sendTool = server.registerTool(
   "grokbot_send",
   {
-    title: "Send to a bot",
-    description: SEND_DESCRIPTION,
+    title: "Message a bot",
+    description: SEND_MODEL_DESCRIPTION,
     inputSchema: {
       confirmationContext: z.string().optional().describe(CONTEXT_DESCRIPTION),
       bot: z.string().describe(SEND_BOT_DESCRIPTION),
@@ -855,12 +864,12 @@ const sendTool = server.registerTool(
       // message, which arrives as the fly-in and the live chat's next refresh.
       const tail = await transcriptTail(bot.id, 20);
       if (!text) {
-        return result({ opened: true, sent: false, bot: bot.name, message: `Opened ${bot.name}. Nothing was sent.` },
+        return result({ opened: true, sent: false, bot: bot.name, botId: bot.id, message: `Opened ${bot.name}. Nothing was sent.` },
           await conversationCard(agents, { bot: bot.id }, tail));
       }
       await sendToBot(bot, text, tail);
       return result(
-        { sent: true, bot: bot.name, sentMessage: text, message: `Sent your message to ${bot.name}.` },
+        { sent: true, bot: bot.name, botId: bot.id, sentMessage: text, message: `Sent your message to ${bot.name}.` },
         await conversationCard(agents, { bot: bot.id }, tail, text, true),
       );
     }),

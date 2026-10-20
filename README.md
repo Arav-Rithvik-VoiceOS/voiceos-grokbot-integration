@@ -3,6 +3,27 @@
 The bare-bones starting point for every VoiceOS integration. Copy this folder,
 rename it, fill in every `{{PLACEHOLDER}}`, and you have a working voice tool.
 
+## Canonical Grok Bot source
+
+Maintain this integration in
+[`Arav-Rithvik-VoiceOS/voiceos-grokbot-integration`](https://github.com/Arav-Rithvik-VoiceOS/voiceos-grokbot-integration).
+VoiceOS production must track a reviewed revision from that repository, with
+its maintained source, generated runtime, version, and release hashes updated
+together. Personal copies are not release sources. Fixes made for production
+must also be proposed here; see [AGENTS.md](AGENTS.md) for the release contract.
+
+## Grok Bot connection compatibility
+
+Grok Bot deletes its local route file (`gateway-descriptor.json`) when its cloud
+computer goes to sleep, and writes a new one only when the app connects while
+that computer is awake. Restarting Grok Bot while the computer sleeps does not
+bring the file back (checked live on 0.71.2, 2026-10-19).
+
+The integration keeps the last working route in memory only, so a user request
+can still wake the computer after the file is gone. If that route is rejected or
+unreachable, open Grok Bot and message any bot to wake its computer, then quit
+Grok Bot (Cmd+Q) and open it again. Background reads never wake the computer.
+
 ## Grok Bot setup: the Keychain popup
 
 The first time you use Grok Bot in VoiceOS, macOS asks for access to
@@ -76,7 +97,9 @@ The template ships one read tool (`list_items`) and one write tool
 (`create_item`) to show both shapes. Replace them with real ones. For each tool:
 
 - Declare it in the manifest (name, title, description, inputSchema).
-- Register it in `server.ts` with the **same name and wording**.
+- Register it in `server.ts` with the **same name**. A tool the user sees may
+  have a short manifest description and a longer routing description on the
+  server (see the rule below).
 - Give it a card in `cards.ts`.
 - If it acts on the user's behalf, add a `confirmation` card in the manifest.
   Read-only tools must not have one.
@@ -114,6 +137,11 @@ Composio is the auth + API transport. You never handle OAuth tokens yourself:
 
 - **Tool descriptions are routing rules.** Say what it does AND when to use it
   ("Use when the user asks …").
+  A tool the user can see keeps the manifest text short and plain (one or two
+  short sentences, like the Claude Code and Manus integrations). The longer
+  "Use when …" text lives on the server's `registerTool` description (the MCP
+  `tools/list` text). Tools with `"visibility": "agent"` are never shown to the user,
+  so their manifest text can stay long.
 - **Every result carries JSON for the model AND a card for the user.** Never
   put information only in the card.
 - **Cards are a 2-second read.** Max 3 blocks. Trim strings before the kit does.
