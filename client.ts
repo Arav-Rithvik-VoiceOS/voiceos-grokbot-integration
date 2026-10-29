@@ -14,7 +14,7 @@
  * user's OWN session on the user's OWN Mac. See SPIKE.md for the proof run and
  * PLAN.md for the design.
  */
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,6 +50,7 @@ export type FailureKind =
   | "network"
   | "parked" // the cloud box is hibernated and this call did not wake it
   | "session_unavailable" // a missing local route is not evidence of logout
+  | "reconnect" // no usable route and the box will not wake: the user must message a bot in Grok Bot, then reconnect
   | "upstream";
 
 /**
@@ -111,27 +112,76 @@ let credsCache: { creds: GatewayCreds; at: number } | null = null;
 const CREDS_TTL_MS = 60_000;
 
 /**
- * The last route that decrypted, kept in memory only: never written or logged.
- * Grok Bot deletes its route file when its cloud computer sleeps, and writes a
- * new one only when the app reconnects while the computer is awake. A user
- * request with no file would be stuck, because waking the computer needs the
- * route. The remembered route lets that request send the wake headers itself.
- * Any 401/403, or a network failure on the remembered route, forgets it.
- * It belongs to one sign-in: a later sign-in (the app rewrites its status
- * file) or the token's ~12h lifetime passing forgets it too, so a request can
- * never carry an earlier account's token to that account's computer.
+ * The last route that decrypted. Grok Bot deletes its route file the moment
+ * its cloud computer parks, and writes it again only when the app is relaunched
+ * while the computer is awake (its "kept asleep" flag resets only on an account
+ * change). A user request with no file would be stuck, because waking the
+ * computer needs the route. The remembered route lets that request send the
+ * wake headers itself.
+ *
+ * It is kept in memory AND as a copy on disk (VOS-1608): the memory alone was
+ * lost on every VoiceOS restart, which is exactly when users hit "connection
+ * is off". The copy is the app's own entry, still encrypted with the app's
+ * Safe Storage key — never the decrypted route — so it is as safe at rest as
+ * the app's file. It stays tied to the account label the app wrote into its
+ * file, and expires on the app's own clock: 7 days after the app saved it
+ * (the app trusts its stored route for exactly that long). Any 401/403, or
+ * the app's signed-out marker, deletes it; a real route file always wins.
  */
-let rememberedRoute: { creds: GatewayCreds; signIn: number | null; at: number } | null = null;
-const REMEMBERED_ROUTE_MAX_AGE_MS = 12 * 60 * 60_000;
+let rememberedRoute: { creds: GatewayCreds; account: string; savedAtMs: number } | null = null;
+/** Grok Bot's own `maxAgeMs` for a stored route (10080 minutes). */
+const ROUTE_LIFE_MS = 7 * 24 * 60 * 60_000;
+const ROUTE_COPY_DIR = `${process.env.HOME}/Library/Application Support/VoiceOS Grok Bot`;
+const ROUTE_COPY_PATH = `${ROUTE_COPY_DIR}/route.json`;
+/** The app's route entry, as saved: `encrypted` is its Safe Storage ciphertext. */
+interface RouteCopy { version: 1; account: string; savedAtMs: number; encrypted: string }
+let lastRouteCopy: string | null = null;
+/** Set when the saved copy failed on the network in this process: the next
+ * attempt goes to the app's own recovery instead of the same dead route. The
+ * copy stays on disk for the next process; Wi-Fi comes back, routes do not. */
+let routeCopySkipped = false;
 
-/** When the app last wrote its sign-in status; changes on sign-out and sign-in. */
-function signInStamp(): number | null {
+function writeRouteCopy(copy: RouteCopy): void {
+  const serialized = JSON.stringify(copy);
+  if (serialized === lastRouteCopy) return;
   try {
-    return statSync(DESKTOP_STATUS_PATH).mtimeMs;
+    if (readFileSync(ROUTE_COPY_PATH, "utf8") === serialized) {
+      lastRouteCopy = serialized;
+      return;
+    }
+  } catch { /* no copy yet, or unreadable: write it */ }
+  try {
+    mkdirSync(ROUTE_COPY_DIR, { recursive: true, mode: 0o700 });
+    const tmp = `${ROUTE_COPY_PATH}.tmp`;
+    writeFileSync(tmp, serialized, { mode: 0o600 });
+    renameSync(tmp, ROUTE_COPY_PATH);
+    lastRouteCopy = serialized;
+  } catch (error) {
+    log(`route copy not saved (${(error as NodeJS.ErrnoException)?.code ?? "write failed"})`);
+  }
+}
+
+function deleteRouteCopy(): void {
+  lastRouteCopy = null;
+  try {
+    unlinkSync(ROUTE_COPY_PATH);
+  } catch { /* already gone */ }
+}
+
+function readRouteCopy(): RouteCopy | null {
+  try {
+    const copy = JSON.parse(readFileSync(ROUTE_COPY_PATH, "utf8")) as RouteCopy;
+    if (copy.version !== 1 || typeof copy.account !== "string" || typeof copy.savedAtMs !== "number" || typeof copy.encrypted !== "string") {
+      deleteRouteCopy();
+      return null;
+    }
+    return copy;
   } catch {
     return null;
   }
 }
+
+const routeExpired = (savedAtMs: number) => Date.now() - savedAtMs > ROUTE_LIFE_MS;
 
 const DESCRIPTOR_RECOVERY_MS = 5_000;
 let descriptorRecovery: Promise<string> | null = null;
@@ -157,17 +207,35 @@ function descriptorUnavailable(error: unknown): IntegrationError {
   }
   const signedIn = savedSignIn();
   if (signedIn === false) return signedOutError();
+  if (signedIn === true && !isWaking()) {
+    return new IntegrationError("parked", `${SERVICE_NAME}'s cloud computer is asleep. Open the Grok Bot app to wake it, then try again.`);
+  }
+  if (signedIn === true) return reconnectError();
+  // Sign-in state unknown (older app, unreadable status): say only what is known.
   return new IntegrationError(
-    signedIn === true && !isWaking() ? "parked" : "session_unavailable",
-    // Restarting alone is not enough: the app writes the route only when it
-    // connects while the cloud computer is awake, and messaging a bot wakes it.
+    "session_unavailable",
     `${SERVICE_NAME}'s local connection is off. Open Grok Bot and message any bot, then quit Grok Bot and open it again.`,
   );
 }
 
+/** No route the user's request can use, and the box will not wake on its own.
+ * Relaunching alone is not enough: the app writes the route only when it
+ * connects while the cloud computer is awake, and messaging a bot wakes it.
+ * server.ts shows the Reconnect card for this kind; the card's button does
+ * the quit-and-reopen. */
+function reconnectError(): IntegrationError {
+  return new IntegrationError(
+    "reconnect",
+    `${SERVICE_NAME} needs a quick reconnect. Send any message in Grok Bot, then tap Reconnect.`,
+  );
+}
+
+/** The session is over (signed out, or the gateway refused the token): nothing
+ * remembered may be reused, in memory or on disk. */
 function forgetSession(): void {
   credsCache = null;
   rememberedRoute = null;
+  deleteRouteCopy();
 }
 
 /** User requests share one bounded recovery; background refreshes never join
@@ -247,17 +315,10 @@ async function loadCreds(force = false, keyRefreshed = false): Promise<GatewayCr
     return credsCache.creds;
   }
   // Only user requests may wake a computer the app put to sleep.
-  if (rememberedRoute && isWaking() && !hasGatewaySession()) {
-    if (rememberedRoute.signIn === signInStamp() && Date.now() - rememberedRoute.at < REMEMBERED_ROUTE_MAX_AGE_MS) {
-      log("route file missing; trying the remembered route");
-      return { ...rememberedRoute.creds, remembered: true };
-    }
-    log("remembered route is from an earlier sign-in or too old; forgetting it");
-    rememberedRoute = null;
+  if (isWaking() && !hasGatewaySession()) {
+    const remembered = await rememberedCreds();
+    if (remembered) return remembered;
   }
-  // Stamped before the read, so a sign-in landing mid-read can't be credited
-  // to the route that came before it.
-  const signIn = signInStamp();
   const raw = await readDescriptor();
   // A key cached by an earlier call may predate a reinstall; see the catch.
   const keyWasCached = masterKeyCache !== null;
@@ -269,40 +330,19 @@ async function loadCreds(force = false, keyRefreshed = false): Promise<GatewayCr
     throw signedOutError();
   }
 
-  let baseUrl: string;
-  let token: string;
-  let networkToken: string | undefined;
-  let vncPrimaryUrl: string | undefined;
-  let vncForkBaseUrl: string | undefined;
+  let creds: GatewayCreds;
+  let copy: RouteCopy;
   try {
     const descriptor = JSON.parse(raw) as {
       entries: Record<string, { savedAtMs?: number; encrypted: string }>;
     };
     // One entry today, but pick the freshest defensively.
-    const entry = Object.values(descriptor.entries).sort(
-      (a, b) => (b.savedAtMs ?? 0) - (a.savedAtMs ?? 0),
-    )[0];
+    const [account, entry] = Object.entries(descriptor.entries).sort(
+      ([, a], [, b]) => (b.savedAtMs ?? 0) - (a.savedAtMs ?? 0),
+    )[0] ?? [];
     if (!entry) throw new Error("descriptor has no entries");
-
-    // Chromium Safe Storage v10: PBKDF2-HMAC-SHA1(keychainKey, "saltysalt",
-    // 1003, 16) → AES-128-CBC, IV = 16 spaces, over the blob after the "v10"
-    // prefix. Node's crypto strips the PKCS7 padding for us.
-    const blob = Buffer.from(entry.encrypted, "base64");
-    const aesKey = pbkdf2Sync(masterKey, "saltysalt", 1003, 16, "sha1");
-    const decipher = createDecipheriv("aes-128-cbc", aesKey, Buffer.alloc(16, 0x20));
-    const plain = Buffer.concat([decipher.update(blob.subarray(3)), decipher.final()]).toString("utf8");
-
-    const creds = JSON.parse(plain) as {
-      baseUrl: string;
-      token: string;
-      headers?: Record<string, string>;
-      vncProxy?: { primaryUrl?: string; forkBaseUrl?: string };
-    };
-    baseUrl = creds.baseUrl.replace(/\/$/, "");
-    token = creds.token;
-    networkToken = creds.headers?.["x-anyrun-network-token"];
-    vncPrimaryUrl = creds.vncProxy?.primaryUrl;
-    vncForkBaseUrl = creds.vncProxy?.forkBaseUrl?.replace(/\/$/, "");
+    creds = decryptRoute(entry.encrypted, masterKey);
+    copy = { version: 1, account, savedAtMs: entry.savedAtMs ?? Date.now(), encrypted: entry.encrypted };
   } catch (error) {
     // Parse errors can contain decrypted session data. Never log their text.
     log(`descriptor decrypt failed (${error instanceof Error ? error.name : "unknown error"})`);
@@ -316,10 +356,71 @@ async function loadCreds(force = false, keyRefreshed = false): Promise<GatewayCr
     );
   }
 
-  const creds = { baseUrl, token, networkToken, vncPrimaryUrl, vncForkBaseUrl };
   credsCache = { creds, at: Date.now() };
-  rememberedRoute = { creds, signIn, at: Date.now() };
+  rememberedRoute = { creds, account: copy.account, savedAtMs: copy.savedAtMs };
+  routeCopySkipped = false;
+  writeRouteCopy(copy);
   return creds;
+}
+
+/** Chromium Safe Storage v10: PBKDF2-HMAC-SHA1(keychainKey, "saltysalt",
+ * 1003, 16) → AES-128-CBC, IV = 16 spaces, over the blob after the "v10"
+ * prefix. Node's crypto strips the PKCS7 padding for us. Throws on any
+ * mismatch; callers must never log the error text (it may hold route data). */
+function decryptRoute(encrypted: string, masterKey: string): GatewayCreds {
+  const blob = Buffer.from(encrypted, "base64");
+  const aesKey = pbkdf2Sync(masterKey, "saltysalt", 1003, 16, "sha1");
+  const decipher = createDecipheriv("aes-128-cbc", aesKey, Buffer.alloc(16, 0x20));
+  const plain = Buffer.concat([decipher.update(blob.subarray(3)), decipher.final()]).toString("utf8");
+  const route = JSON.parse(plain) as {
+    baseUrl: string;
+    token: string;
+    headers?: Record<string, string>;
+    vncProxy?: { primaryUrl?: string; forkBaseUrl?: string };
+  };
+  return {
+    baseUrl: route.baseUrl.replace(/\/$/, ""),
+    token: route.token,
+    networkToken: route.headers?.["x-anyrun-network-token"],
+    vncPrimaryUrl: route.vncProxy?.primaryUrl,
+    vncForkBaseUrl: route.vncProxy?.forkBaseUrl?.replace(/\/$/, ""),
+  };
+}
+
+/** The remembered route for a user request while the app's file is gone:
+ * from memory, else from the saved copy on disk. Null when there is none the
+ * request may use (expired, undecryptable, or refused earlier in this process). */
+async function rememberedCreds(): Promise<GatewayCreds | null> {
+  if (rememberedRoute) {
+    if (!routeExpired(rememberedRoute.savedAtMs)) {
+      log("route file missing; trying the remembered route");
+      return { ...rememberedRoute.creds, remembered: true };
+    }
+    log("remembered route is past the app's 7-day route life; forgetting it");
+    rememberedRoute = null;
+    deleteRouteCopy();
+    return null;
+  }
+  if (routeCopySkipped) return null;
+  const copy = readRouteCopy();
+  if (!copy) return null;
+  if (routeExpired(copy.savedAtMs)) {
+    log("saved route copy is past the app's 7-day route life; deleting it");
+    deleteRouteCopy();
+    return null;
+  }
+  try {
+    const creds = decryptRoute(copy.encrypted, await keychainKey());
+    rememberedRoute = { creds, account: copy.account, savedAtMs: copy.savedAtMs };
+    log("route file missing; trying the saved route copy");
+    return { ...creds, remembered: true };
+  } catch (error) {
+    if (error instanceof IntegrationError) throw error; // Keychain: the user can act on it
+    // A reinstalled app has a new Safe Storage key: the copy is unreadable.
+    log(`saved route copy could not be decrypted (${error instanceof Error ? error.name : "unknown error"}); deleting it`);
+    deleteRouteCopy();
+    return null;
+  }
 }
 
 /** The noVNC viewer URL for the shared cloud computer (for the live screen card). */
@@ -392,6 +493,8 @@ const WAKE_HEADERS = {
   "x-anyrun-hibernation-lower-bound-s": "900",
   "x-anyrun-hibernation-upper-bound-s": "18000",
 };
+/** How long a user request may hold while a parked box wakes behind it. */
+const WAKE_TIMEOUT_MS = 45_000;
 const quiet = new AsyncLocalStorage<true>();
 /** Runs background work (polls, watches) without waking a parked box, so it
  * never keeps the box on after the app parks it. It then fails as "parked". */
@@ -514,6 +617,9 @@ export async function gateway<T = unknown>(
 ): Promise<T> {
   const creds = await loadCreds(_retried);
   const started = performance.now();
+  // A route the app removed means its box is asleep, and the proxy holds the
+  // request while the box wakes (7 s measured; the normal read limit is 8 s).
+  if (creds.remembered && isWaking()) timeoutMs = Math.max(timeoutMs, WAKE_TIMEOUT_MS);
 
   let status: number;
   let text: string;
@@ -539,8 +645,10 @@ export async function gateway<T = unknown>(
       status = curled.status;
       text = curled.text;
     } else if (creds.remembered && !_retried) {
-      // The remembered route is gone; fall back to the app's own recovery.
+      // The remembered route is unreachable; fall back to the app's own
+      // recovery. The copy stays on disk for a later process.
       rememberedRoute = null;
+      routeCopySkipped = true;
       return gateway<T>(command, body, { timeoutMs, _retried: true });
     } else {
       throw classifyThrown(error, timeoutMs);
@@ -560,6 +668,9 @@ export async function gateway<T = unknown>(
       `${SERVICE_NAME} rejected the session — open the Grok Bot app to refresh it, then try again.`,
     );
   }
+  // This request asked the proxy to wake the box and it still answered
+  // "asleep": the box will not wake from here. Background reads stay "parked".
+  if (status === 417 && isWaking()) throw reconnectError();
   if (status >= 400) throw classifyStatus(status, text);
 
   try {
@@ -1090,10 +1201,79 @@ export function openBotChat(agentId: string): Promise<void> {
   });
 }
 
+/** The Reconnect card's button (VOS-1608). The app writes its route file only
+ * when it connects while the cloud computer is awake, and it never wakes a
+ * computer it parked unless the user acts in it. So the card asks the user to
+ * message a bot first; this then restarts the app and waits for the file. */
+export async function reconnectGrokBot(): Promise<{ bots: number }> {
+  await quitGrokBotApp();
+  openGrokBotApp();
+  const deadline = Date.now() + BOOT_WAIT_MS;
+  while (!hasGatewaySession()) {
+    if (savedSignIn() === false) throw signedOutError();
+    if (Date.now() >= deadline) {
+      throw new IntegrationError(
+        "reconnect",
+        `${SERVICE_NAME} is still asleep. In Grok Bot, send any message to a bot and wait for its reply, then tap Reconnect again.`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, RECONNECT_POLL_MS));
+  }
+  // Read the fresh file, not the route from before the restart.
+  credsCache = null;
+  rememberedRoute = null;
+  const agents = await listAgents();
+  return { bots: agents.length };
+}
+
+const RECONNECT_POLL_MS = 500;
+const QUIT_POLITE_MS = 4_000;
+const QUIT_WAIT_MS = 8_000;
+
+/** Ask the app to quit, then wait until it is gone, so `open` starts a fresh
+ * process instead of fronting the one still shutting down. The polite request
+ * may stall on macOS's Automation prompt; after a short wait the app's own
+ * pid (from its status file, checked against the live process list) gets a
+ * plain TERM, which Electron treats as quit. */
+async function quitGrokBotApp(): Promise<void> {
+  const polite = new Promise<void>((resolve) => {
+    execFile(process.env.GROKBOT_OSASCRIPT_BIN || "/usr/bin/osascript", ["-e", 'quit app "Grok Bot"'], () => resolve());
+  });
+  await Promise.race([polite, new Promise((resolve) => setTimeout(resolve, QUIT_POLITE_MS))]);
+  const pids = await grokBotPids();
+  if (pids.length === 0) return;
+  const pid = statusPid();
+  if (pid !== null && pids.includes(pid)) {
+    try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
+  }
+  const deadline = Date.now() + QUIT_WAIT_MS;
+  while (Date.now() < deadline && (await grokBotPids()).length > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
+function statusPid(): number | null {
+  try {
+    const status = JSON.parse(readFileSync(DESKTOP_STATUS_PATH, "utf8"));
+    return Number.isInteger(status.pid) ? status.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function grokBotPids(): Promise<number[]> {
+  return new Promise((resolve) => {
+    execFile(process.env.GROKBOT_PGREP_BIN || "/usr/bin/pgrep", ["-x", "Grok Bot"], { encoding: "utf8" }, (error, stdout) => {
+      if (error) return resolve([]); // exit 1: no such process
+      resolve(String(stdout).split("\n").map((line) => Number(line.trim())).filter((pid) => Number.isInteger(pid) && pid > 0));
+    });
+  });
+}
+
 /** Launch the Grok Bot app (used on the setup / not-connected path). */
 export function openGrokBotApp(): void {
   try {
-    execFile("/usr/bin/open", ["-a", "Grok Bot"], () => {});
+    execFile(process.env.GROKBOT_OPEN_BIN || "/usr/bin/open", ["-a", "Grok Bot"], () => {});
   } catch (error) {
     log("could not launch Grok Bot app:", error);
   }

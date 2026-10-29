@@ -16,7 +16,7 @@ test("concurrent user requests recover one missing route without losing sign-in 
   expect(out.results.every((result: unknown) => Array.isArray(result))).toBe(true);
 });
 
-test("a signed-in app without a restored route reports one bounded connection failure", () => {
+test("a signed-in app without a restored route or a saved copy asks for one reconnect", () => {
   const out = run("missing");
   expect(out.signedIn).toBe(true);
   expect(out.opens).toBe(1);
@@ -24,8 +24,8 @@ test("a signed-in app without a restored route reports one bounded connection fa
   expect(out.keychainReads).toBe(0);
   expect(out.requests).toEqual([]);
   for (const result of out.results) {
-    expect(result.error.kind).toBe("session_unavailable");
-    expect(result.error.message).toContain("local connection");
+    expect(result.error.kind).toBe("reconnect");
+    expect(result.error.message).toContain("reconnect");
     expect(result.error.message).not.toMatch(/signed (?:in|out)|log(?:ged)? ?in/i);
   }
 });
@@ -139,9 +139,11 @@ test("a rejected session still refreshes credentials once for a read", () => {
   expect(Array.isArray(out.results[0])).toBe(true);
 });
 
-test("a sleeping gateway is classified as parked instead of signed out", () => {
+test("a box that stays asleep after a user's wake request asks for one reconnect, never a sign-in", () => {
   const out = run("parked-response");
-  expect(out.results[0].error.kind).toBe("parked");
+  expect(out.requests.map((request: any) => request.wake)).toEqual([true, true, true]);
+  expect(out.results[0].error.kind).toBe("reconnect");
+  expect(out.results[0].error.message).not.toMatch(/signed (?:in|out)|log(?:ged)? ?in/i);
   expect(out.signedIn).toBe(true);
 });
 
@@ -153,20 +155,23 @@ test("a removed route file reuses the remembered route so a user request can wak
   expect(out.keychainReads).toBe(1);
 });
 
-test("a rejected remembered route is forgotten and falls back to the guided recovery", () => {
+test("a rejected remembered route is forgotten, on disk too, and asks for one reconnect", () => {
   const out = run("remembered-rejected");
   expect(out.requests).toHaveLength(2);
   expect(out.opens).toBe(1);
-  expect(out.results[1].error.kind).toBe("session_unavailable");
-  expect(out.results[1].error.message).toContain("message any bot");
+  expect(out.results[1].error.kind).toBe("reconnect");
+  expect(out.copyPresent).toBe(false);
 });
 
-test("an unreachable remembered route is forgotten and falls back to the guided recovery", () => {
+test("an unreachable remembered route waits the wake time, then is forgotten and asks for one reconnect", () => {
   const out = run("remembered-dead");
   expect(out.requests).toHaveLength(2);
   expect(out.curls).toHaveLength(1);
+  // A route the app removed means its box is asleep: give the wake 45 s, not 8.
+  expect(out.curls[0]).toContain("--max-time");
+  expect(out.curls[0][out.curls[0].indexOf("--max-time") + 1]).toBe("45");
   expect(out.opens).toBe(1);
-  expect(out.results[1].error.message).toContain("message any bot");
+  expect(out.results[1].error.kind).toBe("reconnect");
 });
 
 test("background reads never use the remembered route to wake a sleeping computer", () => {
@@ -191,20 +196,75 @@ test("an unanswered Keychain prompt fails the request with guidance instead of h
   expect(out.results[0].error.message).toContain("Keychain popup");
 });
 
-test("a remembered route from an earlier sign-in is never reused", () => {
-  // Signing out and back in (maybe as another account) rewrites the status
-  // file; the old account's token must not go to the old computer.
-  const out = run("remembered-new-signin");
-  expect(out.requests).toHaveLength(1);
-  expect(out.opens).toBe(1);
-  expect(out.results[1].error.message).toContain("message any bot");
+test("relaunching the Grok Bot app does not lose the remembered route", () => {
+  // The app rewrites desktop-status.json on EVERY launch, not only on sign-in,
+  // so its modified time says nothing about the account. The route stays tied
+  // to the account label the app wrote into its file instead.
+  const out = run("remembered-app-relaunch");
+  expect(out.results.every((result: unknown) => Array.isArray(result))).toBe(true);
+  expect(out.requests).toHaveLength(2);
+  expect(out.opens).toBe(0);
 });
 
-test("a remembered route older than the token's lifetime is forgotten", () => {
+test("a remembered route older than the app's own 7-day route life is forgotten", () => {
   const out = run("remembered-expired");
   expect(out.requests).toHaveLength(1);
   expect(out.opens).toBe(1);
-  expect(out.results[1].error.message).toContain("message any bot");
+  expect(out.results[1].error.kind).toBe("reconnect");
+  expect(out.copyPresent).toBe(false);
+});
+
+test("a decrypted route is saved to disk as the app wrote it: locked, labelled, never in plain text", () => {
+  const out = run("copy-written");
+  expect(out.results.every((result: unknown) => Array.isArray(result))).toBe(true);
+  // Three concurrent calls share one read, so one write.
+  expect(out.copyWrites).toHaveLength(1);
+  const copy = JSON.parse(out.copyWrites[0]);
+  expect(copy).toMatchObject({ version: 1, account: "fixture", savedAtMs: 1 });
+  expect(typeof copy.encrypted).toBe("string");
+  expect(out.copyWrites[0]).not.toContain("fixture-token");
+  expect(out.copyWrites[0]).not.toContain("gateway.example.invalid");
+});
+
+test("a fresh process with only the saved copy wakes the computer without opening the app", () => {
+  // VoiceOS restarted after the app parked its box and removed the route file:
+  // Maksim's case (VOS-1608). Before this, every request failed here.
+  const out = run("copy-restart");
+  expect(Array.isArray(out.results[0])).toBe(true);
+  expect(out.requests.map((request: any) => request.wake)).toEqual([true]);
+  expect(out.opens).toBe(0);
+  expect(out.elapsed).toBe(0);
+  expect(out.keychainReads).toBe(1);
+  expect(out.copyPresent).toBe(true);
+});
+
+test("a background read never uses the saved copy to wake the computer", () => {
+  const out = run("copy-restart-background");
+  expect(out.requests).toEqual([]);
+  expect(out.results[0].error.kind).toBe("parked");
+  expect(out.opens).toBe(0);
+  expect(out.copyPresent).toBe(true);
+});
+
+test("a saved copy past the app's 7-day route life is deleted, not used", () => {
+  const out = run("copy-restart-expired");
+  expect(out.requests).toEqual([]);
+  expect(out.results[0].error.kind).toBe("reconnect");
+  expect(out.copyPresent).toBe(false);
+});
+
+test("a saved copy is deleted when the app says it is signed out", () => {
+  const out = run("copy-restart-signed-out");
+  expect(out.requests).toEqual([]);
+  expect(out.results[0].error.kind).toBe("setup");
+  expect(out.copyPresent).toBe(false);
+});
+
+test("a saved copy the gateway rejects is deleted and asks for one reconnect", () => {
+  const out = run("copy-restart-rejected");
+  expect(out.requests).toHaveLength(1);
+  expect(out.results[0].error.kind).toBe("reconnect");
+  expect(out.copyPresent).toBe(false);
 });
 
 test("a new Safe Storage key after a reinstall is read again without failing the request", () => {

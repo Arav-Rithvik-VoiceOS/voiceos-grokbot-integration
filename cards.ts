@@ -29,7 +29,7 @@ import { toCardThread, boundThread, type CardItem } from "./conversation.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { GROK_ALL_SHAPE_IDS, type GrokAnyShape, avatarCss } from "./avatarShapes.ts";
 
-type CardName = "connect" | "show" | "create" | "guide";
+type CardName = "connect" | "show" | "create" | "guide" | "reconnect";
 
 /** Swap the widgets' placeholder glyph (`.mark > i`) for the real logo, bare (no
  * tile), per the design handoff. Only the `.mark` glyph is targeted — but the
@@ -494,5 +494,11 @@ export function guideCard(setup: SetupState, bots: Agent[] = [], page: 0 | 1 | 2
 /** connect.html — first-run / needs-sign-in status. */
 export function connectCard(account?: { name?: string; email?: string }) {
   return glance("connect", { data: { account: account ?? { name: "You" } }, args: {} }, 340, "Grok Bot");
+}
+
+/** reconnect.html — the cloud computer is asleep and no saved route can wake
+ * it (VOS-1608). Two steps and one button; the button runs grokbot_reconnect. */
+export function reconnectCard() {
+  return glance("reconnect", { data: {}, args: {} }, 262, "Grok Bot");
 }
 

@@ -15,29 +15,58 @@ function descriptorFor(key: string) {
 // file encrypted with it, appear between two calls.
 let keychainKey = "fixture-key";
 let descriptor = descriptorFor(keychainKey);
-// desktop-status.json's mtime; the app rewrites the file on sign-out and sign-in.
+// desktop-status.json's mtime; the app rewrites the file on every launch.
 let statusStamp = 1;
-const existing = new Set(["legacy", "signed-out-stale", "keychain-denied", "keychain-missing", "keychain-waits", "signout-during-keychain", "bad-plaintext", "wake-headers", "curl-wake-headers", "auth-rotation", "parked-response", "remembered", "remembered-rejected", "remembered-dead", "remembered-background", "keychain-once", "keychain-timeout", "remembered-new-signin", "remembered-expired", "keychain-rotated"]);
+const existing = new Set(["legacy", "signed-out-stale", "keychain-denied", "keychain-missing", "keychain-waits", "signout-during-keychain", "bad-plaintext", "wake-headers", "curl-wake-headers", "auth-rotation", "parked-response", "remembered", "remembered-rejected", "remembered-dead", "remembered-background", "keychain-once", "keychain-timeout", "remembered-app-relaunch", "remembered-expired", "keychain-rotated", "copy-written"]);
 // Set when a scenario simulates Grok Bot deleting its route file mid-run.
 let routeGone = false;
 let opens = 0, keychainReads = 0, descriptorReads = 0, now = 0, eventLoopResponsive = false, signedOutDuringPrompt = false;
 const requests: Array<{ url: string; wake: boolean }> = [];
 const curls: string[][] = [];
+// VoiceOS's own saved copy of the route (the fix for a restart after the app
+// removed its file). Lives under "VoiceOS Grok Bot/route.json"; the fixture
+// keeps it in memory and records every write.
+const COPY_DIR = "/VoiceOS Grok Bot";
+let copyStore: string | null = null;
+const copyWrites: string[] = [];
+const isCopyPath = (path: unknown) => String(path).includes(COPY_DIR);
+if (scenario.startsWith("copy-restart")) {
+  // A fresh process (VoiceOS restarted) finds only the copy: the app deleted
+  // its file when the box parked, before this process ever read it.
+  const entry = JSON.parse(descriptor).entries.fixture;
+  const savedAtMs = scenario === "copy-restart-expired" ? -(8 * 24 * 60 * 60_000) : 1;
+  copyStore = JSON.stringify({ version: 1, account: "fixture", savedAtMs, encrypted: entry.encrypted });
+}
 const realRead = fs.readFileSync;
 const missing = (code = "ENOENT") => Object.assign(new Error("fixture unavailable"), { code });
 mock.module("node:fs", () => ({
   ...fs,
   statSync: (path: any, ...args: any[]) =>
     String(path).endsWith("/Grok Bot/desktop-status.json") ? { mtimeMs: statusStamp } : (fs.statSync as any)(path, ...args),
-  existsSync: (path: any) => String(path).endsWith("/Grok Bot/gateway-descriptor.json") && existing.has(scenario) && !routeGone,
+  existsSync: (path: any) => isCopyPath(path)
+    ? (String(path).endsWith(COPY_DIR) || copyStore !== null)
+    : String(path).endsWith("/Grok Bot/gateway-descriptor.json") && existing.has(scenario) && !routeGone,
+  mkdirSync: (path: any, ...args: any[]) => (isCopyPath(path) ? undefined : (fs.mkdirSync as any)(path, ...args)),
+  writeFileSync: (path: any, data: any, ...args: any[]) => {
+    if (!isCopyPath(path)) return (fs.writeFileSync as any)(path, data, ...args);
+    copyWrites.push(String(data));
+    copyStore = String(data);
+  },
+  renameSync: (from: any, to: any) => { if (!isCopyPath(to)) (fs.renameSync as any)(from, to); },
+  unlinkSync: (path: any) => { if (isCopyPath(path)) copyStore = null; else (fs.unlinkSync as any)(path); },
+  rmSync: (path: any, ...args: any[]) => { if (isCopyPath(path)) copyStore = null; else (fs.rmSync as any)(path, ...args); },
   readFileSync: (path: any, ...args: any[]) => {
     const name = String(path);
+    if (isCopyPath(name)) {
+      if (copyStore === null) throw missing();
+      return copyStore;
+    }
     if (name.endsWith("/Grok Bot/desktop-status.json")) {
       if (["unknown", "legacy"].includes(scenario)) throw missing();
       if (scenario === "status-unreadable") throw missing("EACCES");
       if (scenario === "status-malformed") return "invalid json";
       if (scenario === "status-version") return JSON.stringify({ version: 2, signedIn: false });
-      return JSON.stringify({ version: 1, signedIn: !scenario.startsWith("signed-out") && !signedOutDuringPrompt });
+      return JSON.stringify({ version: 1, signedIn: !scenario.startsWith("signed-out") && scenario !== "copy-restart-signed-out" && !signedOutDuringPrompt });
     }
     if (name.endsWith("/Grok Bot/gateway-descriptor.json")) {
       descriptorReads++;
@@ -90,6 +119,7 @@ globalThis.fetch = (async (url: string, init?: RequestInit) => {
   if (scenario === "auth-rotation" && requests.length === 1) return Response.json({}, { status: 401 });
   if (scenario === "parked-response") return Response.json({}, { status: 417 });
   if (scenario === "remembered-rejected" && routeGone) return Response.json({}, { status: 401 });
+  if (scenario === "copy-restart-rejected") return Response.json({}, { status: 401 });
   if (scenario === "remembered-dead" && routeGone) throw new TypeError("Network fixture");
   return Response.json([{ id: "fixture", name: "Fixture" }]);
 }) as typeof fetch;
@@ -107,8 +137,8 @@ else if (scenario.startsWith("remembered")) {
   const first = await call();
   routeGone = true;
   now += 61_000;
-  if (scenario === "remembered-new-signin") statusStamp = 2; // signed out, then in again
-  if (scenario === "remembered-expired") now += 12 * 60 * 60_000;
+  if (scenario === "remembered-app-relaunch") statusStamp = 2; // the app rewrites its status file on every launch
+  if (scenario === "remembered-expired") now += 7 * 24 * 60 * 60_000; // past the app's own 7-day route life
   results = [first, await (scenario === "remembered-background" ? withoutWaking(call) : call())];
 }
 else if (scenario === "keychain-rotated") {
@@ -123,5 +153,6 @@ else if (scenario === "keychain-once") {
   now += 61_000;
   results = [first, await call()];
 }
+else if (scenario.startsWith("copy-restart")) results = [await (scenario === "copy-restart-background" ? withoutWaking(call) : call())];
 else results = await Promise.all([call(), call(), call()]);
-console.log(JSON.stringify({ signedIn, results, opens, keychainReads, descriptorReads, requests, curls, eventLoopResponsive, elapsed: now }));
+console.log(JSON.stringify({ signedIn, results, opens, keychainReads, descriptorReads, requests, curls, eventLoopResponsive, elapsed: now, copyWrites, copyPresent: copyStore !== null }));
