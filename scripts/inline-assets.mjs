@@ -39,7 +39,7 @@ const minified = (rel) => transformSync(text(rel), {
   loader: rel.endsWith(".css") ? "css" : "js", minifyWhitespace: true, charset: "utf8", legalComments: "none",
 }).code.trim();
 
-const NAMES = ["connect", "show", "create", "computer", "guide"];
+const NAMES = ["connect", "show", "create", "computer", "guide", "reconnect"];
 const widgets = Object.fromEntries(NAMES.map((n) => [n, text(`widgets/${n}.html`)]));
 // The mark draws at 16px, so a 32px copy covers a 2x display; the 64px source
 // would spend ~3KB more of every card's glance budget on pixels no screen draws.

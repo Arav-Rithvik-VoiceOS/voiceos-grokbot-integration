@@ -34,6 +34,7 @@ import {
   log,
   openComputerWindow,
   openGrokBotApp,
+  reconnectGrokBot,
   resolveAgent,
   resolveMembers,
   sendPrompt,
@@ -43,7 +44,7 @@ import {
 } from "./client.ts";
 import { recordCardPoll, cardCovers } from "./cardWatch.ts";
 import { RFB_B64 } from "./assets.generated.ts";
-import { connectCard, guideCard, showCard, type ShowOpen, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
+import { connectCard, guideCard, reconnectCard, showCard, type ShowOpen, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
 import { PREPARE_DESCRIPTION, SEND_MODEL_DESCRIPTION, SEND_BOT_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 import { conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
@@ -460,6 +461,13 @@ async function runTool(
     if (isWaking() && error instanceof IntegrationError && (error.kind === "setup" || error.kind === "not_connected")) {
       openGrokBotApp();
       return result({ ok: false, needsSetup: true, message: error.message }, connectCard());
+    }
+    // The cloud computer is asleep and nothing VoiceOS holds can wake it. Opening
+    // the app would not help (it keeps a parked box asleep); the Reconnect card's
+    // button restarts the app once the user has messaged a bot. (VOS-1608)
+    if (isWaking() && error instanceof IntegrationError && error.kind === "reconnect") {
+      reconnectOffered = true;
+      return result({ ok: false, needsReconnect: true, message: error.message }, reconnectCard());
     }
     throw new Error(
       error instanceof IntegrationError ? error.message : `The ${SERVICE_NAME} request failed unexpectedly.`,
@@ -1162,6 +1170,28 @@ server.registerTool(
       });
     }),
 );
+
+// ── CARD: grokbot_reconnect — the Reconnect card's button ────────────────────
+// Card-only. Grok Bot writes its route file only when it connects while its
+// cloud computer is awake, so the card first asks the user to message a bot in
+// the app (which wakes the computer); the button then restarts the app and waits
+// for the file. Plain JSON: the card shows the outcome itself. Do not call from voice.
+/** Restarting the app is only ever the answer to a Reconnect card this server
+ * showed. Until one has been shown, the tool does nothing: the host cannot tell
+ * a card's button from a model call, so the server keeps that line itself. */
+let reconnectOffered = false;
+server.registerTool("grokbot_reconnect", {
+  title: "Reconnect Grok Bot",
+  description: "Internal — invoked only by the Reconnect card's button. Restarts the Grok Bot app and waits for its connection. Do not call from voice.",
+  inputSchema: {},
+}, () => cardRequest("grokbot_reconnect", async () => {
+  if (!reconnectOffered) {
+    return { ok: false, message: `Nothing to reconnect. ${SERVICE_NAME} will show a Reconnect card when it needs one.` };
+  }
+  const { bots } = await reconnectGrokBot();
+  reconnectOffered = false;
+  return { ok: true, connected: true, bots, message: "Connected. Say your request again." };
+}));
 
 // ── CARD: grokbot_card_screen — the show card's screen pane fetches the feed ──
 // Card-only: invoked when the user opens the in-card screen pane (the chat header's
