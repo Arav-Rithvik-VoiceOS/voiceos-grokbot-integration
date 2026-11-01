@@ -75,7 +75,7 @@ export const intents: IntentDefinition[] = [
   },
   {
     name: "help", tool: "grokbot_help",
-    description: "Show how to set up and use Grok Bot, and what the user can say to it. Only a guide; do not list, message or create bots.",
+    description: "Show how to set up and use Grok Bot (the bot list when the user already has bots), and what the user can say to it. Only a guide; do not message or create bots.",
     utterances: { en: ["How do I use Grok Bot", "Help me set up Grok Bot", "How do I set up Grok Bot", "What can Grok Bot do", "Grok Bot help", "Show me how to use Grok Bot", "How does Grok Bot work"] },
     response: { en: "Here's how Grok Bot works." },
   },

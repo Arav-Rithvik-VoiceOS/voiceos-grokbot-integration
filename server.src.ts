@@ -21,6 +21,7 @@ import {
   type Agent,
   createAgent,
   grokBotSignIn,
+  hasConnectedBefore,
   hasGrokBotApp,
   createGroup,
   setGroupMembers,
@@ -456,11 +457,21 @@ async function runTool(
     return await run();
   } catch (error) {
     log(`${tool} failed:`, error);
-    // "Not set up / needs a refresh" isn't a crash — it's the first-run state.
-    // Speak the fix, open the app, and show the Connect card. No OAuth page.
+    // "Not set up / needs a refresh" isn't a crash. On a Mac that never
+    // connected it's the first-run state: speak the fix, open the app, and show
+    // the Connect card. No OAuth page. Once a connection has worked here, it is
+    // never setup again (VOS-1616): a rejected or unreadable session gets the
+    // Reconnect card, and a real sign-out gets its plain message.
     if (isWaking() && error instanceof IntegrationError && (error.kind === "setup" || error.kind === "not_connected")) {
+      if (!hasConnectedBefore()) {
+        openGrokBotApp();
+        return result({ ok: false, needsSetup: true, message: error.message }, connectCard());
+      }
+      if (error.kind === "not_connected") {
+        reconnectOffered = true;
+        return result({ ok: false, needsReconnect: true, message: error.message }, reconnectCard());
+      }
       openGrokBotApp();
-      return result({ ok: false, needsSetup: true, message: error.message }, connectCard());
     }
     // The cloud computer is asleep and nothing VoiceOS holds can wake it. Opening
     // the app would not help (it keeps a parked box asleep); the Reconnect card's
@@ -605,6 +616,8 @@ server.registerTool(
 // The setup guide must open even before Grok Bot is set up, so it never throws
 // the Connect card: each step is checked on this Mac (files and the preference
 // only), and the roster read that counts bots is best-effort and time-boxed.
+// A user who has bots is set up, so help opens on their bot list instead
+// (VOS-1616); setup steps are only for a Mac that still needs them.
 const HELP_STEPS = [
   { key: "app", text: "Install the Grok Bot app on this Mac and open it." },
   { key: "signedIn", text: "Sign in to Grok Bot. VoiceOS uses that session, so there are no keys to paste." },
@@ -627,13 +640,13 @@ server.registerTool(
   {
     title: "How to use Grok Bot",
     description:
-      "Show how to set up and use Grok Bot: a card with the setup steps (checked on this Mac), then things the user can say. Use when the user asks how to use or set up Grok Bot, what Grok Bot can do, or for help with this integration.",
+      "Show how to set up and use Grok Bot: when the user already has bots, a card with their bot list plus things they can say; otherwise a card with the setup steps (checked on this Mac). Use when the user asks how to use or set up Grok Bot, what Grok Bot can do, or for help with this integration.",
     inputSchema: {
       page: z
         .enum(["setup", "keychain", "ideas"])
         .optional()
         .describe(
-          "'ideas' when the user asks only what they can do or say with Grok Bot; 'keychain' when they ask about a Keychain / password popup from Grok Bot or macOS; omit to start on setup.",
+          "'ideas' when the user asks only what they can do or say with Grok Bot; 'keychain' when they ask about a Keychain / password popup from Grok Bot or macOS; omit otherwise.",
         ),
     },
     annotations: { readOnlyHint: true },
@@ -641,9 +654,11 @@ server.registerTool(
   async (args: { page?: "setup" | "keychain" | "ideas" }) =>
     handle("grokbot_help", async () => {
       const signedIn = grokBotSignIn();
+      const connected = hasConnectedBefore();
       let agents: Agent[] = [];
       let bots: number | undefined;
-      if (signedIn) {
+      // A Mac that connected before tries the roster even while the app's marker is settling.
+      if (signedIn || (connected && signedIn !== false)) {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           agents = await Promise.race([
@@ -662,14 +677,24 @@ server.registerTool(
       const done: Record<string, boolean> = { app: setup.app, signedIn: signedIn === true, bots: (bots ?? 0) > 0, notifications: setup.notifications };
       const steps = HELP_STEPS.map((s) => ({ step: s.text, done: done[s.key], ...("optional" in s ? { optional: true } : {}) }));
       const next = steps.find((s) => !s.done && !s.optional);
+      if (args.page !== "keychain" && (bots ?? 0) > 0) {
+        const { recent, cursors } = await rosterThreads(agents);
+        return result(
+          { steps, thingsToSay: HELP_PHRASES, message: "Grok Bot is set up. The card shows the user's bots; they can say things like those in thingsToSay." },
+          showCard(agents, undefined, recent, cursors),
+        );
+      }
+      // Connected before but the roster did not load: things to say, never the setup steps.
+      const rosterMissed = connected && bots === undefined;
+      const page = args.page === "keychain" ? 1 : args.page === "ideas" || rosterMissed ? 2 : 0;
       return result(
         {
           steps,
-          ...(bots === undefined && signedIn ? { botsUnknown: true } : {}),
+          ...(bots === undefined && (signedIn || connected) ? { botsUnknown: true } : {}),
           thingsToSay: HELP_PHRASES,
-          message: next ? `Next step: ${next.step}` : "Grok Bot is set up. The card shows things to say.",
+          message: next && !rosterMissed ? `Next step: ${next.step}` : "Grok Bot is set up. The card shows things to say.",
         },
-        guideCard(setup, agents, args.page === "ideas" ? 2 : args.page === "keychain" ? 1 : 0),
+        guideCard(setup, agents, page),
       );
     }),
 );

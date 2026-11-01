@@ -76,17 +76,45 @@ const DESKTOP_STATUS_PATH = `${process.env.HOME}/Library/Application Support/Gro
 
 /** Grok Bot removes its transient route when the cloud computer parks. */
 export const hasGatewaySession = () => existsSync(DESCRIPTOR_PATH);
-function savedSignIn(): boolean | undefined {
+
+/** The app writes `signedIn: false` as it launches, until its Keychain read and
+ * token refresh finish (VOS-1616). A `false` this soon after launch is the app
+ * settling, not a sign-out, so it must not throw away the saved route. */
+const SIGN_IN_SETTLE_MS = 30_000;
+
+/** "settling" = the marker says signed out, but the running app launched less
+ * than SIGN_IN_SETTLE_MS ago. Undefined = no readable marker. */
+type SignIn = "in" | "out" | "settling";
+function savedSignIn(): SignIn | undefined {
   try {
     const status = JSON.parse(readFileSync(DESKTOP_STATUS_PATH, "utf8"));
-    return status.version === 1 && typeof status.signedIn === "boolean" ? status.signedIn : undefined;
+    if (status.version !== 1 || typeof status.signedIn !== "boolean") return undefined;
+    if (status.signedIn) return "in";
+    return appStarting(status) ? "settling" : "out";
   } catch {
     return undefined;
   }
 }
-/** Only the app's explicit signed-out marker proves logout. Older versions
+
+function appStarting(status: { pid?: unknown; startedAtMs?: unknown }): boolean {
+  if (typeof status.startedAtMs !== "number" || Date.now() - status.startedAtMs >= SIGN_IN_SETTLE_MS) return false;
+  if (typeof status.pid !== "number" || !Number.isInteger(status.pid)) return false;
+  try {
+    process.kill(status.pid, 0); // signal 0 only checks that the process exists
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException)?.code === "EPERM";
+  }
+}
+
+/** Only the app's settled signed-out marker proves logout. Older versions
  * export just a descriptor; when both are absent, sign-in state is unknown. */
-export const grokBotSignIn = (): boolean | undefined => savedSignIn() ?? (hasGatewaySession() ? true : undefined);
+export const grokBotSignIn = (): boolean | undefined => {
+  const signIn = savedSignIn();
+  if (signIn === "in") return true;
+  if (signIn === "out") return false;
+  return hasGatewaySession() ? true : undefined;
+};
 export const hasGrokBotSignIn = grokBotSignIn;
 export const hasGrokBotApp = () =>
   existsSync("/Applications/Grok Bot.app") || existsSync(`${process.env.HOME}/Applications/Grok Bot.app`);
@@ -125,8 +153,9 @@ const CREDS_TTL_MS = 60_000;
  * Safe Storage key — never the decrypted route — so it is as safe at rest as
  * the app's file. It stays tied to the account label the app wrote into its
  * file, and expires on the app's own clock: 7 days after the app saved it
- * (the app trusts its stored route for exactly that long). Any 401/403, or
- * the app's signed-out marker, deletes it; a real route file always wins.
+ * (the app trusts its stored route for exactly that long). Any 401/403, the
+ * app's settled signed-out marker, or the app naming a different account
+ * deletes it; a real route file always wins.
  */
 let rememberedRoute: { creds: GatewayCreds; account: string; savedAtMs: number } | null = null;
 /** Grok Bot's own `maxAgeMs` for a stored route (10080 minutes). */
@@ -140,6 +169,48 @@ let lastRouteCopy: string | null = null;
  * attempt goes to the app's own recovery instead of the same dead route. The
  * copy stays on disk for the next process; Wi-Fi comes back, routes do not. */
 let routeCopySkipped = false;
+
+/** Written the first time a gateway request works on this Mac (VOS-1616).
+ * From then on a failure is a broken connection, never first-run setup, so
+ * server.ts stops showing the Connect card. */
+const CONNECTED_PATH = `${ROUTE_COPY_DIR}/connected.json`;
+let connectedBefore: boolean | null = null;
+
+export function hasConnectedBefore(): boolean {
+  connectedBefore ??= existsSync(CONNECTED_PATH);
+  return connectedBefore;
+}
+
+function markConnected(): void {
+  if (hasConnectedBefore()) return;
+  try {
+    mkdirSync(ROUTE_COPY_DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(CONNECTED_PATH, JSON.stringify({ version: 1, atMs: Date.now() }), { mode: 0o600 });
+    connectedBefore = true;
+  } catch (error) {
+    log(`connected flag not saved (${(error as NodeJS.ErrnoException)?.code ?? "write failed"})`);
+  }
+}
+
+/** The app's record of which account is signed in: its persisted
+ * `client-meta.account-slot` slice (the file name is that key in base32). */
+const ACCOUNT_SLOT_PATH = `${process.env.HOME}/Library/Application Support/Grok Bot/sand-client-persistence/onqw4zbomnwgszlooqxhg3djmnss4y3mnfsw45bnnvsxiyjomfrwg33vnz2c243mn52a.blob`;
+
+/** Whether the app's signed-in account is the one a route copy belongs to.
+ * The copy's `account` is the app's SHA-256 of the account slot (0.78.1 hashes
+ * the bare slot; the namespaced form is accepted too). Undefined when the app
+ * names no account, so a missing or older file never deletes a good copy. */
+function sameAccount(account: string): boolean | undefined {
+  try {
+    const slot = JSON.parse(readFileSync(ACCOUNT_SLOT_PATH, "utf8"))?.value;
+    if (typeof slot !== "string" || !slot) return undefined;
+    const bare = createHash("sha256").update(slot).digest("hex");
+    const namespaced = createHash("sha256").update("sand-account-slot").update("\0").update(slot).digest("hex");
+    return account === bare || account === namespaced;
+  } catch {
+    return undefined;
+  }
+}
 
 function writeRouteCopy(copy: RouteCopy): void {
   const serialized = JSON.stringify(copy);
@@ -206,11 +277,14 @@ function descriptorUnavailable(error: unknown): IntegrationError {
     return new IntegrationError("session_unavailable", `${SERVICE_NAME}'s local connection file could not be read. Open the Grok Bot app and try again.`);
   }
   const signedIn = savedSignIn();
-  if (signedIn === false) return signedOutError();
-  if (signedIn === true && !isWaking()) {
+  if (signedIn === "out") return signedOutError();
+  if (signedIn === "settling") {
+    return new IntegrationError("session_unavailable", `${SERVICE_NAME} is still starting. Try again in a few seconds.`);
+  }
+  if (signedIn === "in" && !isWaking()) {
     return new IntegrationError("parked", `${SERVICE_NAME}'s cloud computer is asleep. Open the Grok Bot app to wake it, then try again.`);
   }
-  if (signedIn === true) return reconnectError();
+  if (signedIn === "in") return reconnectError();
   // Sign-in state unknown (older app, unreadable status): say only what is known.
   return new IntegrationError(
     "session_unavailable",
@@ -244,7 +318,7 @@ async function readDescriptor(): Promise<string> {
   try {
     return readFileSync(DESCRIPTOR_PATH, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" || !isWaking() || savedSignIn() === false) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" || !isWaking() || savedSignIn() === "out") {
       throw descriptorUnavailable(error);
     }
   }
@@ -252,7 +326,7 @@ async function readDescriptor(): Promise<string> {
     openGrokBotApp();
     const deadline = Date.now() + DESCRIPTOR_RECOVERY_MS;
     for (;;) {
-      if (savedSignIn() === false) throw signedOutError();
+      if (savedSignIn() === "out") throw signedOutError();
       try {
         return readFileSync(DESCRIPTOR_PATH, "utf8");
       } catch (error) {
@@ -307,7 +381,7 @@ function waitForKeychain(read: Promise<string>): Promise<string> {
 
 /** Read + decrypt the descriptor into live gateway creds. */
 async function loadCreds(force = false, keyRefreshed = false): Promise<GatewayCreds> {
-  if (savedSignIn() === false) {
+  if (savedSignIn() === "out") {
     forgetSession();
     throw signedOutError();
   }
@@ -325,7 +399,7 @@ async function loadCreds(force = false, keyRefreshed = false): Promise<GatewayCr
   // Keep Keychain failures out of the descriptor-decryption error handler.
   const masterKey = await keychainKey();
   // Sign-out can happen while the user is answering a Keychain prompt.
-  if (savedSignIn() === false) {
+  if (savedSignIn() === "out") {
     forgetSession();
     throw signedOutError();
   }
@@ -391,6 +465,13 @@ function decryptRoute(encrypted: string, masterKey: string): GatewayCreds {
  * from memory, else from the saved copy on disk. Null when there is none the
  * request may use (expired, undecryptable, or refused earlier in this process). */
 async function rememberedCreds(): Promise<GatewayCreds | null> {
+  const account = rememberedRoute?.account ?? readRouteCopy()?.account;
+  if (account !== undefined && sameAccount(account) === false) {
+    // An account switch the app never sent us a 401 for: the old route must not answer for the new account.
+    log("Grok Bot is signed in to a different account; forgetting the saved route");
+    forgetSession();
+    return null;
+  }
   if (rememberedRoute) {
     if (!routeExpired(rememberedRoute.savedAtMs)) {
       log("route file missing; trying the remembered route");
@@ -672,6 +753,7 @@ export async function gateway<T = unknown>(
   // "asleep": the box will not wake from here. Background reads stay "parked".
   if (status === 417 && isWaking()) throw reconnectError();
   if (status >= 400) throw classifyStatus(status, text);
+  markConnected();
 
   try {
     return JSON.parse(text) as T;
@@ -1210,7 +1292,7 @@ export async function reconnectGrokBot(): Promise<{ bots: number }> {
   openGrokBotApp();
   const deadline = Date.now() + BOOT_WAIT_MS;
   while (!hasGatewaySession()) {
-    if (savedSignIn() === false) throw signedOutError();
+    if (savedSignIn() === "out") throw signedOutError();
     if (Date.now() >= deadline) {
       throw new IntegrationError(
         "reconnect",
