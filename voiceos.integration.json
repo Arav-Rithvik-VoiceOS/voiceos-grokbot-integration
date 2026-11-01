@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "com.arav.bot",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "name": "Grok Bot",
   "summary": "Talk to your Grok Bot AI teammates by voice.",
   "description": "See your Grok Bot teammates, message one, catch up on what a bot said, create a new bot, or start a group chat with several at once — all by voice, from the notch.",
@@ -251,6 +251,17 @@
           "recipientId": {
             "type": "string",
             "description": "Internal: recipient ID pinned by the preparation hook. Never compose or change this value."
+          },
+          "files": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "description": "Files to attach to the message. Pass the attached_file_N references from this turn."
           }
         },
         "required": [
@@ -483,6 +494,17 @@
           "message": {
             "type": "string",
             "description": "The message to send, written TO the group the way the user would type it: lead-in commands removed, reported speech made direct."
+          },
+          "files": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "description": "Files to attach to the message. Pass the attached_file_N references from this turn."
           }
         },
         "required": []
