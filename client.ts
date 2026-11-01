@@ -613,7 +613,7 @@ export async function agentScreen(
 export async function gateway<T = unknown>(
   command: string,
   body: Record<string, unknown> = {},
-  { timeoutMs = READ_TIMEOUT_MS, _retried = false }: { timeoutMs?: number; _retried?: boolean } = {},
+  { timeoutMs = READ_TIMEOUT_MS, _retried = false, noReplay = false }: { timeoutMs?: number; _retried?: boolean; noReplay?: boolean } = {},
 ): Promise<T> {
   const creds = await loadCreds(_retried);
   const started = performance.now();
@@ -640,6 +640,7 @@ export async function gateway<T = unknown>(
   } catch (error) {
     // bun's fetch is TLS-fingerprint-blocked by some edges; curl isn't. Fall
     // back before giving up. (Same trick the Template's getJson uses.)
+    if (noReplay) throw classifyThrown(error, timeoutMs);
     const curled = await curlPost(creds, command, body, timeoutMs);
     if (curled) {
       status = curled.status;
@@ -660,7 +661,7 @@ export async function gateway<T = unknown>(
   if (status === 401 || status === 403) {
     // The remembered route holds this token (or an older one): drop both.
     forgetSession();
-    if (!_retried) {
+    if (!_retried && !noReplay) {
       return gateway<T>(command, body, { timeoutMs, _retried: true });
     }
     throw new IntegrationError(
@@ -991,8 +992,48 @@ export interface AutomationEntry {
 /** Every scheduled task across all bots, each tagged with its agentId. */
 export const listAllAutomations = () => gateway<AutomationEntry[]>("listAllAutomations", {});
 
-export const sendPrompt = (agentId: string, prompt: string) =>
-  gateway<{ accepted?: boolean }>("sendPrompt", { agentId, prompt }, { timeoutMs: WRITE_TIMEOUT_MS });
+// The desktop app uploads file bytes into the selected bot's box, then sends
+// the returned remote path and display name with the prompt. A local path
+// (or a filename pasted into the text) cannot deliver a file to the box.
+type PromptFile = { name: string; data: Buffer };
+const UPLOAD_CHUNK_BYTES = 256 * 1024;
+
+async function uploadPromptFile(agentId: string, file: PromptFile, call: typeof gateway) {
+  const uploadId = crypto.randomUUID();
+  for (let offset = 0; offset < file.data.length; offset += UPLOAD_CHUNK_BYTES) {
+    const part = file.data.subarray(offset, offset + UPLOAD_CHUNK_BYTES);
+    const result = await call<{ committedPath?: string | null }>("uploadAttachmentChunk", {
+      agentId, uploadId, filename: file.name, offset, totalSize: file.data.length,
+      bytesBase64: part.toString("base64"),
+    }, {timeoutMs: WRITE_TIMEOUT_MS, noReplay: true});
+    if (result?.committedPath != null) {
+      if (offset + part.length !== file.data.length || typeof result.committedPath !== "string" || !result.committedPath.trim())
+        throw new Error("Unexpected upload receipt");
+      return result.committedPath;
+    }
+  }
+  throw new Error("Missing upload receipt");
+}
+
+export async function sendPrompt(agentId: string, prompt: string, files: PromptFile[] = [], call: typeof gateway = gateway) {
+  if (!files.length) return call<{accepted?:boolean}>("sendPrompt", { agentId, prompt }, {timeoutMs: WRITE_TIMEOUT_MS});
+  const remotePaths: string[] = [];
+  try {
+    for (const file of files) remotePaths.push(await uploadPromptFile(agentId, file, call));
+  } catch {
+    throw new IntegrationError("upstream", "Grok Bot could not upload every attachment. No message was sent.");
+  }
+  try {
+    const response = await call<{accepted?:boolean}>("sendPrompt", {
+      agentId, prompt, attachmentPaths: remotePaths, attachmentNames: files.map(f => f.name),
+      clientNonce: crypto.randomUUID(),
+    }, {timeoutMs: WRITE_TIMEOUT_MS, noReplay:true});
+    if (response?.accepted !== true) throw new Error("Not confirmed");
+    return response;
+  } catch {
+    throw new IntegrationError("upstream", "Grok Bot did not confirm the message with its attachments. Check the conversation before trying again.");
+  }
+}
 
 export const createAgent = (
   name: string,

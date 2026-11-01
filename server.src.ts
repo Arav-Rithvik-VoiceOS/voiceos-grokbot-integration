@@ -52,6 +52,7 @@ import { needsAttention, toCardThread, type CardItem } from "./conversation.ts";
 import { IntentRoster, registerIntentSupport } from "./intents.ts";
 import { INTENT_SLOT_VALUES_META_KEY } from "./intentSdk.generated.js";
 
+import { FILES_DESCRIPTION, readTurnFiles, type GrokFile } from "./turnFiles.ts";
 const server = new McpServer({ name: TOOLKIT, version: "1.0.0" });
 const intentRoster = new IntentRoster(readAgents);
 const listAgents = () => intentRoster.refresh();
@@ -830,9 +831,9 @@ async function performSend(botRef: string, rawMessage: string | undefined) {
 
 /** Send once to one bot and start the reply watch. `base` is a transcript
  * page read BEFORE this send (the reply watch skips what it already had). */
-async function sendToBot(bot: Agent, message: string, base?: { entries?: TranscriptEntry[] }) {
+async function sendToBot(bot: Agent, message: string, base?: { entries?: TranscriptEntry[] }, files?: GrokFile[]) {
   const seen = new Set(((base ?? await transcriptTail(bot.id, 12)).entries ?? []).map((e) => e.id));
-  await sendPrompt(bot.id, message);
+  await sendPrompt(bot.id, message, files);
   // Acknowledge immediately, then watch in the background and ping under the
   // notch when the reply lands. No foreground wait — replies run ~40s, past
   // what VoiceOS lets a tool block for.
@@ -844,6 +845,8 @@ async function sendToBot(bot: Agent, message: string, base?: { entries?: Transcr
 // sends, and the card opens on Piper's chat with the message flying from the
 // box into the orb, the same as a tap send. No `readOnlyHint` (it sends), and
 // no `confirmation`, so the host's ask switch defaults to "Don't ask".
+const filesSchema = z.array(z.string().min(1).max(4096)).min(1).max(6).optional().describe(FILES_DESCRIPTION);
+const loadVoiceFiles = (paths?:string[]) => readTurnFiles(paths, paths?.length ? server.server.getClientCapabilities()?.experimental?.["voiceos/files"] : undefined);
 const sendTool = server.registerTool(
   "grokbot_send",
   {
@@ -851,6 +854,7 @@ const sendTool = server.registerTool(
     description: SEND_MODEL_DESCRIPTION,
     inputSchema: {
       confirmationContext: z.string().optional().describe(CONTEXT_DESCRIPTION),
+      files: filesSchema,
       bot: z.string().describe(SEND_BOT_DESCRIPTION),
       recipientId: z.string().optional().describe("Internal: recipient ID pinned by the preparation hook. Never compose or change this value."),
       message: z
@@ -863,7 +867,7 @@ const sendTool = server.registerTool(
     },
     _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: [] } },
   },
-  async (args: { bot: string; message?: string; recipientId?: string }) =>
+  async (args: { bot: string; message?: string; recipientId?: string; files?:string[] }) =>
     handle("grokbot_send", async () => {
       const agents = await listAgents();
       const bot = resolveMessageRecipient(args.recipientId ?? args.bot, agents.filter((a) => !a.isGroup));
@@ -871,14 +875,16 @@ const sendTool = server.registerTool(
       // Read BEFORE sending: the card's history then ends just before this
       // message, which arrives as the fly-in and the live chat's next refresh.
       const tail = await transcriptTail(bot.id, 20);
-      if (!text) {
+      const files = await loadVoiceFiles(args.files);
+      if (!text && !files.length) {
         return result({ opened: true, sent: false, bot: bot.name, botId: bot.id, message: `Opened ${bot.name}. Nothing was sent.` },
           await conversationCard(agents, { bot: bot.id }, tail));
       }
-      await sendToBot(bot, text, tail);
+      await sendToBot(bot, text, tail, files);
+      const card = conversationCard(agents, { bot: bot.id }, tail, text, true);
       return result(
-        { sent: true, bot: bot.name, botId: bot.id, sentMessage: text, message: `Sent your message to ${bot.name}.` },
-        await conversationCard(agents, { bot: bot.id }, tail, text, true),
+        { sent: true, ...(files.length ? {successful:true,attachments:files.map(f=>f.name)} : {}), bot: bot.name, botId: bot.id, sentMessage: text, message: `Sent your message to ${bot.name}.` },
+        files.length ? await card.catch(() => undefined) : await card,
       );
     }),
 );
@@ -1001,11 +1007,11 @@ async function performGroupSend(args: { group?: string; members?: string | strin
 }
 
 /** Save member/name edits (or create the group) and send once. */
-async function sendToGroup(args: { group?: string; members?: string | string[]; groupName?: string; message?: string }, agents: Agent[]) {
+async function sendToGroup(args: { group?: string; members?: string | string[]; groupName?: string; message?: string }, agents: Agent[], files: GrokFile[] = []) {
   const { existing, memberIds, bots, sameSet } = resolveMessageGroup(args, agents);
   const message = args.message?.trim() ?? "";
   const name = args.groupName?.trim() ?? existing?.name ?? "";
-  if (!message) throw new IntegrationError("not_found", "What should I send?");
+  if (!message && !files.length) throw new IntegrationError("not_found", "What should I send?");
   if (memberIds.length < (existing ? 1 : 2)) throw new IntegrationError("not_found", existing ? "Keep at least one bot in the group." : "Choose at least two bots for a new group.");
   let target = existing;
   const savedName = name || memberIds.map(id => bots.find(a => a.id === id)!.name).join(" + ");
@@ -1016,7 +1022,7 @@ async function sendToGroup(args: { group?: string; members?: string | string[]; 
     target = await createGroup(savedName, memberIds);
     if (!target?.id) throw new IntegrationError("upstream", "The group was not created.");
   }
-  await sendPrompt(target.id, message);
+  await sendPrompt(target.id, message, files);
   return { group: target.id, groupName: savedName, members: memberIds, created: !existing, sentMessage: message };
 }
 
@@ -1034,6 +1040,7 @@ server.registerTool(
     description: GROUP_DESCRIPTION,
     inputSchema: {
       confirmationContext: z.string().optional().describe(CONTEXT_DESCRIPTION),
+      files: filesSchema,
       group: z.string().optional().describe("An existing group's name as the user said it, or its exact id from a card. Omit for a new group."),
       members: z.union([z.array(z.string()), z.string()]).optional()
         .describe("Bots to include, as names the user said or exact ids. Omit to use an existing group's members, or to choose members in the card."),
@@ -1041,22 +1048,25 @@ server.registerTool(
       message: z.string().optional().describe("The message to send, written TO the group the way the user would type it: lead-in commands removed, reported speech made direct."),
     },
   },
-  async (args: { group?: string; members?: string | string[]; groupName?: string; message?: string }) =>
+  async (args: { group?: string; members?: string | string[]; groupName?: string; message?: string; files?:string[] }) =>
     handle("grokbot_group", async () => {
       const agents = await listAgents();
       const { existing, memberIds, sameSet } = resolveMessageGroup(args, agents);
       const draft = tidySpoken(args.message ?? "");
-      if (draft && (existing || memberIds.length >= 2)) {
+      const files = await loadVoiceFiles(args.files);
+      if ((draft || files.length) && (existing || memberIds.length >= 2)) {
         // Read BEFORE sending (see grokbot_send). A new group has no history.
         const tail = existing ? await transcriptTail(existing.id, 20) : {};
-        const s = await sendToGroup({ ...args, message: draft }, agents);
-        // Re-read the roster: it now has the new group, or the saved edits.
+        const s = await sendToGroup({ ...args, message: draft }, agents, files);
+        // A card refresh cannot undo the accepted upload and send.
+        const card = listAgents().then(roster => conversationCard(roster, { group: s.group }, tail, s.sentMessage, true));
         return result(
-          { sent: true, group: s.groupName, members: s.members, created: s.created, sentMessage: s.sentMessage,
+          { sent: true, ...(files.length ? {successful:true,attachments:files.map(f=>f.name)} : {}), group: s.groupName, members: s.members, created: s.created, sentMessage: s.sentMessage,
             message: `${s.created ? `Created ${s.groupName} and sent` : "Sent"} your message${s.created ? "" : ` to ${s.groupName}`}.` },
-          await conversationCard(await listAgents(), { group: s.group }, tail, s.sentMessage, true),
+          files.length ? await card.catch(() => undefined) : await card,
         );
       }
+      if (files.length) throw new IntegrationError("not_found","Select a Grok Bot group before sending the attachments.");
       if (existing) {
         // Spoken member/name changes open as pending edits on the group's pane;
         // the card's send saves them (performGroupSend) before it sends.

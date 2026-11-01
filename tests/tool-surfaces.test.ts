@@ -4,10 +4,11 @@ import { SEND_DESCRIPTION, SEND_MODEL_DESCRIPTION } from "../messaging.ts";
 
 // The user reads the manifest's short text. The model reads the longer routing
 // text the server registers on each MCP tool. Capture what the server registers.
-const configs = new Map<string, { title?: string; description?: string }>();
+type ToolConfig = {title?:string; description?:string; inputSchema?: {files?: {safeParse(value:unknown):{success:boolean}}}};
+const configs = new Map<string, ToolConfig>();
 mock.module("@modelcontextprotocol/sdk/server/mcp.js", () => ({ McpServer: class {
   server = { request: async () => ({}), setNotificationHandler() {}, setRequestHandler() {} };
-  registerTool(name: string, config: { title?: string; description?: string }) { configs.set(name, config); return { update() {} }; }
+  registerTool(name: string, config: ToolConfig) { configs.set(name, config); return { update() {} }; }
   tool() {}
   sendToolListChanged() {}
   async connect() {}
@@ -53,4 +54,12 @@ test("agent-only tools keep their full routing text in the manifest", () => {
   for (const name of ["grokbot_list", "grokbot_help", "grokbot_notifications", "grokbot_thread", "grokbot_prepare_message", "grokbot_group"]) {
     expect(tools.find(t => t.name === name)!.description).toMatch(/Use when|Use for|Use FIRST|Use AFTER/);
   }
+});
+
+test.each(["grokbot_send", "grokbot_group"])("%s advertises the turn-file input in both its manifest and MCP schema", name => {
+  const field=manifest.tools.find(tool=>tool.name===name)?.inputSchema?.properties as Record<string,{type?:string}>|undefined;
+  expect(field?.files?.type).toBe("array");
+  const runtime=configs.get(name)?.inputSchema?.files;
+  expect(runtime?.safeParse(["attached_file_0"]).success).toBe(true);
+  expect(runtime?.safeParse("attached_file_0").success).toBe(false);
 });

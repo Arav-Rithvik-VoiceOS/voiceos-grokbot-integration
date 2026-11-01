@@ -1,3 +1,6 @@
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { beforeEach, expect, mock, test } from "bun:test";
 import * as actual from "../client.ts";
 import { toBot } from "../cards.ts";
@@ -7,6 +10,7 @@ const resolveReal = actual.resolveAgent;
 const handlers = new Map<string, (args: any) => Promise<any>>();
 const requestHandlers = new Map<string, (req: any) => Promise<any>>();
 let openedChats: string[] = [];
+let fileGrant: unknown;
 const bots: actual.Agent[] = [
   { id: "p", name: "Piper", avatarColor: "orange" },
   { id: "f", name: "Finch", avatarColor: "green" },
@@ -27,6 +31,7 @@ let computerWindows: Array<{ botId: string; botName: string; wsUrl: string }>;
 mock.module("@modelcontextprotocol/sdk/server/mcp.js", () => ({ McpServer: class {
   server = {
     request: async () => ({ notificationId: "test" }),
+    getClientCapabilities: () => ({experimental: {"voiceos/files":fileGrant}}),
     setNotificationHandler() {},
     setRequestHandler(schema: any, handler: any) { requestHandlers.set(schema.shape.method.value, (req) => handler(schema.parse(req))); },
   };
@@ -60,8 +65,8 @@ mock.module("../client.ts", () => ({
     computerWindows.push(input);
     return { reused: false };
   },
-  sendPrompt: async (id: string, message: string) => {
-    writes.push(["send", id, message]);
+  sendPrompt: async (id: string, message: string, files?:Array<{name:string;data:Buffer}>) => {
+    writes.push(files?.length ? ["send",id,message,files.map(f => [f.name, f.data.toString("hex")])] : ["send", id, message]);
     if (rejectSend) throw new actual.IntegrationError("upstream", "Send failed");
     return { accepted: true };
   },
@@ -117,6 +122,21 @@ beforeEach(() => {
   openedChats = [];
 });
 
+test.each(["grokbot_send","grokbot_group"])("%s keeps the verified file on an attachment-only bot or group send", async tool=>{
+ const root=await mkdtemp(join(tmpdir(),"grok-handler-"));
+ try {
+   fileGrant={version:1,inputsRoot:root};
+   const dir=join(root,"scope");await mkdir(dir);
+   const file=join(dir,"dance.mp4");await writeFile(file,Buffer.from([1,2,3]));
+   const args=tool==="grokbot_send"?{bot:"Piper"}:{group:"g"};
+   const r=await call(tool,{...args,files:[file]});
+   expect(r).toMatchObject({sent:true,successful:true,attachments:["dance.mp4"]});
+   expect(writes).toEqual([["send",tool==="grokbot_send"?"p":"g","",[["dance.mp4","010203"]]]]);
+   fileGrant=undefined;
+   expect((await call(tool,{...args,files:[file],message:"look"})).isError).toBe(true);
+   expect(writes).toHaveLength(1);
+ } finally {fileGrant=undefined;await rm(root,{recursive:true,force:true});}
+});
 test("an offline bot returns a clear result without opening a computer window", async () => {
   const r = await call("grokbot_open_computer_window", { bot: "Piper" });
   expect(r).toMatchObject({
