@@ -9,7 +9,8 @@
     "Productivity"
   ],
   "supportedPlatforms": [
-    "darwin"
+    "darwin",
+    "win32"
   ],
   "icon": "icon.png",
   "publisher": {
@@ -62,15 +63,15 @@
       },
       {
         "type": "text",
-        "text": "Install the Grok Bot app on this Mac, open it, and sign in. VoiceOS uses that session, so there are no keys to paste."
+        "text": "Install the Grok Bot app on your Mac or PC, open it, and sign in. VoiceOS uses that session, so there are no keys to paste."
       },
       {
         "type": "heading",
-        "text": "2. One popup from macOS"
+        "text": "2. One popup on Mac"
       },
       {
         "type": "text",
-        "text": "The first time you use Grok Bot in VoiceOS, macOS asks for access to \"Grok Bot Safe Storage\" in your Keychain. It shows on your screen, not in VoiceOS. Type your Mac password and click Always Allow, so it does not ask again."
+        "text": "On a Mac, the first time you use Grok Bot in VoiceOS, macOS asks for access to \"Grok Bot Safe Storage\" in your Keychain. It shows on your screen, not in VoiceOS. Type your Mac password and click Always Allow, so it does not ask again. On Windows there's no popup."
       },
       {
         "type": "image",

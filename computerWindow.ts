@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmodSync, lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync, type Dirent } from "node:fs";
+import { createServer } from "node:http";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync, type Dirent } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -261,6 +262,7 @@ export async function openComputerWindow(input: {
   const wsUrl = validateDesktopWebSocketUrl(input.wsUrl);
   const template = WIDGETS.computer;
   if (!template) throw new Error("The desktop viewer is unavailable.");
+  if (process.platform === "win32") return openInEdgeWindow(template, wsUrl, input);
   const html = buildViewerDocument(template, RFB_FULL_B64, wsUrl);
   const { session, reused } = viewerSession(input.botId);
   const requestId = randomBytes(18).toString("base64url");
@@ -288,4 +290,63 @@ export async function openComputerWindow(input: {
       // the complete command and the helper will acknowledge it when loaded.
     }
   });
+}
+
+/**
+ * Windows has no native viewer host. The same viewer page is served ONCE from
+ * a loopback-only server at an unguessable path, with the credential config in
+ * an inline script the page's CSP nonce allows (exactly what the Mac host
+ * injects at document start), then the server closes. The credential never
+ * appears in a URL, a filename, or on disk. Opens as an Edge app window (Edge
+ * ships with Windows), else in the default browser. View-only, as on Mac; the
+ * Mac clipboard bridge is simply absent.
+ */
+async function openInEdgeWindow(
+  template: string,
+  wsUrl: string,
+  input: { botName: string; botColor?: string; botShape?: string },
+): Promise<{ reused: boolean }> {
+  const nonce = randomBytes(18).toString("base64url");
+  const config = Buffer.from(JSON.stringify({
+    wsUrl,
+    botName: input.botName,
+    botColor: /^#[0-9a-fA-F]{6}$/.test(input.botColor ?? "") ? input.botColor : "",
+    botShape: /^[a-z]{1,16}$/.test(input.botShape ?? "") ? input.botShape : "",
+  }), "utf8").toString("base64");
+  const document = buildViewerDocument(template, RFB_FULL_B64, wsUrl, nonce);
+  const head = document.indexOf("<head>");
+  if (head < 0) throw new Error("The desktop viewer is unavailable.");
+  const html = document.slice(0, head + 6) +
+    `<script nonce="${nonce}">window.__VOICEOS_CONFIG__=JSON.parse(atob('${config}'));</script>` +
+    document.slice(head + 6);
+
+  const path = `/${randomBytes(24).toString("base64url")}`;
+  const server = createServer((request, response) => {
+    if (request.method !== "GET" || request.url !== path) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+    }).end(html, () => server.close());
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  // Not opened within half a minute: stop serving the credential.
+  setTimeout(() => server.close(), 30_000).unref();
+  const { port } = server.address() as { port: number };
+  const url = `http://127.0.0.1:${port}${path}`;
+  const edge = [
+    process.env["ProgramFiles(x86)"] && join(process.env["ProgramFiles(x86)"], "Microsoft", "Edge", "Application", "msedge.exe"),
+    process.env.ProgramFiles && join(process.env.ProgramFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
+  ].find((exe): exe is string => Boolean(exe && existsSync(exe)));
+  const child = edge
+    ? spawn(edge, [`--app=${url}`, "--window-size=1280,860"], { detached: true, stdio: "ignore" })
+    : spawn("explorer.exe", [url], { detached: true, stdio: "ignore", windowsHide: true });
+  child.unref();
+  return { reused: false };
 }

@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { pbkdf2Sync, createDecipheriv, createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import {
   openComputerWindow as launchComputerWindow,
   validateDesktopWebSocketUrl,
@@ -69,10 +70,24 @@ export class IntegrationError extends Error {
   }
 }
 
-// ── Local session: descriptor + Keychain → gateway creds ─────────────────────
+// ── Local session: descriptor + Safe Storage key → gateway creds ─────────────
 
-const DESCRIPTOR_PATH = `${process.env.HOME}/Library/Application Support/Grok Bot/gateway-descriptor.json`;
-const DESKTOP_STATUS_PATH = `${process.env.HOME}/Library/Application Support/Grok Bot/desktop-status.json`;
+/** Grok Bot is the same Electron app on Mac and Windows: the same route file
+ * and status marker in its data folder, written with Electron's safeStorage.
+ * Only where that folder lives and how safeStorage keeps its key differ. */
+const IS_WINDOWS = process.platform === "win32";
+const HOME = process.env.HOME || process.env.USERPROFILE || "";
+/** %APPDATA%\<app> on Windows, ~/Library/Application Support/<app> on Mac. */
+function appSupportDir(app: string): string {
+  return IS_WINDOWS
+    ? join(process.env.APPDATA || join(HOME, "AppData", "Roaming"), app)
+    : `${HOME}/Library/Application Support/${app}`;
+}
+const GROK_BOT_DIR = appSupportDir("Grok Bot");
+const DESCRIPTOR_PATH = join(GROK_BOT_DIR, "gateway-descriptor.json");
+const DESKTOP_STATUS_PATH = join(GROK_BOT_DIR, "desktop-status.json");
+/** Windows: Chromium's os_crypt key, wrapped with DPAPI for the signed-in user. */
+const LOCAL_STATE_PATH = join(GROK_BOT_DIR, "Local State");
 
 /** Grok Bot removes its transient route when the cloud computer parks. */
 export const hasGatewaySession = () => existsSync(DESCRIPTOR_PATH);
@@ -88,8 +103,23 @@ function savedSignIn(): boolean | undefined {
  * export just a descriptor; when both are absent, sign-in state is unknown. */
 export const grokBotSignIn = (): boolean | undefined => savedSignIn() ?? (hasGatewaySession() ? true : undefined);
 export const hasGrokBotSignIn = grokBotSignIn;
+/** Windows installs per user (%LOCALAPPDATA%\Programs) or for all users. */
+function windowsAppExe(): string | null {
+  const roots = [
+    process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, "Programs"),
+    process.env.ProgramFiles,
+    process.env["ProgramFiles(x86)"],
+  ];
+  for (const root of roots) {
+    const exe = root && join(root, "Grok Bot", "Grok Bot.exe");
+    if (exe && existsSync(exe)) return exe;
+  }
+  return null;
+}
 export const hasGrokBotApp = () =>
-  existsSync("/Applications/Grok Bot.app") || existsSync(`${process.env.HOME}/Applications/Grok Bot.app`);
+  IS_WINDOWS
+    ? windowsAppExe() !== null
+    : existsSync("/Applications/Grok Bot.app") || existsSync(`${HOME}/Applications/Grok Bot.app`);
 
 // Chromium "Safe Storage" Keychain item the app writes its master key under.
 const KEYCHAIN_SERVICE = "Grok Bot Safe Storage";
@@ -131,8 +161,8 @@ const CREDS_TTL_MS = 60_000;
 let rememberedRoute: { creds: GatewayCreds; account: string; savedAtMs: number } | null = null;
 /** Grok Bot's own `maxAgeMs` for a stored route (10080 minutes). */
 const ROUTE_LIFE_MS = 7 * 24 * 60 * 60_000;
-const ROUTE_COPY_DIR = `${process.env.HOME}/Library/Application Support/VoiceOS Grok Bot`;
-const ROUTE_COPY_PATH = `${ROUTE_COPY_DIR}/route.json`;
+const ROUTE_COPY_DIR = appSupportDir("VoiceOS Grok Bot");
+const ROUTE_COPY_PATH = join(ROUTE_COPY_DIR, "route.json");
 /** The app's route entry, as saved: `encrypted` is its Safe Storage ciphertext. */
 interface RouteCopy { version: 1; account: string; savedAtMs: number; encrypted: string }
 let lastRouteCopy: string | null = null;
@@ -267,9 +297,11 @@ async function readDescriptor(): Promise<string> {
 }
 
 /** Async so a first-time Keychain prompt cannot block the MCP handshake.
- * Concurrent reads share one prompt; denial is not evidence of signing out. */
+ * Concurrent reads share one prompt; denial is not evidence of signing out.
+ * On Windows the key is the app's os_crypt key instead (no prompt there). */
 function keychainKey(): Promise<string> {
   if (masterKeyCache) return Promise.resolve(masterKeyCache);
+  if (IS_WINDOWS) return windowsSafeStorageKey();
   keychainRead ??= new Promise<string>((resolve, reject) => {
     execFile(
       process.env.GROKBOT_SECURITY_BIN || "/usr/bin/security",
@@ -363,15 +395,70 @@ async function loadCreds(force = false, keyRefreshed = false): Promise<GatewayCr
   return creds;
 }
 
-/** Chromium Safe Storage v10: PBKDF2-HMAC-SHA1(keychainKey, "saltysalt",
+/** Windows safeStorage: Chromium's os_crypt key lives in the app's
+ * "Local State" (os_crypt.encrypted_key, base64 of "DPAPI" + a DPAPI blob)
+ * and DPAPI unwraps it for the signed-in Windows user, with no prompt. The
+ * key travels through stdin/stdout only, base64, and is never logged. */
+let windowsKeyRead: Promise<string> | null = null;
+function windowsSafeStorageKey(): Promise<string> {
+  windowsKeyRead ??= (async () => {
+    let wrapped: Buffer;
+    try {
+      const state = JSON.parse(readFileSync(LOCAL_STATE_PATH, "utf8"));
+      wrapped = Buffer.from(String(state?.os_crypt?.encrypted_key ?? ""), "base64");
+    } catch (error) {
+      log(`Local State unreadable (${(error as NodeJS.ErrnoException)?.code ?? "parse"})`);
+      throw new IntegrationError("session_unavailable", `${SERVICE_NAME}'s saved session key is unavailable. Open the Grok Bot app to refresh its connection, then try again.`);
+    }
+    if (wrapped.subarray(0, 5).toString("latin1") !== "DPAPI") {
+      throw new IntegrationError("session_unavailable", `${SERVICE_NAME}'s saved session key is unavailable. Open the Grok Bot app to refresh its connection, then try again.`);
+    }
+    const key = await dpapiUnprotect(wrapped.subarray(5));
+    return (masterKeyCache = key.toString("base64"));
+  })().finally(() => { windowsKeyRead = null; });
+  return windowsKeyRead;
+}
+
+function dpapiUnprotect(blob: Buffer): Promise<Buffer> {
+  const script =
+    "Add-Type -AssemblyName System.Security;" +
+    "$b=[Convert]::FromBase64String([Console]::In.ReadToEnd().Trim());" +
+    "[Console]::Out.Write([Convert]::ToBase64String([System.Security.Cryptography.ProtectedData]::Unprotect($b,$null,'CurrentUser')))";
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.env.GROKBOT_POWERSHELL_BIN || "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", script], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+    let out = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => { out += chunk; });
+    child.on("error", () => reject(new IntegrationError("session_unavailable", `${SERVICE_NAME}'s saved session key could not be read.`)));
+    child.on("close", (code) => {
+      const key = Buffer.from(out.trim(), "base64");
+      if (code === 0 && key.length === 32) return resolve(key);
+      log(`DPAPI unwrap failed (exit ${code})`);
+      reject(new IntegrationError("session_unavailable", `${SERVICE_NAME}'s saved session key could not be read. Open the Grok Bot app, then try again.`));
+    });
+    child.stdin.end(blob.toString("base64"));
+  });
+}
+
+/** Chromium Safe Storage v10, Mac: PBKDF2-HMAC-SHA1(keychainKey, "saltysalt",
  * 1003, 16) → AES-128-CBC, IV = 16 spaces, over the blob after the "v10"
- * prefix. Node's crypto strips the PKCS7 padding for us. Throws on any
- * mismatch; callers must never log the error text (it may hold route data). */
+ * prefix. Node's crypto strips the PKCS7 padding for us. Windows: the os_crypt
+ * key (base64 here) → AES-256-GCM, "v10" + 12-byte nonce + ciphertext +
+ * 16-byte tag. Throws on any mismatch; callers must never log the error text
+ * (it may hold route data). */
 function decryptRoute(encrypted: string, masterKey: string): GatewayCreds {
   const blob = Buffer.from(encrypted, "base64");
-  const aesKey = pbkdf2Sync(masterKey, "saltysalt", 1003, 16, "sha1");
-  const decipher = createDecipheriv("aes-128-cbc", aesKey, Buffer.alloc(16, 0x20));
-  const plain = Buffer.concat([decipher.update(blob.subarray(3)), decipher.final()]).toString("utf8");
+  let plain: string;
+  if (IS_WINDOWS) {
+    const key = Buffer.from(masterKey, "base64");
+    const decipher = createDecipheriv("aes-256-gcm", key, blob.subarray(3, 15));
+    decipher.setAuthTag(blob.subarray(blob.length - 16));
+    plain = Buffer.concat([decipher.update(blob.subarray(15, blob.length - 16)), decipher.final()]).toString("utf8");
+  } else {
+    const aesKey = pbkdf2Sync(masterKey, "saltysalt", 1003, 16, "sha1");
+    const decipher = createDecipheriv("aes-128-cbc", aesKey, Buffer.alloc(16, 0x20));
+    plain = Buffer.concat([decipher.update(blob.subarray(3)), decipher.final()]).toString("utf8");
+  }
   const route = JSON.parse(plain) as {
     baseUrl: string;
     token: string;
@@ -692,7 +779,7 @@ function curlPost(
 ): Promise<{ status: number; text: string } | null> {
   return new Promise((resolve) => {
     execFile(
-      "/usr/bin/curl",
+      IS_WINDOWS ? "curl.exe" : "/usr/bin/curl",
       [
         "-sS", "--max-time", String(Math.max(1, Math.round(timeoutMs / 1000))),
         "-w", "\n%{http_code}",
@@ -704,7 +791,7 @@ function curlPost(
         "-d", JSON.stringify(body),
         `${creds.baseUrl}/api/${command}`,
       ],
-      { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
+      { encoding: "utf8", maxBuffer: 32 * 1024 * 1024, windowsHide: true },
       (error, out) => {
         if (error) {
           // Never log the error object: its `cmd` holds the bearer and network tokens.
@@ -865,6 +952,31 @@ function sips(args: string[]): Promise<string> {
   });
 }
 
+/** Windows twin of the sips steps below: middle square, at most AVATAR_PX,
+ * PNG when it has transparency, JPEG otherwise. The .NET image library reads
+ * PNG, JPEG, GIF, BMP and TIFF; anything else shows the bot's shape instead. */
+async function windowsAvatar(src: string, dir: string): Promise<string | null> {
+  const script =
+    "param($in,$dir,$max);Add-Type -AssemblyName System.Drawing;" +
+    "$i=[System.Drawing.Image]::FromFile($in);$side=[Math]::Min($i.Width,$i.Height);$n=[int][Math]::Min($max,$side);" +
+    "$a=[System.Drawing.Image]::IsAlphaPixelFormat($i.PixelFormat);" +
+    "$b=New-Object System.Drawing.Bitmap($n,$n);$g=[System.Drawing.Graphics]::FromImage($b);$g.InterpolationMode='HighQualityBicubic';" +
+    "$g.DrawImage($i,(New-Object System.Drawing.Rectangle(0,0,$n,$n)),[int](($i.Width-$side)/2),[int](($i.Height-$side)/2),$side,$side,'Pixel');" +
+    "if($a){$b.Save((Join-Path $dir 'out.png'),[System.Drawing.Imaging.ImageFormat]::Png);'png'}else{" +
+    "$c=[System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders()|?{$_.MimeType -eq 'image/jpeg'};" +
+    "$p=New-Object System.Drawing.Imaging.EncoderParameters(1);" +
+    "$p.Param[0]=New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality,[long]82);" +
+    "$b.Save((Join-Path $dir 'out.jpg'),$c,$p);'jpeg'};$g.Dispose();$b.Dispose();$i.Dispose()";
+  const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
+  const kind = await new Promise<string>((resolve, reject) => {
+    execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `& {${script}} ${quote(src)} ${quote(dir)} ${AVATAR_PX}`],
+      { encoding: "utf8", timeout: 10_000, windowsHide: true }, (error, stdout) => (error ? reject(error) : resolve(String(stdout).trim())));
+  });
+  if (kind !== "png" && kind !== "jpeg") return null;
+  const uri = `data:image/${kind};base64,${(await readFile(join(dir, kind === "png" ? "out.png" : "out.jpg"))).toString("base64")}`;
+  return uri.length <= AVATAR_IMAGE_MAX_CHARS ? uri : null;
+}
+
 /** An inline picture → a small square data: URI, or null when it is not a
  * raster image sips can read. Never logs the picture or where it came from. */
 export async function shrinkAvatar(dataUrl: string): Promise<string | null> {
@@ -879,6 +991,7 @@ export async function shrinkAvatar(dataUrl: string): Promise<string | null> {
   try {
     const src = join(dir, "source");
     await writeFile(src, bytes);
+    if (IS_WINDOWS) return await windowsAvatar(src, dir);
     const info = await sips(["-g", "pixelWidth", "-g", "pixelHeight", "-g", "hasAlpha", src]);
     const width = Number(/pixelWidth: (\d+)/.exec(info)?.[1]);
     const height = Number(/pixelHeight: (\d+)/.exec(info)?.[1]);
@@ -1191,6 +1304,13 @@ export function openBotChat(agentId: string): Promise<void> {
     return Promise.reject(new IntegrationError("not_found", "That bot can't be opened."));
   }
   const url = `grokbot://app/v1/agent?id=${agentId}`;
+  if (IS_WINDOWS) {
+    // The app registers grokbot:// with Windows; File Explorer hands the link
+    // to it. Explorer's exit code is 1 even on success, so it is not checked.
+    return new Promise((resolve) => {
+      execFile("explorer.exe", [url], { windowsHide: true }, () => resolve());
+    });
+  }
   return new Promise((resolve, reject) => {
     execFile("/usr/bin/open", [url], (error) => {
       if (error) {
@@ -1237,7 +1357,9 @@ const QUIT_WAIT_MS = 8_000;
  * plain TERM, which Electron treats as quit. */
 async function quitGrokBotApp(): Promise<void> {
   const polite = new Promise<void>((resolve) => {
-    execFile(process.env.GROKBOT_OSASCRIPT_BIN || "/usr/bin/osascript", ["-e", 'quit app "Grok Bot"'], () => resolve());
+    // Windows: taskkill without /F asks each window to close, like Cmd+Q.
+    if (IS_WINDOWS) execFile("taskkill.exe", ["/IM", "Grok Bot.exe"], { windowsHide: true }, () => resolve());
+    else execFile(process.env.GROKBOT_OSASCRIPT_BIN || "/usr/bin/osascript", ["-e", 'quit app "Grok Bot"'], () => resolve());
   });
   await Promise.race([polite, new Promise((resolve) => setTimeout(resolve, QUIT_POLITE_MS))]);
   const pids = await grokBotPids();
@@ -1262,6 +1384,15 @@ function statusPid(): number | null {
 }
 
 function grokBotPids(): Promise<number[]> {
+  if (IS_WINDOWS) {
+    return new Promise((resolve) => {
+      execFile("tasklist.exe", ["/FI", "IMAGENAME eq Grok Bot.exe", "/FO", "CSV", "/NH"], { encoding: "utf8", windowsHide: true }, (error, stdout) => {
+        if (error) return resolve([]);
+        // "Grok Bot.exe","1234","Console","1","123,456 K" (or an INFO line).
+        resolve(String(stdout).split(/\r?\n/).map((line) => Number(line.split('","')[1])).filter((pid) => Number.isInteger(pid) && pid > 0));
+      });
+    });
+  }
   return new Promise((resolve) => {
     execFile(process.env.GROKBOT_PGREP_BIN || "/usr/bin/pgrep", ["-x", "Grok Bot"], { encoding: "utf8" }, (error, stdout) => {
       if (error) return resolve([]); // exit 1: no such process
@@ -1273,6 +1404,13 @@ function grokBotPids(): Promise<number[]> {
 /** Launch the Grok Bot app (used on the setup / not-connected path). */
 export function openGrokBotApp(): void {
   try {
+    if (IS_WINDOWS) {
+      const exe = windowsAppExe();
+      if (!exe) return log("could not launch Grok Bot app: not installed");
+      // Detached: the app must outlive this integration process.
+      spawn(exe, [], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+      return;
+    }
     execFile(process.env.GROKBOT_OPEN_BIN || "/usr/bin/open", ["-a", "Grok Bot"], () => {});
   } catch (error) {
     log("could not launch Grok Bot app:", error);

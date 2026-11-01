@@ -231,7 +231,9 @@ const CHECK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-w
    itself (a cropped screenshot, `img`, not a recreation), with a Grok Bot
    hopping on Always Allow so it stops asking. Step 2 of setup; we can't
    detect the real popup, so it's never marked done. */
+let WIN=false;
 function kcHTML(img){
+ if(WIN)return '<div class="kc-lead in" style="--i:1"><div class="t1">No popup on Windows</div><div class="t3">VoiceOS reads your Grok Bot session through Windows’ own protection for your account, so there’s nothing to allow.</div></div>';
  return '<div class="kc-lead in" style="--i:1"><div class="t1">One popup from macOS</div><div class="t3">It pops up on your real screen — not in this card. Click <b>Always Allow</b> so it doesn’t ask again.</div></div>'
  +'<div class="kc-stage in" style="--i:2"><span class="kc-callout"><img class="kc-shot" src="'+esc(img)+'" alt="The real macOS Keychain popup"><span class="kc-hop"><i class="sh"></i>'+av(CREW[0],'idle')+'</span></span></div>';
 }
@@ -267,10 +269,11 @@ const Orbit=(()=>{
 function renderSteps(d){
  const s=d.setup||{};
  appReady=s.app===true;
- $('#intro-sub').textContent=appReady?'The app is on this Mac. Swipe for the one popup you’ll see.':'Get the app first, then just talk.';
+ const here=WIN?'PC':'Mac';
+ $('#intro-sub').textContent=appReady?(WIN?'The app is on this PC. You’re ready to talk.':'The app is on this Mac. Swipe for the one popup you’ll see.'):'Get the app first, then just talk.';
  $('#steps').innerHTML='<div class="step in '+(appReady?'done':'next')+'" style="--i:2"><span class="num">'+(appReady?CHECK:1)+'</span><div class="grow"><div class="t2">'
   +(appReady?'Grok Bot app installed':'Download the Grok Bot app')+'</div><div class="t3">'
-  +(appReady?'Found on this Mac.':'Install it on this Mac, then open it.')+'</div></div>'
+  +(appReady?'Found on this '+here+'.':'Install it on this '+here+', then open it.')+'</div></div>'
   +(appReady?'<span class="chip ok">Done</span>':'<span class="chip go">Next</span>')+'</div>';
  $$('#dots button')[1]?.classList.toggle('go',appReady);
 }
@@ -332,6 +335,7 @@ function wire(){
 }
 
 function render(d,args){
+ WIN=d.windows===true;
  renderSteps(d);$('#kc').innerHTML=kcHTML(d.kcImg||'');renderIdeas(d);Orbit.mount($('#stage'));wire();
  $$('.page').forEach(p=>pageRO.observe(p));
  // cards.ts guideCard sends the page as a number (0/1/2); the names are for hand-built args.

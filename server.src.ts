@@ -606,7 +606,7 @@ server.registerTool(
 // the Connect card: each step is checked on this Mac (files and the preference
 // only), and the roster read that counts bots is best-effort and time-boxed.
 const HELP_STEPS = [
-  { key: "app", text: "Install the Grok Bot app on this Mac and open it." },
+  { key: "app", text: `Install the Grok Bot app on this ${process.platform === "win32" ? "PC" : "Mac"} and open it.` },
   { key: "signedIn", text: "Sign in to Grok Bot. VoiceOS uses that session, so there are no keys to paste." },
   { key: "bots", text: "Make a first bot, for example: \"Create a bot named Scout that checks my inbox.\"" },
   { key: "notifications", text: "Optional: turn on \"Show notifications from bots\" in Grok Bot's settings in VoiceOS to get a ping when a bot replies.", optional: true },

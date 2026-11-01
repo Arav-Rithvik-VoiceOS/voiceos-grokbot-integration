@@ -488,7 +488,9 @@ export function guideCard(setup: SetupState, bots: Agent[] = [], page: 0 | 1 | 2
     const img = avatarMap([a])[a.id];
     return { name: b.name, color: b.color, shape: b.shape, ...(img ? { img } : {}) };
   });
-  return glance("guide", { data: { setup, bots: cast, kcImg: KEYCHAIN_POPUP_DATA_URI }, args: { page } }, 410, "Grok Bot");
+  // Windows has no Keychain popup (DPAPI, see client.ts): the guide says so instead.
+  const windows = process.platform === "win32";
+  return glance("guide", { data: { setup, bots: cast, kcImg: windows ? "" : KEYCHAIN_POPUP_DATA_URI, windows }, args: { page } }, 410, "Grok Bot");
 }
 
 /** connect.html — first-run / needs-sign-in status. */

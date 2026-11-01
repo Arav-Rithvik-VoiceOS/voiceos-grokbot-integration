@@ -24,6 +24,35 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const runFile = promisify(execFile);
+
+/** Shrink an image to a JPEG preview whose longer side is at most `size`.
+ * Mac: sips. Windows: the .NET image library PowerShell ships with; the paths
+ * travel as arguments, not inside the script. */
+const psQuote = (value: string) => `'${value.replace(/'/g, "''")}'`;
+function shrinkToJpeg(input: string, output: string, size: number) {
+  if (process.platform === "win32") {
+    const script =
+      "param($in,$out,$max);Add-Type -AssemblyName System.Drawing;" +
+      "$i=[System.Drawing.Image]::FromFile($in);" +
+      "$r=[Math]::Min(1.0,$max/[Math]::Max($i.Width,$i.Height));" +
+      "$w=[int][Math]::Max(1,$i.Width*$r);$h=[int][Math]::Max(1,$i.Height*$r);$b=New-Object System.Drawing.Bitmap($w,$h);" +
+      "$g=[System.Drawing.Graphics]::FromImage($b);$g.InterpolationMode='HighQualityBicubic';$g.DrawImage($i,0,0,$b.Width,$b.Height);" +
+      "$c=[System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders()|?{$_.MimeType -eq 'image/jpeg'};" +
+      "$p=New-Object System.Drawing.Imaging.EncoderParameters(1);" +
+      "$p.Param[0]=New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality,[long]65);" +
+      "$b.Save($out,$c,$p);$g.Dispose();$b.Dispose();$i.Dispose()";
+    return runFile(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", `& {${script}} ${psQuote(input)} ${psQuote(output)} ${size}`],
+      { timeout: 10_000, windowsHide: true },
+    );
+  }
+  return runFile(
+    "/usr/bin/sips",
+    ["-s", "format", "jpeg", "-s", "formatOptions", "65", "-Z", String(size), input, "--out", output],
+    { timeout: 10_000 },
+  );
+}
 export const conversationTransport = {
   listAgents,
   transcriptTail,
@@ -192,23 +221,7 @@ export async function conversationImage(
         throw new Error("This image is too large to preview.");
       await writeFile(input, bytes, { mode: 0o600 });
       for (const size of [720, 480, 320]) {
-        await runFile(
-          "/usr/bin/sips",
-          [
-            "-s",
-            "format",
-            "jpeg",
-            "-s",
-            "formatOptions",
-            "65",
-            "-Z",
-            String(size),
-            input,
-            "--out",
-            output,
-          ],
-          { timeout: 10_000 },
-        );
+        await shrinkToJpeg(input, output, size);
         dataUrl = `data:image/jpeg;base64,${(await readFile(output)).toString("base64")}`;
         if (dataUrl.length <= 80_000) break;
       }

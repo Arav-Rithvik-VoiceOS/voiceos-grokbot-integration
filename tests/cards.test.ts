@@ -311,7 +311,7 @@ describe("guide card", () => {
     const card = guideCard({ app: true, signedIn: true, bots: 1, notifications: false }, bots, 1);
     const html = htmlOf(card);
     expect(demo(html)).toEqual({
-      data: { setup: { app: true, signedIn: true, bots: 1, notifications: false }, bots: [{ name: "Terry", color: "#FF309B", shape: "pebble" }], kcImg: KEYCHAIN_POPUP_DATA_URI },
+      data: { setup: { app: true, signedIn: true, bots: 1, notifications: false }, bots: [{ name: "Terry", color: "#FF309B", shape: "pebble" }], kcImg: KEYCHAIN_POPUP_DATA_URI, windows: false },
       args: { page: 1 },
     });
     for (const shape of ["blob", "pebble", "squircle", "tablet", "wedge", "hex", "cloud", "teardrop"])
@@ -320,6 +320,17 @@ describe("guide card", () => {
     expect(scripts(html)).toHaveLength(1);
     expect(() => new Function(scripts(html)[0])).not.toThrow();
     expect(glanceChars(card)).toBeLessThan(MAX_GLANCE);
+  });
+  test("on Windows, no Keychain screenshot: the guide says there is no popup", () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    try {
+      const html = htmlOf(guideCard({ app: true }, [], 1));
+      expect(demo(html).data).toMatchObject({ kcImg: "", windows: true });
+      expect(html).toContain("No popup on Windows");
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
   });
   test("a bot name cannot end the payload script", () => {
     const html = htmlOf(guideCard({}, [{ id: "x", name: "</script><script>alert(1)</script>" }]));
