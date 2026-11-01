@@ -29,7 +29,10 @@ const curls: string[][] = [];
 const COPY_DIR = "/VoiceOS Grok Bot";
 let copyStore: string | null = null;
 const copyWrites: string[] = [];
-const isCopyPath = (path: unknown) => String(path).includes(COPY_DIR);
+// The connected-once flag (VOS-1616) lives next to the copy; keep it apart.
+let connectedFlag = false;
+const isConnectedPath = (path: unknown) => String(path).endsWith(`${COPY_DIR}/connected.json`);
+const isCopyPath = (path: unknown) => String(path).includes(COPY_DIR) && !isConnectedPath(path);
 if (scenario.startsWith("copy-restart")) {
   // A fresh process (VoiceOS restarted) finds only the copy: the app deleted
   // its file when the box parked, before this process ever read it.
@@ -43,11 +46,12 @@ mock.module("node:fs", () => ({
   ...fs,
   statSync: (path: any, ...args: any[]) =>
     String(path).endsWith("/Grok Bot/desktop-status.json") ? { mtimeMs: statusStamp } : (fs.statSync as any)(path, ...args),
-  existsSync: (path: any) => isCopyPath(path)
+  existsSync: (path: any) => isConnectedPath(path) ? connectedFlag : isCopyPath(path)
     ? (String(path).endsWith(COPY_DIR) || copyStore !== null)
     : String(path).endsWith("/Grok Bot/gateway-descriptor.json") && existing.has(scenario) && !routeGone,
   mkdirSync: (path: any, ...args: any[]) => (isCopyPath(path) ? undefined : (fs.mkdirSync as any)(path, ...args)),
   writeFileSync: (path: any, data: any, ...args: any[]) => {
+    if (isConnectedPath(path)) { connectedFlag = true; return; }
     if (!isCopyPath(path)) return (fs.writeFileSync as any)(path, data, ...args);
     copyWrites.push(String(data));
     copyStore = String(data);
@@ -57,6 +61,8 @@ mock.module("node:fs", () => ({
   rmSync: (path: any, ...args: any[]) => { if (isCopyPath(path)) copyStore = null; else (fs.rmSync as any)(path, ...args); },
   readFileSync: (path: any, ...args: any[]) => {
     const name = String(path);
+    // The app's account record: absent, so the account check stays out of these scenarios.
+    if (name.includes("/Grok Bot/sand-client-persistence/")) throw missing();
     if (isCopyPath(name)) {
       if (copyStore === null) throw missing();
       return copyStore;

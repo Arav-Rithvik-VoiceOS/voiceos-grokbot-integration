@@ -15,6 +15,7 @@ const bots: actual.Agent[] = [
 let agents: actual.Agent[], writes: any[], rejectSend: boolean;
 let rosterError: actual.IntegrationError | undefined;
 let signedInState: boolean | undefined;
+let connectedBefore = false;
 let appOpens = 0;
 let rosterReadWakes: boolean[] = [];
 let publishCreated = true;
@@ -41,6 +42,7 @@ mock.module("../client.ts", () => ({
   listAgents: async () => { rosterReadWakes.push(actual.isWaking()); if (rosterError) throw rosterError; return agents; },
   grokBotSignIn: () => signedInState,
   hasGrokBotApp: () => true,
+  hasConnectedBefore: () => connectedBefore,
   openGrokBotApp: () => { appOpens++; },
   listAllAutomations: async () => [],
   createAgent: async (name: string) => {
@@ -107,7 +109,7 @@ const cardData = (r: any) => demoOf(r._voiceos_glance.blocks[0].html);
 beforeEach(() => {
   agents = [...bots.map(a => ({ ...a })), { id: "g", name: "Study group", isGroup: true, memberIds: ["p", "f"] }];
   writes = []; rejectSend = false;
-  rosterError = undefined; signedInState = undefined; appOpens = 0; rosterReadWakes = [];
+  rosterError = undefined; signedInState = undefined; connectedBefore = false; appOpens = 0; rosterReadWakes = [];
   publishCreated = true;
   tail = EARLIER;
   tailCursor = undefined;
@@ -688,6 +690,16 @@ test("an explicit sign-out still displays the Connect card", async () => {
   const r = await call("grokbot_show", {});
   expect(r).toMatchObject({ ok: false, needsSetup: true, message: "Grok Bot is signed out." });
   expect(r._voiceos_glance.blocks[0].html).toContain("Connect Grok Bot to VoiceOS");
+  expect(appOpens).toBe(1);
+});
+
+test("a sign-out after a past connection says so without the Connect card (VOS-1616)", async () => {
+  connectedBefore = true;
+  rosterError = new actual.IntegrationError("setup", "Grok Bot is signed out.");
+  const r = await call("grokbot_show", {});
+  expect(r).toMatchObject({ isError: true });
+  expect(r.error).toContain("Grok Bot is signed out.");
+  expect(r.needsSetup).toBeUndefined();
   expect(appOpens).toBe(1);
 });
 
