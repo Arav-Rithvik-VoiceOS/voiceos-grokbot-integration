@@ -21,7 +21,7 @@
 .lc-file:hover{background:var(--fill-3);color:var(--ink-1)}
 .lc-card{max-width:88%;min-width:0;display:flex;flex-direction:column;gap:7px;padding:9px 11px 10px;border-radius:16px;border-bottom-left-radius:6px;background:var(--fill-1);border:1px solid var(--line);font-size:12.5px;line-height:1.38;overflow-wrap:anywhere}
 .lc-card.me{border-bottom-left-radius:16px;border-bottom-right-radius:6px}
-.lc-card.lc-att{border-color:rgba(255,138,0,.4)}
+.lc-card.lc-att{border-color:color-mix(in srgb,var(--bot) 45%,transparent)}
 .lc-q{display:flex;align-items:flex-start;gap:6px;font-size:13px;font-weight:600;letter-spacing:-.005em}
 .lc-q>span:first-child{flex:1;min-width:0}.lc-q .chip{flex:none;margin-top:1px}
 .lc-d{color:var(--ink-2);white-space:pre-wrap;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
@@ -33,17 +33,18 @@
 .lc-opt{display:flex;align-items:flex-start;gap:8px;width:100%;padding:6px 9px 6px 7px;border-radius:10px;background:var(--fill-1);text-align:left;transition:background .12s}
 .lc-opt:hover{background:var(--fill-2)}.lc-opt[aria-pressed=true]{background:var(--fill-3)}.lc-opt[disabled]{opacity:.5;cursor:default}
 .lc-k{flex:none;width:17px;height:17px;margin-top:1px;border-radius:5px;display:grid;place-items:center;background:var(--fill-2);color:var(--ink-2);font-size:10.5px;font-weight:650}
-.lc-opt[aria-pressed=true] .lc-k{background:var(--accent);color:#fff}
+.lc-opt[aria-pressed=true] .lc-k{background:var(--bot);color:var(--bot-ink)}
 .lc-ot{flex:1;min-width:0}.lc-ot small{display:block;color:var(--ink-3);font-size:11.5px}
 .lc-card .lc-in{padding:6px 10px;border-radius:10px;font-size:12.5px}
 .lc-row{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
 .lc-btn{height:26px;padding:0 11px;border-radius:13px;font-size:12px;font-weight:600;background:var(--fill-2);color:var(--ink-1);flex:none;transition:background .12s}
 .lc-btn:hover{background:var(--fill-3)}.lc-btn[disabled]{opacity:.45;cursor:default}
-.lc-btn.pri{background:rgba(255,138,0,.16);color:var(--accent)}.lc-btn.pri:hover{background:rgba(255,138,0,.26)}
+.lc-btn.pri{background:color-mix(in srgb,var(--bot) 18%,transparent);color:var(--ink-1)}.lc-btn.pri:hover{background:color-mix(in srgb,var(--bot) 28%,transparent)}
 .lc-pc{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;flex:none;color:var(--ink-2);background:var(--fill-1);transition:background .12s,color .12s}
 .lc-pc:hover{background:var(--fill-2);color:var(--ink-1)}.lc-pc[disabled]{opacity:.45;cursor:default}.lc-pc[hidden]{display:none}
-.lc-older:focus-visible,.lc-link:focus-visible,.lc-file:focus-visible,.lc-opt:focus-visible,.lc-btn:focus-visible,.lc-pc:focus-visible{outline:2px solid rgba(255,138,0,.6);outline-offset:1px}
-.lc-st{justify-content:center;text-align:center;padding:0 14px;max-height:48px;overflow-y:auto;flex-shrink:0}.lc-st.bad{color:var(--bad)}.lc-st[hidden]{display:none}
+.lc-older:focus-visible,.lc-link:focus-visible,.lc-file:focus-visible,.lc-opt:focus-visible,.lc-btn:focus-visible,.lc-pc:focus-visible{outline:2px solid color-mix(in srgb,var(--bot) 60%,transparent);outline-offset:1px}
+/* Status lines stay quiet and gray, never red: the app shows no warnings in a chat. */
+.lc-st{justify-content:center;text-align:center;padding:0 14px;max-height:48px;overflow-y:auto;flex-shrink:0;color:var(--ink-3)}.lc-st.bad{color:var(--ink-3)}.lc-st[hidden]{display:none}
 /* Grok Bot's unread divider (sand-unread-divider): a line, the label, a line — red here. */
 .lc-new{align-self:stretch;display:flex;align-items:center;gap:8px;margin:14px 0 8px;padding:2px 0;flex-shrink:0;color:var(--bad);font-size:11px;font-weight:500;line-height:14px}
 .lc-new i{flex:1 1 0;height:1px;background:currentColor;opacity:.6}

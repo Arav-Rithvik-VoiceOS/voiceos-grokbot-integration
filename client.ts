@@ -814,6 +814,14 @@ function classifyStatus(status: number, text: string): IntegrationError {
   if (status === 417) {
     return new IntegrationError("parked", `${SERVICE_NAME}'s cloud computer is asleep. Open the Grok Bot app to wake it, then try again.`);
   }
+  // A bare 404 from the proxy: no computer answers at this route any more. The
+  // app moved or re-provisioned its box and keeps the new route in memory only
+  // (it never rewrites gateway-descriptor.json), so every command 404s until
+  // the user wakes the box in Grok Bot and the app reconnects. The Reconnect
+  // card says exactly that; a plain "returned an error" left the user stuck.
+  if (status === 404 && !detail) {
+    return new IntegrationError("reconnect", `${SERVICE_NAME}'s connection is out of date. In Grok Bot, send any bot a message and wait for its reply, then tap Reconnect.`);
+  }
   if (status === 429 || /rate limit|too many requests/.test(low)) {
     return new IntegrationError("rate_limited", `${SERVICE_NAME} is busy — wait a moment and try again.`);
   }
@@ -861,6 +869,9 @@ export interface Agent {
   lastActivityAt?: number;
   /** The per-bot "Notify on updates" switch in the Grok Bot app (on by default). */
   notifyOnUpdatesEnabled?: boolean;
+  /** The app's roster sorts an unpinned row by the newer of these two. */
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface TranscriptEntry {
@@ -890,6 +901,108 @@ export interface TranscriptEntry {
 
 export async function listAgents() {
   return withAvatarImages(await gateway<Agent[]>("listAgents", {}));
+}
+
+// ── Sidebar preferences: pins, sections, the main bot ────────────────────────
+//
+// The Grok Bot app keeps pinned bots and sidebar sections in the user's Cursor
+// account (gRPC GetGrokBotUserRuntimeSettings), which this integration cannot
+// call. The app also caches them on this Mac, in its client persistence store:
+// one JSON blob per "slice", named by the base32 of its key. Those caches are
+// what the app itself shows when it opens offline, so they are what the roster
+// card reads (verified on Grok Bot 0.78.1):
+//   sand.client.slice.client-meta.account-slot        → "<account slot>"
+//   sand.client.slice.account.<slot>.ui-agent-refs    → { pinnedAgentIds, collapsedSectionIds, … }
+//   sand.client.slice.account.<slot>.sidebar.last-sections → { sections: [{ id, name, agentIds, isCollapsed }] }
+// The slot is URL-encoded in the key (auth0|user_… → auth0%7Cuser_…). Older
+// app versions kept the same two fields in ~/.grokbot/settings.json; that is
+// the fallback. The main ("Main Bot") bot is a gateway command, getMainAgent.
+
+const PERSISTENCE_DIR = `${process.env.HOME}/Library/Application Support/Grok Bot/sand-client-persistence`;
+const SETTINGS_PATH = `${process.env.HOME}/.grokbot/settings.json`;
+const SLICE = "sand.client.slice.";
+
+export interface SidebarSection { id: string; name: string; agentIds: string[]; isCollapsed?: boolean }
+export interface SidebarPrefs {
+  /** Pinned bot and group ids, in the app's pin order. */
+  pinnedIds: string[];
+  /** The app's sidebar sections, in its order; empty when the user made none. */
+  sections: SidebarSection[];
+  /** The user's "Main Bot" (Grok Bot's star badge), when known. */
+  mainId?: string;
+}
+
+/** RFC 4648 base32, lower case, unpadded: how the app names its persistence blobs. */
+export function base32(text: string): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+  const bytes = Buffer.from(text, "utf8");
+  let bits = 0, value = 0, out = "";
+  for (const byte of bytes) {
+    value = (value << 8) | byte; bits += 8;
+    while (bits >= 5) { out += alphabet[(value >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  if (bits > 0) out += alphabet[(value << (5 - bits)) & 31];
+  return out;
+}
+
+function readSlice(dir: string, key: string): unknown {
+  try {
+    const blob = JSON.parse(readFileSync(join(dir, `${base32(SLICE + key)}.blob`), "utf8"));
+    return blob && typeof blob === "object" && "value" in blob ? (blob as { value: unknown }).value : undefined;
+  } catch { return undefined; }
+}
+
+const idList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+function sectionList(v: unknown): SidebarSection[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((s): SidebarSection[] => {
+    if (!s || typeof s !== "object") return [];
+    const { id, name, agentIds, isCollapsed } = s as Record<string, unknown>;
+    if (typeof id !== "string" || !id) return [];
+    return [{ id, name: typeof name === "string" ? name : "", agentIds: idList(agentIds), ...(isCollapsed === true ? { isCollapsed: true } : {}) }];
+  });
+}
+
+/** Pins and sections from the app's local caches (never the network). Missing
+ * or unreadable files mean "none", never an error: the roster still shows. */
+export function readSidebarPrefs(paths: { dir?: string; settings?: string } = {}): Omit<SidebarPrefs, "mainId"> {
+  const dir = paths.dir ?? PERSISTENCE_DIR;
+  const slot = readSlice(dir, "client-meta.account-slot");
+  const scope = typeof slot === "string" && slot ? `account.${encodeURIComponent(slot)}.` : null;
+  const refs = scope ? readSlice(dir, `${scope}ui-agent-refs`) as Record<string, unknown> | undefined : undefined;
+  const side = scope ? readSlice(dir, `${scope}sidebar.last-sections`) as Record<string, unknown> | undefined : undefined;
+  let pinnedIds = idList(refs?.pinnedAgentIds);
+  let sections = sectionList(side?.sections);
+  if (!refs || !side) {
+    // Older apps: the same fields in the settings file.
+    try {
+      const settings = JSON.parse(readFileSync(paths.settings ?? SETTINGS_PATH, "utf8")) as Record<string, unknown>;
+      if (!refs) pinnedIds = idList(settings.pinnedAgentIds);
+      if (!side) sections = sectionList(settings.sidebarSections);
+    } catch { /* no settings file: nothing pinned, no sections */ }
+  }
+  // The app remembers which sections the user folded separately from the sections themselves.
+  const collapsed = new Set(idList(refs?.collapsedSectionIds));
+  if (collapsed.size) sections = sections.map((s) => (collapsed.has(s.id) ? { ...s, isCollapsed: true } : s));
+  return { pinnedIds, sections };
+}
+
+/** The user's Main Bot, or undefined when the gateway has none or is slow.
+ * A roster read: it never wakes a parked box and never delays the card. */
+export async function mainAgentId(timeoutMs = 2_500): Promise<string | undefined> {
+  try {
+    const main = await withoutWaking(() => gateway<{ agentId?: string | null } | null>("getMainAgent", {}, { timeoutMs }));
+    return typeof main?.agentId === "string" && main.agentId ? main.agentId : undefined;
+  } catch (error) {
+    log("getMainAgent skipped:", error instanceof Error ? error.message : error);
+    return undefined;
+  }
+}
+
+/** Everything the roster card orders by, best-effort and quick. */
+export async function sidebarPrefs(): Promise<SidebarPrefs> {
+  const [local, mainId] = await Promise.all([Promise.resolve().then(() => readSidebarPrefs()), mainAgentId()]);
+  return { ...local, ...(mainId ? { mainId } : {}) };
 }
 
 // ── Bot pictures ─────────────────────────────────────────────────────────────
@@ -1073,8 +1186,29 @@ export interface AutomationEntry {
 /** Every scheduled task across all bots, each tagged with its agentId. */
 export const listAllAutomations = () => gateway<AutomationEntry[]>("listAllAutomations", {});
 
-export const sendPrompt = (agentId: string, prompt: string) =>
-  gateway<{ accepted?: boolean }>("sendPrompt", { agentId, prompt }, { timeoutMs: WRITE_TIMEOUT_MS });
+/** A file already uploaded to the bot's computer (uploadAttachment): the path
+ * the gateway handed back, and the name the user saw. */
+export interface SentAttachment { path: string; name: string }
+export const sendPrompt = (agentId: string, prompt: string, attachments: SentAttachment[] = []) =>
+  gateway<{ accepted?: boolean }>("sendPrompt", {
+    agentId, prompt,
+    // The app's own send body: parallel path and name lists, only when there are files.
+    ...(attachments.length ? { attachmentPaths: attachments.map((a) => a.path), attachmentNames: attachments.map((a) => a.name) } : {}),
+  }, { timeoutMs: WRITE_TIMEOUT_MS });
+
+/** Put a file on the bot's computer the way the app's composer does
+ * (gateway uploadAttachment: whole file, base64), and return the path a send
+ * can reference. The gateway names the stored copy; whichever field it uses,
+ * a string path comes back or this throws. */
+export async function uploadAttachment(agentId: string, filename: string, bytesBase64: string): Promise<string> {
+  const r = await gateway<Record<string, unknown> | string | null>("uploadAttachment", { agentId, filename, bytesBase64 }, { timeoutMs: WRITE_TIMEOUT_MS * 3 });
+  const path = typeof r === "string" ? r : r && typeof r === "object" ? (r.path ?? r.attachmentPath ?? r.filePath ?? (r.attachment as { path?: unknown } | undefined)?.path) : undefined;
+  if (typeof path !== "string" || !path) {
+    log("uploadAttachment: unexpected result shape", r && typeof r === "object" ? Object.keys(r) : typeof r);
+    throw new IntegrationError("upstream", `${SERVICE_NAME} did not store the file.`);
+  }
+  return path;
+}
 
 export const createAgent = (
   name: string,

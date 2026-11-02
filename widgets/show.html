@@ -3,24 +3,30 @@
 <title>Your Bots</title>
 <style>
 *{box-sizing:border-box;scrollbar-width:none}::-webkit-scrollbar{display:none}
-:root{--k-radius:26px;--accent:#FF8A00;--ink-1:rgba(255,255,255,.95);--ink-2:rgba(255,255,255,.62);--ink-3:rgba(255,255,255,.40);--line:rgba(255,255,255,.09);--fill-1:rgba(255,255,255,.06);--fill-2:rgba(255,255,255,.11);--fill-3:rgba(255,255,255,.16);--good:#34c96e;--bad:#ff5d5d;--eye:#161616}
-html[data-theme=light]{--ink-1:rgba(0,0,0,.92);--ink-2:rgba(0,0,0,.56);--ink-3:rgba(0,0,0,.38);--line:rgba(0,0,0,.08);--fill-1:rgba(0,0,0,.045);--fill-2:rgba(0,0,0,.08);--fill-3:rgba(0,0,0,.12)}
-html,body{margin:0;background:transparent}
-body{color:var(--ink-1);font:13.5px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden}
+/* Grok Bot's own dark palette (sampled from the 0.78.1 app): one flat near-black surface, no glass. */
+:root{--k-radius:26px;--bg:#0e0e0e;--bg-2:#141414;--hover:#1c1c1c;--active:#242424;--line:#1f1f1f;--ink-1:#ececec;--ink-2:#8f8f8f;--ink-3:#5c5c5c;--fill-1:#161616;--fill-2:#1f1f1f;--fill-3:#2a2a2a;--bubble:#1f1f1f;--bot:#FF6700;--bot-ink:#fff;--good:#10ab61;--warn:#da830e;--bad:#e72e3b;--unread:#6499f9;--eye:#161616;--accent:var(--bot)}
+html[data-theme=light]{--bg:#fcfcfc;--bg-2:#f5f5f5;--hover:#1c1c1c0f;--active:#1c1c1c1a;--line:#1c1c1c14;--ink-1:#1c1c1c;--ink-2:#1c1c1cad;--ink-3:#1c1c1c8f;--fill-1:#1c1c1c0a;--fill-2:#1c1c1c0f;--fill-3:#1c1c1c1a;--bubble:#1c1c1c0f}
+html,body{margin:0}
+html{background:var(--bg)}
+body{color:var(--ink-1);font:13.5px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden;background:var(--bg)}
 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
 input,textarea{font:inherit;color:var(--ink-1);background:var(--fill-1);border:1px solid var(--line);border-radius:12px;padding:9px 12px;width:100%;outline:none;resize:none;transition:border-color .15s,background .15s}
-input:focus,textarea:focus{border-color:rgba(255,138,0,.6);background:var(--fill-2)}
+input:focus,textarea:focus{border-color:var(--fill-3)}
 input::placeholder,textarea::placeholder{color:var(--ink-3)}
-.hd{display:flex;align-items:center;gap:10px;padding:13px 15px 9px}
-.hd .grow{flex:1;min-width:0}
+.hd{display:flex;align-items:center;gap:10px;padding:12px 14px 8px;min-height:48px}
+.grow{flex:1;min-width:0}
 .t1{font-size:15px;font-weight:650;letter-spacing:-.012em;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.t2{font-size:13.5px;font-weight:600;letter-spacing:-.005em}
+.t2{font-size:13.5px;font-weight:600;letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .t3{font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .num{font-variant-numeric:tabular-nums}
-.mark{display:flex;align-items:center;gap:6px;color:var(--ink-2);font-size:11.5px;font-weight:600;letter-spacing:.01em}
+.mark{display:flex;align-items:center;gap:7px;color:var(--ink-1);font-size:13px;font-weight:650;letter-spacing:-.005em}
 .mark i{width:16px;height:16px;border-radius:5px;background:var(--ink-1);position:relative;display:inline-block}
 .mark i::before,.mark i::after{content:"";position:absolute;top:5px;width:2px;height:5px;border-radius:2px;background:var(--eye);transform:rotate(12deg)}
 .mark i::before{left:5.5px}.mark i::after{left:9.5px}
+/* Round icon buttons: the app's header controls. */
+.ib{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;color:var(--ink-2);flex:none;transition:background .12s,color .12s}
+.ib:hover{background:var(--hover);color:var(--ink-1)}.ib:active{background:var(--active)}
+/* Orbs. The shape rules (__VOICEOS_SHAPES__) clip the body and place the eyes where the app draws them. */
 .av{position:relative;flex:none;display:inline-block;width:36px;height:36px;background:var(--c,#FF6700)}
 __VOICEOS_SHAPES__
 .av{transform-origin:50% 60%}
@@ -40,30 +46,69 @@ __VOICEOS_SHAPES__
 @keyframes shake{0%,10%,100%{transform:translateX(0)}2%{transform:translateX(-6%)}4%{transform:translateX(6%)}6%{transform:translateX(-4%)}8%{transform:translateX(3%)}}
 @keyframes hop{0%{transform:translateY(0)}40%{transform:translateY(-18%) scale(1.06,.94)}70%{transform:translateY(0) scale(.97,1.04)}100%{transform:none}}
 @keyframes squash{0%{transform:scale(1)}40%{transform:scale(1.14,.86)}100%{transform:scale(1)}}
-.dot.warn{background:var(--accent)}.dot.bad{background:var(--bad)}
-.av.small{width:24px;height:24px}.av.tiny{width:18px;height:18px}
+.av.small{width:24px;height:24px}.av.tiny{width:18px;height:18px}.av.mini{width:20px;height:20px}.av.big{width:56px;height:56px}
+/* The orb slot: the orb plus its badges (the Main Bot star .mb, the working light .live), which the clip-path
+   must not cut. Badge classes must never be a shape id (star, heart, …): those are classes on the orb itself. */
+.orb{position:relative;flex:none;display:inline-block;width:36px;height:36px}
+.orb.big{width:56px;height:56px}.orb.small{width:24px;height:24px}.orb.mini{width:20px;height:20px}.orb.tiny{width:18px;height:18px}
+.orb.mini .mb,.orb.small .mb,.orb.tiny .mb{width:11px;height:11px;right:-3px;bottom:-3px;box-shadow:0 0 0 1.5px var(--fill-1)}.orb.mini .mb svg,.orb.small .mb svg,.orb.tiny .mb svg{width:7px;height:7px}
+.orb.mini .live,.orb.small .live,.orb.tiny .live{width:7px;height:7px;left:-2px;bottom:-2px;box-shadow:0 0 0 1.5px var(--fill-1)}
+.orb .mb{position:absolute;right:-2px;bottom:-2px;width:15px;height:15px;border-radius:50%;background:#fff;color:#111;display:grid;place-items:center;box-shadow:0 0 0 2px var(--bg)}
+.orb.big .mb{width:18px;height:18px;right:0;bottom:0}
+.orb .mb svg{width:9px;height:9px}.orb.big .mb svg{width:11px;height:11px}
+.orb .live{position:absolute;left:-1px;bottom:-1px;width:10px;height:10px;border-radius:50%;background:var(--good);box-shadow:0 0 0 2px var(--bg)}
+.orb .live.warn{background:var(--warn)}.orb .live.bad{background:var(--bad)}
+.orb .live.on{animation:pulse 1.8s ease-out infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 2px var(--bg),0 0 0 2px rgba(16,171,97,.55)}100%{box-shadow:0 0 0 2px var(--bg),0 0 0 7px rgba(16,171,97,0)}}
+.udot{width:8px;height:8px;border-radius:50%;background:var(--unread);flex:none}
 .chip{display:inline-flex;align-items:center;font-size:11px;font-weight:500;color:var(--ink-2);background:var(--fill-2);border-radius:6px;padding:1px 6px;line-height:16px;white-space:nowrap}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--ink-3);flex:none}
-.dot.on{background:var(--good);box-shadow:0 0 0 0 rgba(52,201,110,.6);animation:pulse 1.8s ease-out infinite}
-@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(52,201,110,.55)}100%{box-shadow:0 0 0 6px rgba(52,201,110,0)}}
-.lbl{font-size:11px;font-weight:600;color:var(--ink-2);letter-spacing:.02em;text-transform:uppercase;margin:0 0 5px 2px}
+.dot.on{background:var(--good)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}
+.lbl{font-size:12px;font-weight:500;color:var(--ink-2);padding:12px 16px 4px;display:flex;align-items:center;gap:6px;width:100%;text-align:left;border-radius:0}
+.lbl svg{width:10px;height:10px;transition:transform .2s;color:var(--ink-3)}
+.lbl[aria-expanded=false] svg{transform:rotate(-90deg)}
+.lbl:hover{color:var(--ink-1)}
+.sec[hidden]{display:none}
+/* Pinned bots: the app's tile grid above the list. */
+.pins{display:flex;flex-wrap:wrap;justify-content:center;gap:2px;padding:4px 10px 6px}
+.tile{width:88px;display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 6px 10px;border-radius:16px;transition:background .12s;position:relative}
+.tile:hover{background:var(--hover)}.tile:active{background:var(--active)}
+.tile .nm{font-size:12px;font-weight:500;color:var(--ink-1);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
+.tile .udot{position:absolute;top:10px;right:10px}
 .confirm-pad{height:48px}
 .foot{display:flex;align-items:center;gap:6px;padding:0 15px;height:56px;color:var(--ink-3);font-size:11.5px;padding-right:160px}
-.bubble{max-width:82%;padding:8px 12px;border-radius:16px;font-size:13.5px;line-height:1.38;word-wrap:break-word}
-.bubble.bot{background:var(--fill-2);border-bottom-left-radius:6px;align-self:flex-start}
-.bubble.me{background:var(--fill-3);border-bottom-right-radius:6px;align-self:flex-end}
+/* Chat: the app's bubbles. The bot speaks in the flat dark bubble; you speak in the bot's own color. */
+.bubble{max-width:82%;padding:8px 13px;border-radius:18px;font-size:13.5px;line-height:1.4;word-wrap:break-word}
+.bubble.bot{background:var(--bubble);color:var(--ink-1);border-bottom-left-radius:6px;align-self:flex-start}
+.bubble.me{background:var(--bot);color:var(--bot-ink);border-bottom-right-radius:6px;align-self:flex-end}
 .bubble b{font-weight:650}
+.bubble .att{display:flex;flex-wrap:wrap;gap:6px}.bubble .att+div,.bubble div+.att{margin-top:6px}
+.bubble .att span{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:3px 8px;border-radius:8px;background:rgba(0,0,0,.18);font-size:12px}.bubble .att span i{display:inline-block;width:10px;height:10px;border-radius:2px;border:1.5px solid currentColor;opacity:.8}
 .sys{align-self:center;color:var(--ink-3);font-size:11.5px;display:flex;align-items:center;gap:5px;padding:2px 0}
-.msgs{display:flex;flex-direction:column;gap:6px;padding:4px 14px 30px;overflow-y:auto;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent)}
-.compose{display:flex;align-items:center;gap:8px;margin:0 12px 12px;background:var(--fill-1);border:1px solid transparent;border-radius:22px;padding:5px 5px 5px 6px}
-.compose input{background:none;border:0;padding:6px 4px;flex:1;min-width:0}
-.compose .send{width:30px;height:30px;border-radius:50%;background:var(--ink-1);color:#000;flex:none;display:grid;place-items:center;transition:transform .12s,opacity .15s}
+.msgs{display:flex;flex-direction:column;gap:5px;padding:6px 14px 30px;overflow-y:auto;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent)}
+.compose{display:flex;align-items:center;gap:8px;margin:0 12px 12px;background:var(--fill-1);border:1px solid var(--line);border-radius:22px;padding:4px 4px 4px 6px;transition:border-color .15s}
+.compose:focus-within{border-color:var(--fill-3)}
+.compose input{background:none;border:0;padding:7px 6px 7px 2px;flex:1;min-width:0}
+.compose .plus{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:var(--ink-2);flex:none;transition:background .12s,color .12s}
+.compose .plus:hover{background:var(--fill-2);color:var(--ink-1)}.compose .plus[disabled]{opacity:.4}
+.files{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 8px}.files[hidden]{display:none}
+.file{display:inline-flex;align-items:center;gap:6px;max-width:100%;height:28px;padding:0 6px 0 4px;border-radius:9px;background:var(--fill-1);border:1px solid var(--line);font-size:12px;color:var(--ink-1)}
+.file img{width:20px;height:20px;border-radius:5px;object-fit:cover;flex:none}.file svg{width:14px;height:14px;color:var(--ink-2);flex:none;margin-left:2px}
+.file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px}.file small{color:var(--ink-3);font-variant-numeric:tabular-nums}
+.file .x{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;color:var(--ink-3);flex:none}.file .x:hover{background:var(--fill-3);color:var(--ink-1)}
+.file.up{opacity:.7}
+.compose .send{width:30px;height:30px;border-radius:50%;background:var(--bot);color:var(--bot-ink);flex:none;display:grid;place-items:center;transition:transform .12s,opacity .15s}
 .compose .send:active{transform:scale(.92)}
 .compose .send[disabled]{opacity:.35}
-.row{display:flex;align-items:center;gap:11px;padding:8px 15px;transition:background .12s;width:100%;text-align:left;border-radius:14px}
-.row:hover{background:var(--fill-1)}
-.row:active{background:var(--fill-2)}
-
+/* Rows: orb, name, last line; the blue unread dot on the right (no time stamps, like the app's sidebar). */
+.row{display:flex;align-items:center;gap:12px;padding:9px 14px;transition:background .12s;width:100%;text-align:left;border-radius:14px}
+.row:hover{background:var(--hover)}
+.row:active{background:var(--active)}
+.row .task{font-size:12.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.row .when{font-size:11.5px;color:var(--ink-3);flex:none;margin-left:6px}
+.list-pad{height:6px}
+.pane.list{display:flex;flex-direction:column;max-height:412px}
+.lb{overflow-y:auto;min-height:0;overscroll-behavior:contain;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 18px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 18px),transparent)}
 .fade-in{animation:in .28s cubic-bezier(.2,.8,.2,1) both}
 @keyframes in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -72,7 +117,11 @@ __VOICEOS_SHAPES__
 <style>.panes{position:relative;overflow:hidden}.pane{transition:transform .32s cubic-bezier(.2,.8,.2,1),opacity .32s}.pane.chat,.pane.screen{position:absolute;inset:0 0 auto 0;transform:translateX(100%);opacity:0;pointer-events:none}.panes.open .pane.list{position:absolute;inset:0 0 auto 0;transform:translateX(-18%);opacity:0;pointer-events:none}.panes.open .pane.chat{position:static;transform:none;opacity:1;pointer-events:auto}
 /* Third pane: the live screen. It slides in from chat's right (same "going right" motion), and chat
    slides out to the left behind it — so Back on the screen pane brings chat back in from the left. */
-.panes.open.screen .pane.chat{position:absolute;inset:0 0 auto 0;transform:translateX(-18%);opacity:0;pointer-events:none}.panes.screen .pane.screen{position:static;transform:none;opacity:1;pointer-events:auto}.stack{display:inline-flex;flex:none}.stack .av{margin-left:-14px;outline:2px solid #0c0c0d}.stack .av:first-child{margin-left:0}html[data-theme=light] .stack .av{outline-color:#fff}.back{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:var(--ink-2);background:var(--fill-1);flex:none}.back:hover{background:var(--fill-2)}.row .task{font-size:12.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.st{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink-2)}</style>
+.panes.open.screen .pane.chat{position:absolute;inset:0 0 auto 0;transform:translateX(-18%);opacity:0;pointer-events:none}.panes.screen .pane.screen{position:static;transform:none;opacity:1;pointer-events:auto}.stack{display:inline-flex;flex:none}.stack .av{margin-left:-14px;outline:2px solid var(--bg)}.stack .av:first-child{margin-left:0}.back{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;color:var(--ink-2);flex:none;transition:background .12s,color .12s}.back:hover{background:var(--hover);color:var(--ink-1)}.st{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink-2)}
+/* The chat header: the app's centered pill (orb + name) between Back and the screen button. */
+.hd.chat-hd{padding:10px 12px 6px;gap:6px}.hd .mid{flex:1;min-width:0;display:flex;justify-content:center}
+.pill{display:inline-flex;align-items:center;gap:8px;max-width:100%;height:32px;padding:0 12px 0 6px;border-radius:16px;background:var(--fill-1);border:1px solid var(--line)}
+.pill .grow{min-width:0}.pill .t2{font-size:13px}.pill .stack .av{outline-color:var(--fill-1)}</style>
 <div class="panes" id="panes">
   <div class="pane list" id="list"></div>
   <div class="pane chat" id="chat"></div>
@@ -85,10 +134,17 @@ const DEMO=__VOICEOS_DEMO__;
 const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const EYES='<span class="eyes"><i class="eye l"></i><i class="eye r"></i></span>';
+const STAR='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6L2.5 9.4l6.6-.8z"/></svg>';
+const CHEV='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
 /* A bot's picture (data.avatars, baked by the server) covers its shape. The shape
    stays underneath, so a picture that fails to load just uncovers it. */
 const avImg=b=>{const u=b&&b.id&&D&&D.avatars?D.avatars[b.id]:'';return typeof u==='string'&&/^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+\/]+=*$/.test(u)?u:''};
 const av=(b,cls='')=>{const img=avImg(b);return '<span class="av '+(b.shape||'blob')+' '+cls+(img?' photo':'')+'" data-state="'+esc(b.status||'idle')+'" style="--c:'+esc(b.color)+'">'+EYES+(img?'<img class="pic" alt="" src="'+esc(img)+'">':'')+'</span>'};
+/* The orb in its slot, with the app's badges: the Main Bot star and the working light. */
+const dotCls=b=>({working:'on',thinking:'on',waiting:'warn',blocked:'bad'}[b.status]||'');
+const orb=(b,cls='')=>{const d=dotCls(b);return '<span class="orb '+cls+'">'+av(b,cls)+(b.shape==='pumpkin'&&!avImg(b)?'<i class="stem"></i>':'')+(b.main?'<span class="mb" title="Main Bot">'+STAR+'</span>':'')+(d?'<span class="live '+d+'"></span>':'')+'</span>'};
+/* Text on a bot-colored surface: the app writes white on its deep colors and ink on the light ones. */
+const inkOn=hex=>{const m=/^#([0-9a-f]{6})$/i.exec(hex||'');if(!m)return '#fff';const n=parseInt(m[1],16),r=n>>16,g=n>>8&255,b=n&255;return (r*299+g*587+b*114)/1000>170?'#111':'#fff'};
 addEventListener('error',e=>{const t=e.target;if(!t||!t.classList||!t.classList.contains('pic'))return;const s=t.getAttribute('src');if(D&&D.avatars)for(const k in D.avatars)if(D.avatars[k]===s)delete D.avatars[k];const a=t.parentNode;if(a&&a.classList)a.classList.remove('photo');t.remove()},true);
 let inited=false;
 addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;CAN_INVOKE=!!(m.capabilities&&m.capabilities.invokeTool);if(inited)return;inited=true;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
@@ -111,10 +167,12 @@ addEventListener('message',e=>{if(e.source!==parent)return;const m=e.data;if(!m|
 function invoke(name,args){return new Promise((resolve,reject)=>{const requestId='r'+(++_rq)+'_'+Date.now();_pending.set(requestId,{resolve,reject});parent.postMessage({type:'voiceos:invokeTool',name,args,requestId},'*');setTimeout(()=>{if(_pending.delete(requestId))reject({status:'unknown',error:'No response — check the app before trying again.'})},130000)})}
 function report(){if(document.hidden||!document.documentElement.offsetWidth)return;const h=Math.ceil(document.body.getBoundingClientRect().height);if(h>=8)parent.postMessage({type:'voiceos:resize',height:h},'*')}
 
-/* Motion — an original avatar liveness engine: wandering gaze, blinks, cursor-follow, per-state behavior. */
+/* Motion — an original avatar liveness engine: wandering gaze, blinks, cursor-follow, per-state behavior.
+   The eyes may travel the whole face (LOOK_X/LOOK_Y, in % of the orb), in every direction. */
 const Motion=(()=>{
  const R=(a,b)=>a+Math.random()*(b-a);
  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+ const LOOK_X=20,LOOK_Y=15;
  let pointer=null,ptrAt=0;
  addEventListener('pointermove',e=>{pointer={x:e.clientX,y:e.clientY};ptrAt=performance.now()});
  document.documentElement.addEventListener('pointerleave',()=>pointer=null);
@@ -127,9 +185,9 @@ const Motion=(()=>{
  function schedule(m){clear(m);const s=st(m);
   const bl=()=>{blink(m,Math.random()<.2);later(m,bl,R(s==='working'?1600:2600,s==='working'?3200:5800))};later(m,bl,R(300,2400));
   const gz=()=>{
-   if(s==='idle'){gaze(m,R(-14,14),R(-8,8),R(500,900));later(m,()=>gaze(m,0,0,800),R(900,2400))}
+   if(s==='idle'){gaze(m,R(-LOOK_X,LOOK_X),R(-LOOK_Y,LOOK_Y),R(500,900));later(m,()=>gaze(m,R(-3,3),R(-2,2),800),R(900,2400))}
    else if(s==='working'){gaze(m,R(-16,-8),R(4,10),130);later(m,()=>gaze(m,R(8,16),R(4,10),130),R(220,420))}
-   else if(s==='thinking'){gaze(m,Math.random()<.75?14:-14,-12,600)}
+   else if(s==='thinking'){gaze(m,Math.random()<.75?LOOK_X:-LOOK_X,-12,600)}
    else if(s==='waiting'){gaze(m,0,-3,500)}
    else if(s==='blocked'){gaze(m,0,12,500)}
    else gaze(m,0,0,300);
@@ -139,7 +197,8 @@ const Motion=(()=>{
  }
  function mount(el){if(el._m||!el.querySelector('.eyes'))return;const m=el._m={el,eyes:el.querySelector('.eyes'),timers:new Set()};live.add(m);schedule(m)}
  function scan(){document.querySelectorAll('.av').forEach(mount);live.forEach(m=>{if(!m.el.isConnected){clear(m);live.delete(m);delete m.el._m}})}
- function tick(){if(pointer&&!reduce){if(performance.now()-ptrAt>4000)pointer=null;else live.forEach(m=>{if(!m.el.isConnected)return;const r=m.el.getBoundingClientRect();const dx=pointer.x-(r.left+r.width/2),dy=pointer.y-(r.top+r.height/2);const d=Math.hypot(dx,dy)||1,k=Math.min(1,d/140);m.eyes.style.transition='transform 200ms cubic-bezier(.2,.8,.2,1)';m.eyes.style.transform='translate('+(dx/d*16*k).toFixed(1)+'%,'+(dy/d*10*k).toFixed(1)+'%)'})}requestAnimationFrame(tick)}
+ // Cursor-follow: every orb looks toward the cursor; the one under it (its row or tile) looks straight at you.
+ function tick(){if(pointer&&!reduce){if(performance.now()-ptrAt>4000)pointer=null;else live.forEach(m=>{if(!m.el.isConnected)return;const r=m.el.getBoundingClientRect();if(!r.width)return;const dx=pointer.x-(r.left+r.width/2),dy=pointer.y-(r.top+r.height/2);const d=Math.hypot(dx,dy)||1,own=!!m.el.closest('.row:hover,.tile:hover,.hd:hover'),k=own?1:Math.min(1,d/140);m.eyes.style.transition='transform 200ms cubic-bezier(.2,.8,.2,1)';m.eyes.style.transform='translate('+(dx/d*LOOK_X*k).toFixed(1)+'%,'+(dy/d*LOOK_Y*k).toFixed(1)+'%)'})}requestAnimationFrame(tick)}
  requestAnimationFrame(tick);
  new MutationObserver(scan).observe(document.documentElement,{childList:true,subtree:true});
  function set(el,s){if(!el)return;el.dataset.state=s;if(el._m)schedule(el._m)}
@@ -151,18 +210,19 @@ function msgsBox(inner){return '<div class="msgs" id="msgs" style="max-height:26
 function autosize(t){t.style.height='auto';t.style.height=t.scrollHeight+'px'}
 
 
-const botById=(d,id)=>(d.bots||[]).find(b=>b.id===id)||{name:id,color:'#888',shape:'blob'};
+const botById=(d,id)=>(d.bots||[]).find(b=>b.id===id)||(d.groups||[]).find(g=>g.id===id)||{name:id,color:'#888',shape:'blob'};
 const statusText=b=>({working:'Working',thinking:'Thinking',waiting:'Needs you',blocked:'Blocked',done:'Done',idle:'Idle'}[b.status]||'Idle');
-const dotCls=b=>({working:'on',thinking:'on',waiting:'warn',blocked:'bad'}[b.status]||'');
 /* Per-bot recent messages come in d.threads[botId] (from grokbot_show); fall
    back to a flat d.thread (older shape) or empty (just the composer). */
 function thread(d,botId){const list=(d.threads&&d.threads[botId])||d.thread||[];return list.map(m=>{if(m.sys){const b=botById(d,m.bot);return '<div class="sys">'+esc(m.sys)+' '+av(b,'tiny')+' '+esc(b.name)+'</div>'}return (m.t?'<div class="sys">'+esc(m.t)+'</div>':'')+'<div class="bubble '+m.from+' fade-in">'+(m.html||esc(m.text))+'</div>'}).join('')}
-function composer(name,ph){return '<form class="compose" id="compose" onsubmit="return false"><input id="msg" placeholder="'+esc(ph||('Message '+name))+'" autocomplete="off"><button class="send" type="button" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form>'}
+/* The app's message bar: + (attach files) on the left, the box, the bot-colored send. The attached
+   files sit in a chip row above the bar (#files), filled by show-adapter.js. */
+function composer(name,ph){return '<div class="files" id="files" hidden></div><form class="compose" id="compose" onsubmit="return false"><input type="file" id="pick" multiple hidden><button class="plus" type="button" id="attach" aria-label="Attach files" title="Attach files"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><input id="msg" placeholder="'+esc(ph||('Message '+name))+'" autocomplete="off"><button class="send" type="button" disabled aria-label="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form>'}
 /* The card iframe is sandboxed "allow-scripts" only — no allow-forms — so a
    <form> submit event NEVER fires (the host blocks it silently). Drive the send
    from the button's click and the input's Enter instead, never from submit. */
 function wireComposer(root,onSend){const f=$('#compose',root),i=$('#msg',f),b=$('.send',f);const go=()=>{const v=i.value.trim();if(!v)return;i.value='';b.disabled=true;onSend(v)};i.addEventListener('input',()=>b.disabled=!i.value.trim());b.addEventListener('click',e=>{e.preventDefault();go()});i.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();go()}})}
-function appendMe(list,text){const el=document.createElement('div');el.className='bubble me fade-in';el.textContent=text;list.appendChild(el);const s=document.createElement('div');s.className='sys';s.textContent='Delivered via VoiceOS';list.appendChild(s);list.scrollTop=list.scrollHeight}
+function appendMe(list,text){const el=document.createElement('div');el.className='bubble me fade-in';el.textContent=text;list.appendChild(el);list.scrollTop=list.scrollHeight}
 /* Optimistic send bubble: shows "Sending…" while the tool runs. On success the
    whole card swaps to the receipt (swapTo); on failure it resolves to failed
    when the invoked grokbot_card_send tool reports back over voiceos:toolResult.
@@ -171,7 +231,7 @@ function appendMe(list,text){const el=document.createElement('div');el.className
    NO fake "typing back": the bot's reply arrives async in the notch, and the
    send itself is confirmed by the tool's own "sent" glance card (1d) —
    never simulate the bot composing a reply on this card. */
-function sendBubble(list,text){const b=document.createElement('div');b.className='bubble me fade-in';b.textContent=text;list.appendChild(b);const s=document.createElement('div');s.className='sys';s.textContent='Sending…';list.appendChild(s);list.scrollTop=list.scrollHeight;return{ok(){s.textContent='Delivered via VoiceOS'},cancelled(){b.style.opacity='.5';s.textContent='Cancelled'},unknown(){s.textContent='Sent — check the app to confirm'},fail(err){b.style.opacity='.5';s.style.color='var(--bad)';s.textContent='Not sent · '+err}}}
+function sendBubble(list,text){const b=document.createElement('div');b.className='bubble me fade-in';b.textContent=text;list.appendChild(b);list.scrollTop=list.scrollHeight;return{ok(){},cancelled(){b.remove()},unknown(){},fail(){b.remove()}}}
 
 /* After a send this card becomes the RECEIPT — the same "Message sent" /
    "Sent to group" glance card a voice send ends on. The host does not show a
@@ -189,21 +249,41 @@ function swapTo(receipt){
  document.open();document.write(html);document.close();
 }
 
-let D;
-function render(d){D=d;const w=d.bots.filter(b=>['working','thinking'].includes(b.status)).length,need=d.bots.filter(b=>b.status==='waiting').length;
- $('#list').innerHTML='<div class="hd"><span class="mark"><i></i>Grok Bot</span></div>'
- +d.bots.map(b=>'<button class="row" data-bot="'+b.id+'">'+av(b)+'<div class="grow" style="min-width:0"><div style="display:flex;align-items:center;gap:6px"><span class="t2">'+esc(b.name)+'</span><span class="chip">'+esc(b.label)+'</span><span class="grow"></span><span class="st"><span class="dot '+dotCls(b)+'"></span>'+statusText(b)+'</span></div><div class="task">'+esc(b.task)+'</div></div></button>').join('')
- +(d.groups||[]).map(g=>'<button class="row" data-group="'+g.id+'"><span class="stack">'+g.members.map(id=>av(botById(d,id),'small')).join('')+'</span><div class="grow" style="min-width:0"><div style="display:flex;align-items:center;gap:6px"><span class="t2">'+esc(g.name)+'</span><span class="chip">Group</span><span class="grow"></span><span class="t3 num">'+esc(g.time)+'</span></div><div class="task">'+esc(g.last)+'</div></div></button>').join('')
- +'<div style="height:8px"></div>';
- $$('.row[data-bot]').forEach(r=>r.onclick=()=>{Motion.react(r.querySelector('.av'));setTimeout(()=>openChat(botById(d,r.dataset.bot)),150)});
- $$('.row[data-group]').forEach(r=>r.onclick=()=>openChat({name:d.groups.find(g=>g.id===r.dataset.group).name,color:'#888',shape:'blob',status:'working',group:true,members:d.groups.find(g=>g.id===r.dataset.group).members}));
+/* The roster, laid out the way the Grok Bot sidebar is (cards.ts rosterData ports
+   the app's order): pinned bots as tiles on top; then either one list, or the
+   user's sections, each folding like the app's. Groups sit among the bots at
+   their place in that order (g.ix). A group row is one orb — its own shape and
+   color — exactly as the sidebar draws it. */
+let D;const folded=new Set();
+function rows(d){const list=(d.bots||[]).slice();(d.groups||[]).slice().sort((a,b)=>(a.ix??1e9)-(b.ix??1e9)).forEach(g=>list.splice(Math.min(typeof g.ix==='number'?g.ix:list.length,list.length),0,g));return list}
+const isGroup=x=>Array.isArray(x.members);
+const rowOf=x=>'<button class="row" data-'+(isGroup(x)?'group':'bot')+'="'+esc(x.id)+'">'+orb(x)+'<div class="grow" style="min-width:0"><div class="t2">'+esc(x.name)+'</div><div class="task">'+esc(isGroup(x)?x.last:x.task)+'</div></div>'+(x.unread?'<span class="udot" aria-label="Unread"></span>':'')+'</button>';
+const tileOf=x=>'<button class="tile" data-'+(isGroup(x)?'group':'bot')+'="'+esc(x.id)+'">'+orb(x,'big')+'<span class="nm">'+esc(x.name)+'</span>'+(x.unread?'<span class="udot" aria-label="Unread"></span>':'')+'</button>';
+function render(d){D=d;const all=rows(d),byId=new Map(all.map(x=>[x.id,x]));
+ const pinned=(d.pinned||[]).map(id=>byId.get(id)).filter(Boolean),pinnedIds=new Set(pinned.map(x=>x.id));
+ let body='';
+ if(pinned.length)body+='<div class="pins">'+pinned.map(tileOf).join('')+'</div>';
+ const secs=Array.isArray(d.sections)?d.sections:[];
+ if(secs.length){for(const s of secs){const open=!(folded.has(s.id)||(s.collapsed&&!folded.has('!'+s.id)));
+   body+='<button class="lbl" data-sec="'+esc(s.id)+'" aria-expanded="'+open+'">'+CHEV+esc(s.name||'Unassigned')+'</button><div class="sec"'+(open?'':' hidden')+'>'+(s.ids||[]).map(id=>byId.get(id)).filter(x=>x&&!pinnedIds.has(x.id)).map(rowOf).join('')+'</div>'}}
+ else body+=all.filter(x=>!pinnedIds.has(x.id)).map(rowOf).join('');
+ if(!all.length)body+='<div class="sys" style="padding:18px 0 10px">No bots yet.</div>';
+ $('#list').innerHTML='<div class="hd"><span class="mark"><i></i>Grok Bot</span><span class="grow"></span><button class="ib" id="gb-new" aria-label="New group" title="New group"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div><div class="lb">'+body+'<div class="list-pad"></div></div>';
+ $$('.lbl[data-sec]').forEach(l=>l.onclick=()=>{const id=l.dataset.sec,s=secs.find(x=>x.id===id),open=l.getAttribute('aria-expanded')==='true';
+  // Remember the user's own fold/unfold for this card; the app's state is the default.
+  folded.delete(id);folded.delete('!'+id);if(open)folded.add(id);else if(s&&s.collapsed)folded.add('!'+id);
+  l.setAttribute('aria-expanded',String(!open));l.nextElementSibling.hidden=open;report()});
+ $$('[data-bot]').forEach(r=>r.onclick=()=>{Motion.react(r.querySelector('.av'));setTimeout(()=>openChat(botById(d,r.dataset.bot)),150)});
+ $$('[data-group]').forEach(r=>r.onclick=()=>{Motion.react(r.querySelector('.av'));const g=(d.groups||[]).find(x=>x.id===r.dataset.group);if(g)setTimeout(()=>openChat({...g,group:true,status:'working',members:g.members||[]}),150)});
 }
-/* The chat pane is the 1F thread card (thread.html) rendered in-place: same
-   36px avatar, no wordmark, same 268px message area. The only
-   addition is the back button, which a two-pane card needs to return to the
-   roster. Keep this header in sync with thread.html's render(). */
+/* The chat pane: Back, the app's centered pill (orb + name), the live conversation and the box.
+   The bot's color becomes the pane's accent (your bubbles, the send button), like the app's
+   "bot color in chat". Keep this header in sync with show-adapter.js's group editor, which
+   swaps the pill's .stack and .t2 for its own controls. */
 function openChat(b){const c=$('#chat');
- c.innerHTML='<div class="hd"><button class="back" id="back" aria-label="Back"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>'+(b.group?'<span class="stack">'+b.members.map(id=>av(botById(D,id),'small')).join('')+'</span>':av(b))+'<div class="grow"><div class="t2">'+esc(b.name)+'</div><div class="st"><span class="dot '+dotCls(b)+'"></span>'+statusText(b)+(b.label?' · '+esc(b.label):'')+'</div></div></div>'
+ const color=b.color||'#888';c.style.setProperty('--bot',color);c.style.setProperty('--bot-ink',inkOn(color));
+ c.innerHTML='<div class="hd chat-hd"><button class="back" id="back" aria-label="Back"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>'
+ +'<div class="mid"><div class="pill">'+(b.group?'<span class="stack">'+b.members.map(id=>av(botById(D,id),'mini')).join('')+'</span>':orb({...b,status:b.status},'mini'))+'<div class="grow"><div class="t2">'+esc(b.name)+'</div></div></div></div></div>'
  +msgsBox(thread(D,b.id))+composer(b.name);
  $('#panes').classList.add('open');$('#back').onclick=()=>$('#panes').classList.remove('open');
  const m=$('#msgs');m.scrollTop=m.scrollHeight;wireComposer(c,v=>{const a=$('.hd .av',c);Motion.react(a);

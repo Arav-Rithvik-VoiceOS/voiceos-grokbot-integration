@@ -12,7 +12,7 @@
  * This file runs in the UNSANDBOXED server process, so it may read the widget
  * files from disk; only the card iframe itself is network/fs-restricted.
  */
-import type { Agent, TranscriptEntry } from "./client.ts";
+import type { Agent, SidebarPrefs, TranscriptEntry } from "./client.ts";
 // Every card asset (widget HTML, adapters, CSS, the mark, the RFB viewer) is
 // frozen into assets.generated.ts by scripts/inline-assets.mjs so `bun build`
 // inlines it into the shared single-file server.ts. Reading these from disk
@@ -27,7 +27,7 @@ import {
 } from "./assets.generated.ts";
 import { toCardThread, boundThread, type CardItem } from "./conversation.ts";
 import { renderMarkdown } from "./markdown.ts";
-import { GROK_ALL_SHAPE_IDS, type GrokAnyShape, avatarCss } from "./avatarShapes.ts";
+import { GROK_ALL_SHAPE_IDS, SHAPE_ART, type GrokAnyShape, avatarCss } from "./avatarShapes.ts";
 
 type CardName = "connect" | "show" | "create" | "guide" | "reconnect";
 
@@ -284,6 +284,29 @@ const preview = (s?: string) => {
   return one.length > 120 ? `${one.slice(0, 119).trimEnd()}…` : one;
 };
 
+/** The flags a roster row draws beyond its orb and name: Grok Bot's blue unread
+ * dot, and (set by rosterData) its pin and Main Bot star. Only true values are
+ * written, so an ordinary bot costs no extra glance bytes. */
+const flags = (a: Agent) => (a.hasUnread || (a.unreadCount ?? 0) > 0 ? { unread: true as const } : {});
+
+/** The bot's orb as a small image: its shape, color and eyes, drawn the way the
+ * cards draw them (avatarShapes.ts), as an SVG data: URI; a bot that wears a
+ * picture gives that picture instead. For surfaces that take an image and not
+ * markup: the notch's reminder pill shows it as the message's face. */
+export function orbIcon(a: Agent): string {
+  if (!a.isGroup && a.avatarImage && /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+=*$/.test(a.avatarImage)) return a.avatarImage;
+  const shape = shapeKind(a.avatarShape, a.id);
+  const color = colorHex(a.avatarColor, a.id);
+  const { poly, eyes: [tx, ty, rotate, scale, tilt, left, right] } = SHAPE_ART[shape];
+  const points = poly.replace(/%/g, "");
+  // The cards' .eyes box is the orb's own box, turned and scaled about its center, then moved.
+  const eye = (x: number) => `<rect x="${x}" y="31" width="11" height="27" rx="5.5" transform="rotate(${tilt} ${x + 5.5} 44.5)"/>`;
+  const stem = shape === "pumpkin" ? `<rect x="29" y="0" width="5" height="11" rx="2.5" fill="#6f7a5f" transform="rotate(-14 31.5 11)"/>` : "";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">${stem}<polygon points="${points}" fill="${color}"/>`
+    + `<g fill="#161616" transform="translate(${tx} ${ty}) translate(50 50) rotate(${rotate}) scale(${scale}) translate(-50 -50)">${eye(left)}${eye(right)}</g></svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`;
+}
+
 /** One bot in the card's `data.bots` shape. */
 export function toBot(a: Agent) {
   return {
@@ -295,8 +318,93 @@ export function toBot(a: Agent) {
     status: statusOf(a),
     task: preview(a.lastMessagePreview),
     time: relTime(a.lastActivityAt),
+    ...flags(a),
   };
 }
+
+// ── Roster order: what the Grok Bot sidebar does ─────────────────────────────
+//
+// Ported from the app's roster code (0.78.1, index.eager-app: Rm / lme / dm /
+// zm): pinned rows first, in the user's pin order; every other row by its
+// newest moment, the later of `updatedAt` and `lastActivityAt` (a bot the user
+// just renamed moves up like one that just spoke). With sidebar sections, each
+// section keeps that order inside it; rows in no section fall into the app's
+// synthetic "Unassigned" section, which only shows when it has rows. Pinned
+// rows never repeat inside a section.
+
+/** A row's sort moment: the app's `lme(row)`. */
+const rowMoment = (a: Agent) => Math.max(a.updatedAt ?? 0, a.lastActivityAt ?? 0, a.createdAt ?? 0);
+
+/** Bots and groups in the app's sidebar order. Stable for ties, so a gateway
+ * that sends no timestamps keeps its own order. */
+export function orderRoster<T extends Agent>(agents: T[], pinnedIds: string[] = []): T[] {
+  const byId = new Map(agents.map((a) => [a.id, a]));
+  const pinned = pinnedIds.map((id) => byId.get(id)).filter((a): a is T => !!a);
+  const pinnedSet = new Set(pinned.map((a) => a.id));
+  const rest = agents.filter((a) => !pinnedSet.has(a.id))
+    .map((a, i) => [a, i] as const)
+    .sort(([a, i], [b, j]) => rowMoment(b) - rowMoment(a) || i - j)
+    .map(([a]) => a);
+  return [...pinned, ...rest];
+}
+
+/** The app's synthetic section id for rows in no section. */
+export const UNASSIGNED_SECTION = "__agents__";
+
+export type RosterSection = { id: string; name: string; ids: string[]; collapsed?: true };
+
+/** Sections as the card draws them: each with its unpinned rows in roster
+ * order, then "Unassigned" for the rest (only when non-empty). Empty when the
+ * user has no sections: the card then draws one flat list. */
+export function rosterSections(ordered: Agent[], prefs: Pick<SidebarPrefs, "pinnedIds" | "sections">): RosterSection[] {
+  if (!prefs.sections.length) return [];
+  const pinned = new Set(prefs.pinnedIds);
+  const placed = new Map<string, string>();
+  for (const s of prefs.sections) if (s.id !== UNASSIGNED_SECTION) for (const id of s.agentIds) if (!placed.has(id)) placed.set(id, s.id);
+  const rows = ordered.filter((a) => !pinned.has(a.id));
+  const out: RosterSection[] = [];
+  let unassignedAt = -1;
+  for (const s of prefs.sections) {
+    if (s.id === UNASSIGNED_SECTION) { unassignedAt = out.length; continue; }
+    out.push({ id: s.id, name: s.name, ids: rows.filter((a) => placed.get(a.id) === s.id).map((a) => a.id), ...(s.isCollapsed ? { collapsed: true } : {}) });
+  }
+  const loose = rows.filter((a) => !placed.has(a.id)).map((a) => a.id);
+  if (loose.length) {
+    const unassigned: RosterSection = { id: UNASSIGNED_SECTION, name: "Unassigned", ids: loose };
+    const folded = prefs.sections.find((s) => s.id === UNASSIGNED_SECTION)?.isCollapsed;
+    if (folded) unassigned.collapsed = true;
+    out.splice(unassignedAt < 0 ? out.length : unassignedAt, 0, unassigned);
+  }
+  return out;
+}
+
+/** The roster as every card and snapshot carries it: rows in sidebar order,
+ * with their pin / Main Bot flags, plus the pinned ids and the sections the
+ * Show Bots pane lays out. `prefs` missing = a plain roster, as before. */
+export function rosterData(agents: Agent[], prefs: SidebarPrefs = { pinnedIds: [], sections: [] }) {
+  const ordered = orderRoster(agents, prefs.pinnedIds);
+  const pinned = new Set(prefs.pinnedIds);
+  const mark = <T extends { id: string }>(row: T) => ({
+    ...row,
+    ...(pinned.has(row.id) ? { pinned: true as const } : {}),
+    ...(prefs.mainId && row.id === prefs.mainId ? { main: true as const } : {}),
+  });
+  return {
+    card: {
+      bots: ordered.filter((a) => !a.isGroup).map((a) => mark(toBot(a))),
+      // `ix`: the group's place among every row, so the card can weave the few
+      // groups back into the bots' order without carrying every id twice.
+      groups: ordered.map((a, ix) => [a, ix] as const).filter(([a]) => a.isGroup).map(([a, ix]) => ({ ...mark(toGroup(a)), ix })),
+      /** Pinned ids in pin order, bots and groups alike (the tiles row). */
+      pinned: ordered.filter((a) => pinned.has(a.id)).map((a) => a.id),
+      sections: rosterSections(ordered, prefs),
+      ...(prefs.mainId ? { mainId: prefs.mainId } : {}),
+    },
+    /** Every row id, bots and groups interleaved, in sidebar order (server-side use). */
+    order: ordered.map((a) => a.id),
+  };
+}
+export type RosterCard = ReturnType<typeof rosterData>["card"];
 
 /** Bot pictures for a card, id → small data: URI (client.ts listAgents loads
  * and shrinks them into `avatarImage`). They ride in their own `data.avatars`
@@ -318,14 +426,20 @@ export function avatarMap(agents: Agent[], first?: string): Record<string, strin
   return out;
 }
 
-/** One group in the card's `data.groups` shape. */
+/** One group in the card's `data.groups` shape. A group has its own orb in the
+ * Grok Bot sidebar (its avatarShape/avatarColor, or the id-derived default),
+ * so the roster draws it like a bot; the members ride along for the chat
+ * header's stack and the member editor. */
 export function toGroup(a: Agent) {
   return {
     id: a.id,
     name: a.name,
     members: a.memberIds ?? [],
+    color: colorHex(a.avatarColor, a.id),
+    shape: shapeKind(a.avatarShape, a.id),
     last: preview(a.lastMessagePreview),
     time: relTime(a.lastActivityAt),
+    ...flags(a),
   };
 }
 
@@ -415,8 +529,11 @@ const fits = (card: Glance) => glanceChars(card) <= MAX_GLANCE_CHARS;
 /** Roster entries the card does not draw in full keep only what an orb and a
  * name need (the Members "Add" list loses its subtitles; esc() reads a missing
  * field as ""). */
-const slimRoster = (bots: ReturnType<typeof toBot>[], whole: Set<string>) =>
-  bots.map((b) => (whole.has(b.id) ? b : { id: b.id, name: b.name, color: b.color, shape: b.shape, status: b.status }));
+const slimRoster = <B extends ReturnType<typeof toBot> & { pinned?: true; main?: true }>(bots: B[], whole: Set<string>) =>
+  bots.map((b) => (whole.has(b.id) ? b : {
+    id: b.id, name: b.name, color: b.color, shape: b.shape, status: b.status,
+    ...(b.unread ? { unread: b.unread } : {}), ...(b.pinned ? { pinned: b.pinned } : {}), ...(b.main ? { main: b.main } : {}),
+  }));
 
 // ── Card builders per tool ───────────────────────────────────────────────────
 
@@ -442,20 +559,21 @@ export function showCard(
   threads: Record<string, CardItem[]> = {},
   nextBeforeSeqs: Record<string, number | undefined> = {},
   open?: { open: ShowOpen; message?: string; sent?: boolean },
+  prefs?: SidebarPrefs,
 ) {
-  const bots = agents.filter((a) => !a.isGroup).map(toBot);
-  const groups = agents.filter((a) => a.isGroup).map(toGroup);
+  const { card: roster, order } = rosterData(agents, prefs);
+  const { bots, groups } = roster;
   const args = open ? { open: open.open, ...(open.message ? { message: open.message, ...(open.sent ? { sent: true } : {}) } : {}) } : {};
   const focus = open ? ("bot" in open.open ? open.open.bot : "group" in open.open ? open.open.group : undefined) : undefined;
   const avatars = avatarMap(agents, focus);
   const card = (ids: string[], perThread: number, focusThread = perThread) => {
     const baked = Object.fromEntries(ids.map((id) => [id, withTime(boundThread(threads[id], id === focus ? focusThread : perThread))]));
     const seqs = Object.fromEntries(ids.filter((id) => typeof nextBeforeSeqs[id] === "number").map((id) => [id, nextBeforeSeqs[id]]));
-    return glance("show", { data: { bots, groups, me: me ?? "", threads: baked, nextBeforeSeqs: seqs, avatars }, args }, 320, "Grok Bot");
+    return glance("show", { data: { ...roster, me: me ?? "", threads: baked, nextBeforeSeqs: seqs, avatars }, args }, 320, "Grok Bot");
   };
-  // The opened conversation first, then roster order: the first rows are the ones on screen.
+  // The opened conversation first, then sidebar order: the first rows are the ones on screen.
   const ids = [...(focus && threads[focus]?.length ? [focus] : []),
-    ...agents.map((a) => a.id).filter((id) => id !== focus && threads[id]?.length)];
+    ...order.filter((id) => id !== focus && threads[id]?.length)];
   for (const focusThread of [48_000, 24_000, 12_000, 6_000])
     for (let perThread = 16_000; perThread >= 1_000; perThread /= 2) {
       const c = card(ids, perThread, Math.max(focusThread, perThread));
@@ -468,7 +586,7 @@ export function showCard(
   const bare = card([], 0);
   if (fits(bare)) return bare;
   // The roster is the content here, so every bot stays — as a name, a status and its shape (no pictures).
-  const slim = glance("show", { data: { bots: slimRoster(bots, new Set()), groups: groups.map((g) => ({ ...g, last: "" })), me: me ?? "", threads: {}, nextBeforeSeqs: {} }, args }, 320, "Grok Bot");
+  const slim = glance("show", { data: { ...roster, bots: slimRoster(bots, new Set()), groups: groups.map((g) => ({ ...g, last: "" })), me: me ?? "", threads: {}, nextBeforeSeqs: {} }, args }, 320, "Grok Bot");
   if (!fits(slim)) console.error(`show card is ${glanceChars(slim)} glance chars with a bare roster (cap ${MAX_GLANCE_CHARS}); VoiceOS will drop it`);
   return slim;
 }

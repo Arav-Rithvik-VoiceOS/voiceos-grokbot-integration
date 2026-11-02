@@ -79,7 +79,7 @@ const demo = (html: string) => JSON.parse(html.match(/^const DEMO=(.*);$/m)![1])
 
 describe("avatar shapes", () => {
   test("every shape Grok Bot can draw has the app's outline and eye spots", () => {
-    expect(GROK_ALL_SHAPE_IDS).toHaveLength(25);
+    expect(GROK_ALL_SHAPE_IDS).toHaveLength(26);
     expect(Object.keys(SHAPE_ART).sort()).toEqual([...GROK_ALL_SHAPE_IDS].sort());
     for (const shape of GROK_ALL_SHAPE_IDS) {
       const { poly, eyes } = SHAPE_ART[shape];

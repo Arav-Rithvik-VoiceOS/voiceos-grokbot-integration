@@ -482,8 +482,13 @@ test("manifest advertises exactly the registered server tools", async () => {
   }
   const cardSend = manifest.tools.find((t: any) => t.name === "grokbot_card_send");
   expect(cardSend.uiCallable).toBe(true);
-  expect(cardSend.inputSchema.required).toEqual(["message"]);
-  expect(Object.keys(cardSend.inputSchema.properties).sort()).toEqual(["bot", "group", "groupName", "members", "message"]);
+  // Files alone are a send too, so nothing is required; `attachments` are paths grokbot_card_upload returned.
+  expect(cardSend.inputSchema.required).toEqual([]);
+  expect(Object.keys(cardSend.inputSchema.properties).sort()).toEqual(["attachments", "bot", "group", "groupName", "members", "message"]);
+  const upload = manifest.tools.find((t: any) => t.name === "grokbot_card_upload");
+  expect(upload.uiCallable).toBe(true);
+  expect(upload.confirmation).toBeUndefined();
+  expect(upload.inputSchema.required).toEqual(["bot", "uploadId", "name", "offset", "total", "chunk"]);
   // No tool declares the old card-origin `via` metadata any more.
   for (const name of ["grokbot_send", "grokbot_group"]) {
     expect(Object.keys(manifest.tools.find((t: any) => t.name === name).inputSchema.properties)).not.toContain("via");

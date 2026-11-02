@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "com.arav.bot",
-  "version": "2.3.2",
+  "version": "2.4.0",
   "name": "Grok Bot",
   "summary": "Talk to your Grok Bot AI teammates by voice.",
   "description": "See your Grok Bot teammates, message one, catch up on what a bot said, create a new bot, or start a group chat with several at once — all by voice, from the notch.",
@@ -296,10 +296,78 @@
           "message": {
             "type": "string",
             "description": "The text the user typed in the card."
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "name"
+              ]
+            },
+            "description": "Files already uploaded with grokbot_card_upload: the path each returned and its name."
+          }
+        },
+        "required": []
+      },
+      "visibility": "agent"
+    },
+    {
+      "name": "grokbot_card_upload",
+      "title": "Upload a file from the bot card",
+      "description": "Internal: receives one base64 chunk of a file the user attached on the Grok Bot card and, on the last chunk, stores the file on the bot's computer. Never call this for spoken requests.",
+      "hidePermissionToggle": true,
+      "uiCallable": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "bot": {
+            "type": "string",
+            "description": "The bot or group ID the file is for."
+          },
+          "uploadId": {
+            "type": "string",
+            "description": "The card's id for this file."
+          },
+          "name": {
+            "type": "string",
+            "description": "The file name."
+          },
+          "type": {
+            "type": "string",
+            "description": "The MIME type, if known."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Where this chunk starts, in base64 characters."
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The whole file's base64 length."
+          },
+          "chunk": {
+            "type": "string",
+            "description": "This chunk, base64."
           }
         },
         "required": [
-          "message"
+          "bot",
+          "uploadId",
+          "name",
+          "offset",
+          "total",
+          "chunk"
         ]
       },
       "visibility": "agent"

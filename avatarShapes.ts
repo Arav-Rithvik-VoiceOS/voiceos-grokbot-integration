@@ -22,6 +22,9 @@
 export const GROK_ALL_SHAPE_IDS = [
   "blob", "pebble", "bean", "egg", "squircle", "tablet", "capsule", "cylinder", "hex", "gem", "crystal", "wedge",
   "shield", "dome", "arch", "cloud", "teardrop", "leaf", "square", "sparkle", "clover", "flower", "heart", "house", "star",
+  // 0.78 (Halloween 2026, behind the app's sand_pumpkin_2026 gate): a round body a little wider
+  // than tall, sitting low in its box, with a small stem on top (the cards draw it as .orb .stem).
+  "pumpkin",
 ] as const;
 export type GrokAnyShape = (typeof GROK_ALL_SHAPE_IDS)[number];
 
@@ -53,6 +56,8 @@ export const SHAPE_ART: Record<GrokAnyShape, { eyes: Eyes; poly: string }> = {
   heart: { eyes: [12.6, -6.9, -15.2, 0.75, -12.3, 34.3, 59.7], poly: "87% 50%,76.4% 75.7%,72.8% 81.3%,68% 85.4%,64.3% 87.3%,59.8% 88.7%,53.1% 88.8%,49% 87.8%,43% 85%,16.5% 71.8%,11% 68%,6.7% 63.4%,4.6% 60.3%,3.2% 57.4%,1.5% 53.2%,0.6% 50%,0.2% 46.7%,0.2% 43.4%,0.7% 38.8%,1.5% 35.6%,2.8% 32.6%,5.1% 28.6%,8.3% 24.5%,15% 19.3%,18.4% 17.6%,26.6% 15%,35.3% 14.4%,40.1% 15%,45.4% 11%,51.1% 8.4%,56.8% 7%,62.2% 6.9%,65.7% 7.4%,70.4% 8.6%,76.5% 11.5%,79.5% 13.6%,82.3% 16%,84.7% 18.7%,87.1% 22.3%,88.7% 25.6%,90% 29.6%,90.7% 33.1%,90.9% 36.1%,90.2% 40.9%" },
   house: { eyes: [8.5, 4.5, -15.2, 0.76, -17.8, 35, 59], poly: "27.2% 90.1%,12.4% 59.1%,10.9% 54.4%,10.5% 50.9%,11% 46.6%,13% 41.7%,25.4% 19.3%,30.8% 13.3%,32.3% 12%,36.7% 9.9%,40.7% 9.7%,47.1% 11.4%,70.1% 20.6%,73.5% 22.2%,76.6% 24.3%,80.9% 28.5%,83.7% 32.7%,98.8% 64.3%,99.5% 66.6%,99.8% 69.5%,98.9% 73.2%,98.1% 74.6%,92.1% 81.1%,87.2% 83.6%,39.4% 96.5%,36.2% 96.7%,34.2% 96.4%,32.4% 95.7%,30% 93.9%" },
   star: { eyes: [8.3, 3, -15.2, 0.78, -17.8, 34.8, 59.2], poly: "20.8% 20.8%,21% 15%,23.1% 10.6%,28.9% 4.1%,32.7% 2.1%,35% 1.6%,37.4% 2%,41.8% 3.7%,44% 5.6%,53.1% 15.7%,54.3% 16.5%,56.8% 17.6%,59.7% 17.8%,70.2% 12.5%,72.6% 11.7%,75.2% 11.9%,77.6% 12.9%,79.8% 14.5%,81.5% 16.6%,82.5% 19%,82.8% 21.5%,79.6% 33.9%,80.4% 37.3%,82% 39.6%,83% 40.6%,94.5% 47.7%,96.8% 49.5%,98.3% 51.7%,99.6% 54.7%,100% 58.2%,99% 61.2%,97.9% 63.2%,92% 69.6%,87.7% 72%,83.2% 72.8%,78.3% 73.1%,79.2% 80.6%,79.2% 83.7%,78.6% 86.1%,76.9% 89.4%,71.1% 95.9%,70.2% 96.5%,67.3% 97.9%,65% 98.4%,62.6% 98%,59.3% 97%,57% 95.5%,56% 94.4%,46.9% 84.3%,45.7% 83.5%,43.2% 82.4%,40.3% 82.2%,29.9% 87.5%,27.4% 88.3%,24.8% 88.1%,22.4% 87.1%,20.2% 85.5%,18.5% 83.4%,17.5% 81%,17.2% 78.5%,20.4% 66.1%,19.6% 62.7%,18% 60.4%,17% 59.4%,5.5% 52.3%,3.2% 50.5%,0.9% 46.5%,-0.1% 42.9%,0.3% 40.7%,1.4% 37.8%,8% 30.4%,12.3% 28%,16.8% 27.2%,21.7% 26.9%" },
+  // Traced from the app's roster tile at 100 px (2026-11-01); the eyes sit on the body's upper half like the blob's.
+  pumpkin: { eyes: [12, -2, -16, 0.96, -12, 36.5, 57.5], poly: "98.1% 52.8%,97.4% 57.8%,94.7% 62.4%,93.5% 67.0%,91.7% 71.5%,89.1% 75.6%,86.1% 79.4%,83.1% 83.0%,79.5% 86.0%,75.6% 88.6%,71.0% 89.9%,67.0% 91.9%,63.1% 94.4%,58.3% 94.2%,54.0% 95.4%,49.5% 97.0%,44.8% 97.3%,40.0% 97.5%,35.7% 95.3%,30.9% 94.5%,26.2% 93.2%,22.7% 89.7%,18.9% 86.7%,13.8% 84.9%,9.1% 82.2%,6.2% 77.8%,3.4% 73.3%,1.5% 68.4%,0.6% 63.2%,0% 58.0%,0% 52.8%,0.7% 47.6%,1.5% 42.6%,3.8% 37.9%,6.5% 33.6%,9.9% 29.9%,12.9% 26.2%,15.9% 22.5%,19.6% 19.5%,23.5% 16.9%,28.1% 15.6%,32.1% 13.6%,36.3% 12.0%,40.7% 11.3%,45.0% 10.1%,49.5% 8.0%,54.2% 8.2%,59.0% 8.0%,63.7% 9.3%,68.5% 10.1%,73.1% 11.9%,77.8% 13.9%,82.3% 16.3%,86.3% 19.6%,90.0% 23.4%,92.8% 27.8%,95.6% 32.2%,97.5% 37.2%,98.4% 42.4%,99.2% 47.5%" },
 };
 
 /** One shape's rules. The eye rules out-rank the widgets' own `.av .eye` rules
@@ -67,6 +72,8 @@ function shapeRules(shape: GrokAnyShape, sel: string, eyeSel: string): string {
 /** A bot wearing a picture: a circle, like Grok Bot's own photo avatars, still
  * and without eyes. The shape markup stays underneath, so a picture that fails
  * to load just drops the `photo` class (see the cards' error handler). */
+/** The pumpkin's stem lives outside the clipped body, on the orb slot. */
+const STEM_CSS = ".orb .stem{position:absolute;left:29%;top:0;width:5%;height:11%;border-radius:45% 45% 25% 25%/60% 60% 30% 30%;background:#6f7a5f;transform:rotate(-14deg);transform-origin:50% 100%}";
 const PHOTO_CSS = ".av.photo[data-state]{clip-path:none;border-radius:50%;overflow:hidden;animation:none;background:rgba(127,127,127,.18)}"
   + ".av.photo .eyes{display:none}.av .pic{display:none}"
   + ".av.photo .pic{display:block;position:absolute;inset:0;width:100%;height:100%;object-fit:cover}";
@@ -79,5 +86,5 @@ export function avatarCss(shapes: Iterable<string>): string {
   const rules = [shapeRules("blob", ".av[data-state],.av.blob,.shapes button.blob", ".av")];
   for (const shape of GROK_ALL_SHAPE_IDS)
     if (shape !== "blob" && want.has(shape)) rules.push(shapeRules(shape, `.av.${shape},.shapes button.${shape}`, `.av.${shape}`));
-  return [...rules, PHOTO_CSS].join("\n");
+  return [...rules, STEM_CSS, PHOTO_CSS].join("\n");
 }

@@ -39,13 +39,18 @@ import {
   resolveAgent,
   resolveMembers,
   sendPrompt,
+  uploadAttachment,
+  type SentAttachment,
   transcriptTail,
   type TranscriptEntry,
   agentScreen,
+  readSidebarPrefs,
+  mainAgentId,
+  type SidebarPrefs,
 } from "./client.ts";
 import { recordCardPoll, cardCovers } from "./cardWatch.ts";
 import { RFB_B64 } from "./assets.generated.ts";
-import { connectCard, guideCard, reconnectCard, showCard, type ShowOpen, toBot, toGroup, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
+import { connectCard, guideCard, reconnectCard, showCard, rosterData, orbIcon, type ShowOpen, toBot, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
 import { PREPARE_DESCRIPTION, SEND_MODEL_DESCRIPTION, SEND_BOT_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 import { conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
@@ -56,6 +61,25 @@ import { INTENT_SLOT_VALUES_META_KEY } from "./intentSdk.generated.js";
 const server = new McpServer({ name: TOOLKIT, version: "1.0.0" });
 const intentRoster = new IntentRoster(readAgents);
 const listAgents = () => intentRoster.refresh();
+/** The sidebar's pins, sections and Main Bot, as the Grok Bot app orders its
+ * roster. Local files plus one quick gateway read, so it is memoized briefly:
+ * a card and its first refreshes share one read, and a failure is just "no
+ * pins" for this card, never an error in front of the roster. */
+const PREFS_FRESH_MS = 3_000;
+/** The Main Bot changes rarely and costs a gateway round trip, so it is kept
+ * longer than the local pins and sections (a chat pane refreshes every 2 s). */
+const MAIN_FRESH_MS = 30_000;
+let prefsCache: { at: number; value: Promise<SidebarPrefs> } | null = null;
+let mainCache: { at: number; value: Promise<string | undefined> } | null = null;
+function rosterPrefs(): Promise<SidebarPrefs> {
+  if (prefsCache && Date.now() - prefsCache.at < PREFS_FRESH_MS) return prefsCache.value;
+  if (!mainCache || Date.now() - mainCache.at >= MAIN_FRESH_MS) mainCache = { at: Date.now(), value: mainAgentId() };
+  const main = mainCache.value;
+  const value = Promise.resolve().then(() => readSidebarPrefs()).then(async (local) => { const mainId = await main; return { ...local, ...(mainId ? { mainId } : {}) }; })
+    .catch((error) => { log("sidebar prefs skipped:", error); return { pinnedIds: [], sections: [] }; });
+  prefsCache = { at: Date.now(), value };
+  return value;
+}
 /** A recipient's last few messages as a confirmation draws them. Bounded: the
  * model copies prepare's context into the send verbatim, and rendered markdown
  * (tables, highlighted code) is far larger than its text. */
@@ -95,19 +119,25 @@ const botNotifies = (bot: Agent | undefined): boolean => bot?.notifyOnUpdatesEna
 /** A reminder button: `id` must match a key in REMINDER_ACTIONS below. */
 type ReminderButton = { id: string; label: string };
 
+/** The pill's face: the bot's name as its title and its orb as its icon (the
+ * SDK's reminder `sender`; VoiceOS keeps Grok Bot's own logo on as a badge). */
+type ReminderSender = { name: string; icon?: string };
+const senderOf = (bot: Agent): ReminderSender => ({ name: bot.name.trim().slice(0, 64) || "Bot", icon: orbIcon(bot) });
+
 async function triggerReminder(
   message: string,
-  opts: { speak?: boolean; actions?: ReminderButton[]; data?: Record<string, unknown> } = {},
+  opts: { speak?: boolean; actions?: ReminderButton[]; data?: Record<string, unknown>; sender?: ReminderSender } = {},
 ): Promise<string | null> {
   if (!notificationsEnabled()) return null;
   const text = message.trim().slice(0, 2000);
   if (!text) return null;
-  const params: { message: string; speak?: boolean; actions?: ReminderButton[]; data?: Record<string, unknown> } = {
+  const params: { message: string; speak?: boolean; actions?: ReminderButton[]; data?: Record<string, unknown>; sender?: ReminderSender } = {
     message: text,
   };
   if (opts.speak === false) params.speak = false;
   if (opts.actions?.length) params.actions = opts.actions;
   if (opts.data) params.data = opts.data;
+  if (opts.sender) params.sender = opts.sender;
   try {
     const res = await server.server.request({ method: "voiceos/reminders/trigger", params }, ReminderResult);
     return res.notificationId;
@@ -291,10 +321,12 @@ function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, o
           const times = replies.map((e) => e.timestampMs).filter((t): t is number => typeof t === "number");
           const newSince = times.length ? Math.min(...times) - 1 : t0;
           await prepareReminderView(bot.id, newSince);
-          await triggerReminder(`${bot.name} replied.`, {
+          // The pill wears the bot: its orb and name on top, "replied." under it.
+          await triggerReminder("replied.", {
             speak: false,
             actions: REPLY_BUTTONS,
             data: { botId: bot.id, newSince },
+            sender: senderOf(bot),
           });
           return;
         }
@@ -372,10 +404,12 @@ function startAutomationWatch(): void {
         // agentId → name for the pill label, and the bots muted in the Grok Bot
         // app (best-effort: a roster miss pings, the app's default).
         const nameById = new Map<string, string>();
+        const agentById = new Map<string, Agent>();
         const muted = new Set<string>();
         try {
           for (const a of await listAgents()) {
             nameById.set(a.id, a.name);
+            agentById.set(a.id, a);
             if (!botNotifies(a)) muted.add(a.id);
           }
         } catch {
@@ -389,11 +423,13 @@ function startAutomationWatch(): void {
             if (!baselined) continue; // finished before we started → don't ping history
             if (muted.has(e.agentId)) continue;
             const bot = nameById.get(e.agentId) ?? "A bot";
+            const agent = agentById.get(e.agentId);
             const text = await automationResultText(e.agentId, run);
+            // With the bot on the pill as its sender, the body names only the routine.
             const body = text
-              ? `${bot} · ${e.automation.name}: ${summarize(text)}`
-              : `${bot} · ${e.automation.name} ran.`;
-            await triggerReminder(body, { speak: false });
+              ? `${agent ? "" : `${bot} · `}${e.automation.name}: ${summarize(text)}`
+              : `${agent ? "" : `${bot} · `}${e.automation.name} ran.`;
+            await triggerReminder(body, { speak: false, ...(agent ? { sender: senderOf(agent) } : {}) });
           }
         }
         baselined = true;
@@ -536,7 +572,7 @@ async function conversationCard(agents: Agent[], open: ShowOpen, tail: { entries
   const focus = "bot" in open ? open.bot : "group" in open ? open.group : undefined;
   const { recent, cursors } = await rosterThreads(agents, focus);
   if (focus) { recent[focus] = toCardThread(tail.entries ?? []); cursors[focus] = tail.nextBeforeSeq; }
-  return showCard(agents, undefined, recent, cursors, { open, message, sent });
+  return showCard(agents, undefined, recent, cursors, { open, message, sent }, await rosterPrefs());
 }
 const openOf = (bot: Agent): ShowOpen => (bot.isGroup ? { group: bot.id } : { bot: bot.id });
 
@@ -581,8 +617,8 @@ const showTool = server.registerTool(
 
 /** Every bot and group on the roster card: what "Show my bots" opens. */
 async function rosterResult(agents: Agent[]) {
-  const { recent, cursors } = await rosterThreads(agents);
-  const card = showCard(agents, undefined, recent, cursors);
+  const [{ recent, cursors }, prefs] = await Promise.all([rosterThreads(agents), rosterPrefs()]);
+  const card = showCard(agents, undefined, recent, cursors, undefined, prefs);
   const bots = agents.filter((a) => !a.isGroup);
   const groups = agents.filter((a) => a.isGroup);
   return result(
@@ -678,10 +714,10 @@ server.registerTool(
       const steps = HELP_STEPS.map((s) => ({ step: s.text, done: done[s.key], ...("optional" in s ? { optional: true } : {}) }));
       const next = steps.find((s) => !s.done && !s.optional);
       if (args.page !== "keychain" && (bots ?? 0) > 0) {
-        const { recent, cursors } = await rosterThreads(agents);
+        const [{ recent, cursors }, prefs] = await Promise.all([rosterThreads(agents), rosterPrefs()]);
         return result(
           { steps, thingsToSay: HELP_PHRASES, message: "Grok Bot is set up. The card shows the user's bots; they can say things like those in thingsToSay." },
-          showCard(agents, undefined, recent, cursors),
+          showCard(agents, undefined, recent, cursors, undefined, prefs),
         );
       }
       // Connected before but the roster did not load: things to say, never the setup steps.
@@ -714,8 +750,9 @@ server.registerTool("grokbot_card_snapshot", {
   inputSchema: { bot: z.string().optional(), beforeSeq: z.number().int().optional() },
   annotations: { readOnlyHint: true },
 }, (args: { bot?: string; beforeSeq?: number }) => cardRequest("grokbot_card_snapshot", async () => {
-  const snapshot = await conversationSnapshot(args.bot, args.beforeSeq);
-  return { ok: true, bots: snapshot.agents.filter(a => !a.isGroup).map(toBot), groups: snapshot.agents.filter(a => a.isGroup).map(toGroup), thread: snapshot.thread, nextBeforeSeq: snapshot.nextBeforeSeq };
+  const [snapshot, prefs] = await Promise.all([conversationSnapshot(args.bot, args.beforeSeq), rosterPrefs()]);
+  // The same ordered roster the card was baked with, so a refresh keeps the sidebar order, pins and sections.
+  return { ok: true, ...rosterData(snapshot.agents, prefs).card, thread: snapshot.thread, nextBeforeSeq: snapshot.nextBeforeSeq };
 }));
 
 server.registerTool("grokbot_card_entry", {
@@ -836,28 +873,29 @@ server.registerTool("grokbot_prepare_message", {
 // Resolves the recipient by exact identity, sends once and starts the reply
 // watch. No receipt: the card that sent stays open and its live chat refreshes
 // to show the message and the reply.
-async function performSend(botRef: string, rawMessage: string | undefined) {
+async function performSend(botRef: string, rawMessage: string | undefined, attachments: SentAttachment[] = []) {
   const message = rawMessage?.trim() ?? "";
   const agents = await listAgents();
   const bot = resolveMessageRecipient(botRef, agents);
-  if (!message) throw new IntegrationError("not_found", "What should I send?");
+  // Files alone are a message too (the app sends an attachment with no text).
+  if (!message && !attachments.length) throw new IntegrationError("not_found", "What should I send?");
 
   // A group opened on the card: send as-is (member/name edits go through
   // performGroupSend, which the card uses for its group modes).
   if (bot.isGroup) {
-    await sendPrompt(bot.id, message);
+    await sendPrompt(bot.id, message, attachments);
     return result({ sent: true, group: bot.id, groupName: bot.name, sentMessage: message, message: `Sent your message to ${bot.name}.` });
   }
 
-  await sendToBot(bot, message);
+  await sendToBot(bot, message, undefined, attachments);
   return result({ sent: true, bot: bot.name, botId: bot.id, sentMessage: message, message: `Sent your message to ${bot.name}.` });
 }
 
 /** Send once to one bot and start the reply watch. `base` is a transcript
  * page read BEFORE this send (the reply watch skips what it already had). */
-async function sendToBot(bot: Agent, message: string, base?: { entries?: TranscriptEntry[] }) {
+async function sendToBot(bot: Agent, message: string, base?: { entries?: TranscriptEntry[] }, attachments: SentAttachment[] = []) {
   const seen = new Set(((base ?? await transcriptTail(bot.id, 12)).entries ?? []).map((e) => e.id));
-  await sendPrompt(bot.id, message);
+  await sendPrompt(bot.id, message, attachments);
   // Acknowledge immediately, then watch in the background and ping under the
   // notch when the reply lands. No foreground wait — replies run ~40s, past
   // what VoiceOS lets a tool block for.
@@ -923,14 +961,75 @@ server.registerTool(
       group: z.string().optional().describe("Group thread — the existing group's ID. Omit with `members` for a new group."),
       members: z.union([z.array(z.string()), z.string()]).optional().describe("Group thread — member bot IDs (edited on the card)."),
       groupName: z.string().optional().describe("Group thread — the (edited) group name."),
-      message: z.string().describe("The text the user typed in the card."),
+      message: z.string().optional().describe("The text the user typed in the card."),
+      attachments: z.array(z.object({ path: z.string(), name: z.string() })).optional()
+        .describe("Files already uploaded with grokbot_card_upload: the path each returned and its name."),
     },
   },
-  async (args: { bot?: string; group?: string; members?: string | string[]; groupName?: string; message: string }) =>
+  async (args: { bot?: string; group?: string; members?: string | string[]; groupName?: string; message?: string; attachments?: SentAttachment[] }) =>
     handle("grokbot_card_send", () =>
       args.bot !== undefined
-        ? performSend(args.bot, args.message)
+        ? performSend(args.bot, args.message, args.attachments ?? [])
         : performGroupSend(args)),
+);
+
+// ── WRITE: grokbot_card_upload — a file the user attached on the card ────────
+// The card runs in a sandbox with no file system and a 32 KB cap per call, so
+// a file arrives as base64 chunks under one uploadId. The chunks are held in
+// memory until the last one lands (bounded: per-file and in-flight caps, and
+// a stale upload is dropped), then the whole file goes to the bot's computer
+// through the gateway's own uploadAttachment, and the stored path comes back
+// for the send. Never confirmed by the host: the user picked the file.
+const UPLOAD_MAX_BASE64 = 4 * 1024 * 1024 * 4 / 3; // ~4 MB of file
+const UPLOAD_MAX_INFLIGHT = 6;
+const UPLOAD_STALE_MS = 10 * 60_000;
+const uploads = new Map<string, { bot: string; name: string; total: number; parts: string[]; have: number; at: number }>();
+function dropStaleUploads() {
+  const now = Date.now();
+  for (const [id, u] of uploads) if (now - u.at > UPLOAD_STALE_MS) uploads.delete(id);
+}
+server.registerTool(
+  "grokbot_card_upload",
+  {
+    title: "Upload a file from the bot card",
+    description: "Internal: receives one base64 chunk of a file the user attached on the Grok Bot card and, on the last chunk, stores the file on the bot's computer. Never call this for spoken requests.",
+    inputSchema: {
+      bot: z.string().describe("The bot or group ID the file is for."),
+      uploadId: z.string().min(1).max(80).describe("The card's id for this file."),
+      name: z.string().min(1).max(255).describe("The file name."),
+      type: z.string().optional().describe("The MIME type, if known."),
+      offset: z.number().int().min(0).describe("Where this chunk starts, in base64 characters."),
+      total: z.number().int().min(1).describe("The whole file's base64 length."),
+      chunk: z.string().describe("This chunk, base64."),
+    },
+  },
+  (args: { bot: string; uploadId: string; name: string; type?: string; offset: number; total: number; chunk: string }) =>
+    cardRequest("grokbot_card_upload", async () => {
+      dropStaleUploads();
+      if (args.total > UPLOAD_MAX_BASE64) throw new IntegrationError("upstream", "That file is too big to send from here (4 MB at most).");
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(args.chunk)) throw new IntegrationError("upstream", "The file data was not readable.");
+      let u = uploads.get(args.uploadId);
+      if (!u) {
+        if (uploads.size >= UPLOAD_MAX_INFLIGHT) throw new IntegrationError("upstream", "Too many files are uploading. Try again in a moment.");
+        const name = args.name.replace(/[\\/:\0]/g, "_").trim() || "file";
+        u = { bot: args.bot, name, total: args.total, parts: [], have: 0, at: Date.now() };
+        uploads.set(args.uploadId, u);
+      }
+      if (u.bot !== args.bot || u.total !== args.total || args.offset !== u.have) {
+        uploads.delete(args.uploadId);
+        throw new IntegrationError("upstream", "The upload got out of order. Attach the file again.");
+      }
+      u.parts.push(args.chunk);
+      u.have += args.chunk.length;
+      u.at = Date.now();
+      if (u.have > u.total) { uploads.delete(args.uploadId); throw new IntegrationError("upstream", "The file data was longer than expected. Attach it again."); }
+      if (u.have < u.total) return { ok: true, received: u.have, total: u.total };
+      uploads.delete(args.uploadId);
+      const agents = await listAgents();
+      const bot = resolveMessageRecipient(args.bot, agents);
+      const path = await uploadAttachment(bot.id, u.name, u.parts.join(""));
+      return { ok: true, done: true, path, name: u.name };
+    }),
 );
 
 // ── WRITE: grokbot_create (confirmation: create.html) ────────────────────────
@@ -972,7 +1071,7 @@ server.registerTool(
       const readyToMessage = !!created?.id && agents.some(a => a.id === created.id);
       return result({ created: true, name, botId: created?.id, readyToMessage,
         message: readyToMessage ? `Created ${name}. Check the live recipient before messaging it.`
-          : `Created ${name}, but it isn't available for messaging in the current roster yet. Try again once it appears in Grok Bot.` }, showCard(agents));
+          : `Created ${name}, but it isn't available for messaging in the current roster yet. Try again once it appears in Grok Bot.` }, showCard(agents, undefined, {}, {}, undefined, await rosterPrefs()));
     }),
 );
 
@@ -1017,7 +1116,7 @@ const notifyTool = server.registerTool(
 // Saves member/name edits (or creates the group on first send) and sends once.
 // The card that sent stays open: an existing group's chat refreshes, and a new
 // group's pane becomes that group's chat from the returned id.
-async function performGroupSend(args: { group?: string; members?: string | string[]; groupName?: string; message?: string }) {
+async function performGroupSend(args: { group?: string; members?: string | string[]; groupName?: string; message?: string; attachments?: SentAttachment[] }) {
   const s = await sendToGroup(args, await listAgents());
   // The card that sent keeps going: a new group's pane turns into that group's
   // chat from the returned id, name and members.
@@ -1026,11 +1125,12 @@ async function performGroupSend(args: { group?: string; members?: string | strin
 }
 
 /** Save member/name edits (or create the group) and send once. */
-async function sendToGroup(args: { group?: string; members?: string | string[]; groupName?: string; message?: string }, agents: Agent[]) {
+async function sendToGroup(args: { group?: string; members?: string | string[]; groupName?: string; message?: string; attachments?: SentAttachment[] }, agents: Agent[]) {
   const { existing, memberIds, bots, sameSet } = resolveMessageGroup(args, agents);
   const message = args.message?.trim() ?? "";
   const name = args.groupName?.trim() ?? existing?.name ?? "";
-  if (!message) throw new IntegrationError("not_found", "What should I send?");
+  const attachments = args.attachments ?? [];
+  if (!message && !attachments.length) throw new IntegrationError("not_found", "What should I send?");
   if (memberIds.length < (existing ? 1 : 2)) throw new IntegrationError("not_found", existing ? "Keep at least one bot in the group." : "Choose at least two bots for a new group.");
   let target = existing;
   const savedName = name || memberIds.map(id => bots.find(a => a.id === id)!.name).join(" + ");
@@ -1041,7 +1141,7 @@ async function sendToGroup(args: { group?: string; members?: string | string[]; 
     target = await createGroup(savedName, memberIds);
     if (!target?.id) throw new IntegrationError("upstream", "The group was not created.");
   }
-  await sendPrompt(target.id, message);
+  await sendPrompt(target.id, message, attachments);
   return { group: target.id, groupName: savedName, members: memberIds, created: !existing, sentMessage: message };
 }
 
