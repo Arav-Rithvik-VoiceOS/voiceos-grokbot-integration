@@ -136,7 +136,7 @@ const TURN_MAX_AGE_MS = 120_000;
 const ROLE_STOP = new Set(("the and for you your can could would should please hey grok bot bots task tasks ask asking send sending message tell dispatch "
   + "saying say want wants let know there any what whats this that these those with about from into out all are was were has have had will just "
   + "get got make need needs today tomorrow now some its them they their then than also our who how why when where which see check help him her "
-  + "his she one not never own under without every more most very really yes yeah okay like thing things email emails draft write prepare create grokbot").split(" "));
+  + "his she one not never own under without every more most very really yes yeah okay like thing things email emails draft write prepare create grokbot remind reminder reminders again follow out").split(" "));
 const roleWords = (text: string) => new Set(text.toLowerCase().replace(/['’]s\b/g, "").split(/[^a-z0-9]+/)
   .filter(w => w.length >= 3 && !ROLE_STOP.has(w)).map(w => (w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w)));
 
@@ -155,10 +155,31 @@ export function namesABot(text: string, bots: Agent[]): boolean {
 /** Same word, or one starts the other ("sponsor" / "sponsorships", "hack" / "hackathon"). */
 const sameRoot = (a: string, b: string) => a === b || (Math.min(a.length, b.length) >= 4 && (a.startsWith(b) || b.startsWith(a)));
 
+// A common delivery medium ("emails") is weak evidence by itself. In a
+// phrase like "sponsor emails", it corroborates a distinctive subject word.
+const MEDIA = new Set(["email", "message", "draft", "report", "list", "note", "plan", "document", "file", "proposal", "packet"]);
+const COMMON_TOPIC = new Set(["old", "new", "original", "earlier", "recent", "previous", "last", "latest", "remind", "reminder", "update", "follow"]);
+const topicTokens = (text: string) => (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).map(w => w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w);
+function topicPhrases(text: string): Set<string> {
+  const tokens = topicTokens(text);
+  const phrases = new Set<string>();
+  const distinctive = (word: string) => word.length >= 3 && !ROLE_STOP.has(word) && !COMMON_TOPIC.has(word) && !MEDIA.has(word);
+  for (let i = 1; i < tokens.length; i++) {
+    const a = tokens[i - 1], b = tokens[i];
+    if ((distinctive(a) && (distinctive(b) || MEDIA.has(b))) || (MEDIA.has(a) && distinctive(b))) phrases.add(a + " " + b);
+  }
+  return phrases;
+}
+const hasTopicPhrase = (text: string, phrases: Set<string>) => {
+  const words = " " + topicTokens(text).join(" ") + " ";
+  return [...phrases].some(phrase => words.includes(" " + phrase + " "));
+};
+
 /** The one bot whose role (title, then description) best matches a turn that
  * names no bot. A word counts double in the title, and a word several roles
  * share counts less (split between them). No clear winner → undefined. */
 export function botForTask(text: string, bots: Agent[]): Agent | undefined {
+  const phrases = topicPhrases(text);
   const roles = bots.map(b => {
     const project = b.name.split(/\s+[·|—–-]\s+/u).slice(1).join(" ");
     const title = [...roleWords(`${project} ${b.title ?? ""}`)];
@@ -176,6 +197,11 @@ export function botForTask(text: string, bots: Agent[]): Agent | undefined {
       role.score += weight / hits.length;
       if (weight > 1) role.profileHits++; else role.recentHits++;
     }
+  }
+  const previewMatches = roles.filter(r => hasTopicPhrase((r.b.lastMessagePreview ?? "").slice(0, 400), phrases));
+  if (previewMatches.length === 1) {
+    previewMatches[0].score += 2;
+    previewMatches[0].recentHits += 2;
   }
   const [top, next] = roles.sort((x, y) => y.score - x.score);
   if (!top || (!top.profileHits && top.recentHits < 2) || top.score < 1.5 || top.score - (next?.score ?? 0) < 1) return undefined;
@@ -209,6 +235,10 @@ function addressedName(request: string, bots: Agent[]): string | undefined {
     normalize(rest.split(/[\s,!?]+/)[0]) === normalize(c.name)
   )).sort((a,b) => b.words.length - a.words.length);
   if (matching.length) return matching[0].name;
+  // "Send Marlo hi" explicitly addresses Marlo even if no such bot exists.
+  // Never interpret a rejected addressee as an unnamed task for the primary.
+  const greeting = /^([\p{L}][\p{L}'’-]*(?: [\p{L}][\p{L}'’-]*)?)\s+["“']?(?:hi|hello|hey)\b/iu.exec(rest);
+  if (verb[1].toLowerCase() === "send" && greeting) return greeting[1];
   if (!recipientSlot && !/^\S+\s+(?:a message|a note|a task|saying)\b/i.test(rest)) return undefined;
   const unknown = /^([\p{L}][\p{L}0-9'’.-]*(?: [A-Z][\p{L}0-9'’.-]*){0,2})(?=\s+(?:to|about|that|saying|asking|and|if|for|what|how|when|whether|a message|a note|the message)\b|[:,!?]|$)/iu.exec(rest);
   if (unknown && !/^(?:a|an|my|the|this|that|it|please|some|me|him|her|them|us)\b/i.test(unknown[1])) return unknown[1];
@@ -315,6 +345,27 @@ export class IntentRoster {
   noteTurn(text: string) { this.lastTurn = { text, at: this.now() }; }
 
   primary: () => Promise<string | undefined> = async () => undefined;
+  recentTopics?: (bots: Agent[], signal: AbortSignal) => Promise<string[][]>;
+
+  private async followUpRecipient(bots: Agent[], task: string): Promise<Agent | undefined> {
+    if (!this.recentTopics || bots.length < 2 || bots.length > 6 ||
+        !/\b(?:those|that|these|again|earlier|previously|follow[ -]?up|we discussed|we talked about)\b/i.test(task)) return undefined;
+    const phrases = topicPhrases(task);
+    if (!phrases.size) return undefined;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const histories = await Promise.race([
+        this.recentTopics(bots, controller.signal),
+        new Promise<undefined>(resolve => { timer = setTimeout(() => { controller.abort(); resolve(undefined); }, 1_400); }),
+      ]);
+      // One missing candidate could contain the very same topic. Require full
+      // roster coverage, and one bot with a matching phrase in one recent turn.
+      if (!histories || histories.length !== bots.length) return undefined;
+      const candidates = bots.filter((_, i) => histories[i].some(turn => hasTopicPhrase(turn, phrases)));
+      return candidates.length === 1 ? candidates[0] : undefined;
+    } catch { return undefined; } finally { clearTimeout(timer); controller.abort(); }
+  }
 
   async chooseRecipient(bots: Agent[], input: { bot?: string; requestText?: string; task?: string; message?: string }): Promise<RecipientRoute> {
     const freshTurn = this.lastTurn && this.now() - this.lastTurn.at <= TURN_MAX_AGE_MS ? this.lastTurn.text : undefined;
@@ -325,11 +376,14 @@ export class IntentRoster {
     // generic app reference is not a bot. Direct tool calls with no transcript
     // can still use an exact ID or explicit short name.
     const ref = input.bot?.trim();
-    const selected = ref && !/^(?:(?:my|the)\s+)?(?:grok\s*bot|bots?)$/i.test(ref) ? resolveMessageRecipient(ref,bots) : undefined;
-    if (!request && selected) return { bot:selected, source:"explicit" };
+    if (!request && ref && !/^(?:(?:my|the|a|our)\s+)?(?:grok\s*bot|bots?)$/i.test(ref)) {
+      return { bot: resolveMessageRecipient(ref, bots), source: "explicit" };
+    }
     const task = [request, input.task, input.message].filter(Boolean).join(" ");
     const match = botForTask(task, bots);
     if (match) return { bot:match, source:"role" };
+    const previous = await this.followUpRecipient(bots, task);
+    if (previous) return { bot: previous, source:"role" };
     const primaryId = await this.primary();
     const primary = bots.find(bot => bot.id === primaryId);
     if (primary) return { bot:primary, source:"primary" };

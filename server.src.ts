@@ -9,7 +9,7 @@
 // FIRST import, on purpose: rebinds console.log/info/warn/debug to stderr
 // before any dependency runs, so no stray stdout line corrupts the MCP wire.
 import "./stdoutGuard.ts";
-import { BrowserLoginRequired, browserSelected, openBrowserLogin, browserPrefs } from "./browserSession.ts";
+import { BrowserLoginRequired, browserSelected, openBrowserLogin, browserPrefs, browserRoutingHistory } from "./browserSession.ts";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -93,6 +93,13 @@ function rosterPrefs(): Promise<SidebarPrefs> {
 const recentRows = async (id: string): Promise<ConfirmRow[]> =>
   confirmationRows(toThread((await transcriptTail(id, 6)).entries ?? [], 12_000));
 intentRoster.recentRows = recentRows;
+intentRoster.recentTopics = async (bots, signal) => {
+  const histories = browserSelected()
+    ? await browserRoutingHistory(bots, signal)
+    : await withoutWaking(() => Promise.all(bots.map(async b => (await transcriptTail(b.id, 6)).entries ?? [])));
+  return histories.map(entries => entries.filter(e => e.role === "user" || e.role === "assistant" || e.kind === "send-message")
+    .map(e => entryText(e).slice(0, 700)));
+};
 
 /** A tool result: JSON for the model, plus (optionally) a live glance card. */
 function result(payload: Record<string, unknown>, glance?: Record<string, unknown>) {

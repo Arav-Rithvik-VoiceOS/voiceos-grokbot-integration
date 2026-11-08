@@ -173,6 +173,7 @@ function rejectExpired(value: Session) {
 }
 async function useClient<T>(
   work: (client: GrokBotClient) => Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
   const value = await session();
   const client = new GrokBotClient({
@@ -183,6 +184,7 @@ async function useClient<T>(
       fetch(url, {
         ...init,
         headers: platformHeaders(init),
+        signal: signal && init?.signal ? AbortSignal.any([signal, init.signal]) : signal ?? init?.signal,
         redirect: "error",
       }),
   });
@@ -555,3 +557,18 @@ export const browserUpload = (
     } while (offset < data.length);
     throw new Error("The file upload did not finish.");
   });
+
+/** The official browser transport resolves all session IDs with one roster
+ * read. The caller discards every result on a timeout or incomplete coverage. */
+export function browserRoutingHistory(bots: Agent[], signal: AbortSignal): Promise<TranscriptEntry[][]> {
+  return useClient(async client => {
+    const roster = (await client.listBots()).bots;
+    return Promise.all(bots.map(async bot => {
+      const match = roster.find(b => b.id === bot.id);
+      if (!match) throw new Error("Grok Bot's roster changed.");
+      const page = await client.listTranscript({ botId: bot.id, sessionId: match.sessionId, limit: 6 });
+      if (page.entries.some(entry => entry.bodyOmitted)) throw new Error("Grok Bot did not return complete recent history.");
+      return page.entries.flatMap(entry => entry.body ? [{ ...entry.body, kind:String(entry.body.kind ?? entry.entryKind) } as TranscriptEntry] : []);
+    }));
+  }, signal);
+}
