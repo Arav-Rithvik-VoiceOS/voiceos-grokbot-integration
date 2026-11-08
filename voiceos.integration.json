@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "com.arav.bot",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "name": "Grok Bot",
   "summary": "Talk to your Grok Bot AI teammates by voice.",
   "description": "See your Grok Bot teammates, message one, catch up on what a bot said, create a new bot, or start a group chat with several at once — all by voice, from the notch.",
@@ -9,7 +9,8 @@
     "Productivity"
   ],
   "supportedPlatforms": [
-    "darwin"
+    "darwin",
+    "win32"
   ],
   "icon": "icon.png",
   "publisher": {
@@ -30,7 +31,9 @@
     {
       "kind": "network",
       "domains": [
-        "*.cursorvm.com"
+        "*.cursorvm.com",
+        "api2.cursor.sh",
+        "cursor.com"
       ]
     },
     {
@@ -58,41 +61,11 @@
     "blocks": [
       {
         "type": "heading",
-        "text": "1. Install Grok Bot and sign in"
+        "text": "Connect your Grok Bot account"
       },
       {
         "type": "text",
-        "text": "Install the Grok Bot app on this Mac, open it, and sign in. VoiceOS uses that session, so there are no keys to paste."
-      },
-      {
-        "type": "heading",
-        "text": "2. One popup from macOS"
-      },
-      {
-        "type": "text",
-        "text": "The first time you use Grok Bot in VoiceOS, macOS asks for access to \"Grok Bot Safe Storage\" in your Keychain. It shows on your screen, not in VoiceOS. Type your Mac password and click Always Allow, so it does not ask again."
-      },
-      {
-        "type": "image",
-        "src": "https://raw.githubusercontent.com/Arav-Rithvik-VoiceOS/voiceos-grokbot-integration/main/docs/images/keychain-popup-setup.webp",
-        "alt": "The macOS Keychain popup asking for access to Grok Bot Safe Storage, with an Always Allow button",
-        "caption": "Click Always Allow."
-      },
-      {
-        "type": "heading",
-        "text": "3. Make your first bot"
-      },
-      {
-        "type": "text",
-        "text": "Say \"Create a bot named Scout that checks my inbox.\""
-      },
-      {
-        "type": "heading",
-        "text": "Optional: notifications"
-      },
-      {
-        "type": "text",
-        "text": "Turn on \"Show notifications from bots\" below to get a ping when a bot replies. To mute one bot, say \"Turn off Piper's notifications\"."
+        "text": "Say “show my bots.” Choose Sign in to Grok Bot and complete the browser sign-in for the account that owns your bots. Then say “show my bots” again. Grok Bot can stay closed."
       }
     ]
   },
@@ -145,7 +118,7 @@
       "name": "grokbot_help",
       "title": "How to use Grok Bot",
       "hidePermissionToggle": true,
-      "description": "Show how to set up and use Grok Bot: when the user already has bots, a card with their bot list plus things they can say; otherwise a card with the setup steps (checked on this Mac). Use when the user asks how to use or set up Grok Bot, what Grok Bot can do, or for help with this integration.",
+      "description": "Show how to set up and use Grok Bot: when the user already has bots, a card with their bot list plus things they can say; otherwise a card with the setup steps for this device. Use when the user asks how to use or set up Grok Bot, what Grok Bot can do, or for help with this integration.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -721,7 +694,7 @@
       "title": "Reconnect Grok Bot",
       "hidePermissionToggle": true,
       "uiCallable": true,
-      "description": "Internal — invoked only by the Reconnect card's button. Restarts the Grok Bot app and waits for its connection. Do not call from voice.",
+      "description": "Internal — invoked by a Grok Bot connection card to open browser sign-in or repair a saved desktop connection. Do not call from voice.",
       "inputSchema": {
         "type": "object",
         "properties": {}

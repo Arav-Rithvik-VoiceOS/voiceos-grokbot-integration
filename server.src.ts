@@ -9,6 +9,7 @@
 // FIRST import, on purpose: rebinds console.log/info/warn/debug to stderr
 // before any dependency runs, so no stray stdout line corrupts the MCP wire.
 import "./stdoutGuard.ts";
+import { BrowserLoginRequired, browserSelected, openBrowserLogin, browserPrefs } from "./browserSession.ts";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -73,6 +74,11 @@ let prefsCache: { at: number; value: Promise<SidebarPrefs> } | null = null;
 let mainCache: { at: number; value: Promise<string | undefined> } | null = null;
 function rosterPrefs(): Promise<SidebarPrefs> {
   if (prefsCache && Date.now() - prefsCache.at < PREFS_FRESH_MS) return prefsCache.value;
+  if (browserSelected()) {
+    const value = browserPrefs().catch(() => ({ pinnedIds: [], sections: [] }));
+    prefsCache = { at: Date.now(), value };
+    return value;
+  }
   if (!mainCache || Date.now() - mainCache.at >= MAIN_FRESH_MS) mainCache = { at: Date.now(), value: mainAgentId() };
   const main = mainCache.value;
   const value = Promise.resolve().then(() => readSidebarPrefs()).then(async (local) => { const mainId = await main; return { ...local, ...(mainId ? { mainId } : {}) }; })
@@ -492,6 +498,10 @@ async function runTool(
   try {
     return await run();
   } catch (error) {
+    if (error instanceof BrowserLoginRequired && isWaking()) {
+      browserLoginOffered = true;
+      return result({ ok: false, needsSetup: true, message: error.message }, connectCard(undefined, true));
+    }
     log(`${tool} failed:`, error);
     // "Not set up / needs a refresh" isn't a crash. On a Mac that never
     // connected it's the first-run state: speak the fix, open the app, and show
@@ -676,7 +686,7 @@ server.registerTool(
   {
     title: "How to use Grok Bot",
     description:
-      "Show how to set up and use Grok Bot: when the user already has bots, a card with their bot list plus things they can say; otherwise a card with the setup steps (checked on this Mac). Use when the user asks how to use or set up Grok Bot, what Grok Bot can do, or for help with this integration.",
+      "Show how to set up and use Grok Bot: when the user already has bots, a card with their bot list plus things they can say; otherwise a card with the setup steps for this device. Use when the user asks how to use or set up Grok Bot, what Grok Bot can do, or for help with this integration.",
     inputSchema: {
       page: z
         .enum(["setup", "keychain", "ideas"])
@@ -689,6 +699,14 @@ server.registerTool(
   },
   async (args: { page?: "setup" | "keychain" | "ideas" }) =>
     handle("grokbot_help", async () => {
+      if (browserSelected()) {
+        // Reading through the same session also lets a pending sign-in finish.
+        // runTool shows the browser Connect card if sign-in is still needed.
+        const agents = await listAgents();
+        const [{ recent, cursors }, prefs] = await Promise.all([rosterThreads(agents), rosterPrefs()]);
+        return result({ thingsToSay: HELP_PHRASES, message: agents.length ? "Grok Bot is connected. The card shows your bots." : "Grok Bot is connected. Say “create a bot named Scout” to get started." },
+          showCard(agents, undefined, recent, cursors, undefined, prefs));
+      }
       const signedIn = grokBotSignIn();
       const connected = hasConnectedBefore();
       let agents: Agent[] = [];
@@ -1305,11 +1323,16 @@ server.registerTool(
  * showed. Until one has been shown, the tool does nothing: the host cannot tell
  * a card's button from a model call, so the server keeps that line itself. */
 let reconnectOffered = false;
+let browserLoginOffered = false;
 server.registerTool("grokbot_reconnect", {
   title: "Reconnect Grok Bot",
-  description: "Internal — invoked only by the Reconnect card's button. Restarts the Grok Bot app and waits for its connection. Do not call from voice.",
+  description: "Internal — invoked by a Grok Bot connection card to open browser sign-in or repair a saved desktop connection. Do not call from voice.",
   inputSchema: {},
 }, () => cardRequest("grokbot_reconnect", async () => {
+  if (browserLoginOffered && browserSelected()) {
+    await openBrowserLogin();
+    return { ok: true, message: "Finish signing in in your browser, then say “show my bots” again." };
+  }
   if (!reconnectOffered) {
     return { ok: false, message: `Nothing to reconnect. ${SERVICE_NAME} will show a Reconnect card when it needs one.` };
   }

@@ -610,8 +610,8 @@ export function guideCard(setup: SetupState, bots: Agent[] = [], page: 0 | 1 | 2
 }
 
 /** connect.html — first-run / needs-sign-in status. */
-export function connectCard(account?: { name?: string; email?: string }) {
-  return glance("connect", { data: { account: account ?? { name: "You" } }, args: {} }, 340, "Grok Bot");
+export function connectCard(account?: { name?: string; email?: string }, browserLogin = false) {
+  return glance("connect", { data: { account: account ?? { name: "You" }, browserLogin }, args: {} }, 340, "Grok Bot");
 }
 
 /** reconnect.html — the cloud computer is asleep and no saved route can wake

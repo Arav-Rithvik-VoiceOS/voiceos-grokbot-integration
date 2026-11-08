@@ -14,6 +14,7 @@
  * user's OWN session on the user's OWN Mac. See SPIKE.md for the proof run and
  * PLAN.md for the design.
  */
+import { browserSelected, browserSignedIn, browserRoster, browserTranscript, browserSend, browserGateway, browserCreate, browserRoom, browserMembers, browserRename, browserUpload, browserNotify, browserWidget } from "./browserSession.ts";
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -110,6 +111,7 @@ function appStarting(status: { pid?: unknown; startedAtMs?: unknown }): boolean 
 /** Only the app's settled signed-out marker proves logout. Older versions
  * export just a descriptor; when both are absent, sign-in state is unknown. */
 export const grokBotSignIn = (): boolean | undefined => {
+  if (browserSelected()) return browserSignedIn();
   const signIn = savedSignIn();
   if (signIn === "in") return true;
   if (signIn === "out") return false;
@@ -177,6 +179,7 @@ const CONNECTED_PATH = `${ROUTE_COPY_DIR}/connected.json`;
 let connectedBefore: boolean | null = null;
 
 export function hasConnectedBefore(): boolean {
+  if (browserSelected()) return browserSignedIn();
   connectedBefore ??= existsSync(CONNECTED_PATH);
   return connectedBefore;
 }
@@ -381,6 +384,7 @@ function waitForKeychain(read: Promise<string>): Promise<string> {
 
 /** Read + decrypt the descriptor into live gateway creds. */
 async function loadCreds(force = false, keyRefreshed = false): Promise<GatewayCreds> {
+  if (browserSelected()) return browserGateway(isWaking());
   if (savedSignIn() === "out") {
     forgetSession();
     throw signedOutError();
@@ -900,6 +904,7 @@ export interface TranscriptEntry {
 }
 
 export async function listAgents() {
+  if (browserSelected()) return browserRoster();
   return withAvatarImages(await gateway<Agent[]>("listAgents", {}));
 }
 
@@ -966,6 +971,7 @@ function sectionList(v: unknown): SidebarSection[] {
 /** Pins and sections from the app's local caches (never the network). Missing
  * or unreadable files mean "none", never an error: the roster still shows. */
 export function readSidebarPrefs(paths: { dir?: string; settings?: string } = {}): Omit<SidebarPrefs, "mainId"> {
+  if (browserSelected() && !paths.dir && !paths.settings) return { pinnedIds: [], sections: [] };
   const dir = paths.dir ?? PERSISTENCE_DIR;
   const slot = readSlice(dir, "client-meta.account-slot");
   const scope = typeof slot === "string" && slot ? `account.${encodeURIComponent(slot)}.` : null;
@@ -1190,7 +1196,7 @@ export const listAllAutomations = () => gateway<AutomationEntry[]>("listAllAutom
  * the gateway handed back, and the name the user saw. */
 export interface SentAttachment { path: string; name: string }
 export const sendPrompt = (agentId: string, prompt: string, attachments: SentAttachment[] = []) =>
-  gateway<{ accepted?: boolean }>("sendPrompt", {
+  browserSelected() ? browserSend(agentId, prompt, attachments) : gateway<{ accepted?: boolean }>("sendPrompt", {
     agentId, prompt,
     // The app's own send body: parallel path and name lists, only when there are files.
     ...(attachments.length ? { attachmentPaths: attachments.map((a) => a.path), attachmentNames: attachments.map((a) => a.name) } : {}),
@@ -1201,6 +1207,7 @@ export const sendPrompt = (agentId: string, prompt: string, attachments: SentAtt
  * can reference. The gateway names the stored copy; whichever field it uses,
  * a string path comes back or this throws. */
 export async function uploadAttachment(agentId: string, filename: string, bytesBase64: string): Promise<string> {
+  if (browserSelected()) return browserUpload(agentId, filename, bytesBase64);
   const r = await gateway<Record<string, unknown> | string | null>("uploadAttachment", { agentId, filename, bytesBase64 }, { timeoutMs: WRITE_TIMEOUT_MS * 3 });
   const path = typeof r === "string" ? r : r && typeof r === "object" ? (r.path ?? r.attachmentPath ?? r.filePath ?? (r.attachment as { path?: unknown } | undefined)?.path) : undefined;
   if (typeof path !== "string" || !path) {
@@ -1215,7 +1222,7 @@ export const createAgent = (
   description: string,
   opts: { title?: string; notificationsEnabled?: boolean; avatarShape?: string; avatarColor?: string } = {},
 ) =>
-  gateway<Agent>(
+  browserSelected() ? browserCreate(name, description, opts) : gateway<Agent>(
     "createAgent",
     {
       name,
@@ -1231,6 +1238,7 @@ export const createAgent = (
   );
 
 export const createGroup = async (name: string, memberAgentIds: string[], description?: string): Promise<Agent> => {
+  if (browserSelected()) return browserRoom(name, memberAgentIds, description);
   const created = await gateway<Agent | { agent: Agent }>(
     "createGroup",
     { name, memberAgentIds, ...(description ? { description } : {}) },
@@ -1241,14 +1249,14 @@ export const createGroup = async (name: string, memberAgentIds: string[], descri
 
 // Gateway contracts verified against Grok Bot's shipped RPC schema.
 export const setGroupMembers = (id: string, memberAgentIds: string[]) =>
-  gateway("setGroupMembers", { id, memberAgentIds }, { timeoutMs: WRITE_TIMEOUT_MS });
+  browserSelected() ? browserMembers(id, memberAgentIds) : gateway("setGroupMembers", { id, memberAgentIds }, { timeoutMs: WRITE_TIMEOUT_MS });
 
 /** Flip a bot's "Notify on updates" switch — the same one the Grok Bot app shows. */
 export const setAgentNotifyOnUpdates = (id: string, isEnabled: boolean) =>
-  gateway("setAgentNotifyOnUpdates", { id, isEnabled }, { timeoutMs: WRITE_TIMEOUT_MS });
+  browserSelected() ? browserNotify(id, isEnabled) : gateway("setAgentNotifyOnUpdates", { id, isEnabled }, { timeoutMs: WRITE_TIMEOUT_MS });
 
 export const renameGroup = (group: Agent, name: string) =>
-  gateway("updateAgent", {
+  browserSelected() ? browserRename(group.id, name) : gateway("updateAgent", {
     id: group.id,
     profile: {
       name, description: group.description ?? "",
@@ -1259,12 +1267,12 @@ export const renameGroup = (group: Agent, name: string) =>
   }, { timeoutMs: WRITE_TIMEOUT_MS });
 
 export const transcriptTail = (id: string, limit = 8, beforeSeq?: number) =>
-  gateway<{ entries?: TranscriptEntry[]; nextBeforeSeq?: number }>("getAgentTranscriptTail", { id, limit, ...(beforeSeq !== undefined ? { beforeSeq } : {}) });
+  browserSelected() ? browserTranscript(id, limit, beforeSeq) : gateway<{ entries?: TranscriptEntry[]; nextBeforeSeq?: number }>("getAgentTranscriptTail", { id, limit, ...(beforeSeq !== undefined ? { beforeSeq } : {}) });
 
 export const respondToWidget = (agentId: string, entryId: string, value: string) =>
-  gateway<{ accepted?: boolean } | null>("respondToWidget", { agentId, entryId, value }, { timeoutMs: WRITE_TIMEOUT_MS });
+  browserSelected() ? browserWidget(agentId, entryId, value) : gateway<{ accepted?: boolean } | null>("respondToWidget", { agentId, entryId, value }, { timeoutMs: WRITE_TIMEOUT_MS });
 export const dismissWidget = (agentId: string, entryId: string) =>
-  gateway<{ accepted?: boolean }>("dismissWidget", { agentId, entryId }, { timeoutMs: WRITE_TIMEOUT_MS });
+  browserSelected() ? browserWidget(agentId, entryId) : gateway<{ accepted?: boolean }>("dismissWidget", { agentId, entryId }, { timeoutMs: WRITE_TIMEOUT_MS });
 export const readAttachmentImage = (path: string) =>
   gateway<{ dataUrl: string; width?: number; height?: number } | null>("readAttachmentImage", { path });
 
@@ -1408,7 +1416,7 @@ export function openBotChat(agentId: string): Promise<void> {
   }
   const url = `grokbot://app/v1/agent?id=${agentId}`;
   return new Promise((resolve, reject) => {
-    execFile("/usr/bin/open", [url], (error) => {
+    execFile(process.platform === "win32" ? "rundll32.exe" : "/usr/bin/open", process.platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url], (error) => {
       if (error) {
         log("could not open bot chat:", error);
         reject(new IntegrationError("upstream", "Couldn't open Grok Bot."));

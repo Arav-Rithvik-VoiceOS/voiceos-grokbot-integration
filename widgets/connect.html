@@ -79,10 +79,11 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 </div>
 <div style="text-align:center;padding:0 24px 12px"><div class="t1" style="font-size:17px;white-space:normal">Connect Grok Bot to VoiceOS</div><div class="t3" style="white-space:normal;margin-top:3px">Talk to your Bots from the notch. VoiceOS will be able to:</div></div>
 <div class="perm"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span><div class="grow"><div class="t2">See your Bots and threads</div><div class="t3">Status, labels and recent messages</div></div></div>
-<div class="perm"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></span><div class="grow"><div class="t2">Send messages as you</div><div class="t3">Always shown for confirmation first</div></div></div>
+<div class="perm"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></span><div class="grow"><div class="t2">Send messages as you</div><div class="t3">Sent from your account</div></div></div>
 <div class="perm"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span><div class="grow"><div class="t2">Create Bots and groups</div><div class="t3">Using the same builder you know</div></div></div>
 <div class="acct" style="margin-top:4px"><span class="who"></span><div class="grow"><div class="t2" id="acct-name">—</div><div class="t3" id="acct-mail">—</div></div><span class="t3">Switch</span></div>
-<div class="foot">Disconnect anytime in Integrations</div>
+<div class="foot" id="connect-foot">Disconnect anytime in Integrations</div>
+<button id="browser-login" hidden style="display:none;margin:0 auto 12px;padding:6px 14px;border-radius:8px;background:var(--fill-2)">Sign in to Grok Bot</button>
 
 <script>
 const DEMO=__VOICEOS_DEMO__;
@@ -140,6 +141,23 @@ const Motion=(()=>{
 function autosize(t){t.style.height='auto';t.style.height=t.scrollHeight+'px'}
 
 
-function render(d){$('#acct-name').textContent=d.account?.name||'';$('#acct-mail').textContent=d.account?.email||''}
+const loginButton = $('#browser-login');
+let loginRequest;
+loginButton.addEventListener('click', () => {
+  loginRequest = "browser-login-" + Date.now();
+  parent.postMessage({ type:'voiceos:invokeTool', name:'grokbot_reconnect', args:{}, requestId:loginRequest }, '*');
+  $('#connect-foot').textContent='Opening your browser…';
+});
+addEventListener('message', e => {
+  const m=e.data;
+  if (e.source !== parent || !loginRequest || m?.type !== 'voiceos:toolResult' || m.requestId !== loginRequest) return;
+  if (m.status === 'completed') $('#connect-foot').textContent='Finish signing in, then say “show my bots” again.';
+  else if (['failed','denied','cancelled'].includes(m.status)) $('#connect-foot').textContent='The browser did not open. Try again.';
+});
+function render(d){
+  loginButton.hidden=!d.browserLogin;
+  loginButton.style.display=d.browserLogin?'block':'none';
+  if(d.browserLogin){ $('.acct').style.display='none'; $('#connect-foot').textContent='Use the browser to connect your Grok Bot account.'; }
+  $('#acct-name').textContent=d.account?.name||'';$('#acct-mail').textContent=d.account?.email||''}
 
 </script>
