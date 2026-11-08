@@ -904,7 +904,10 @@ export interface TranscriptEntry {
 }
 
 export async function listAgents() {
-  if (browserSelected()) return browserRoster();
+  if (browserSelected()) {
+    const { agents, avatarUrls } = await browserRoster();
+    return withAvatarImages(agents, avatarUrls);
+  }
   return withAvatarImages(await gateway<Agent[]>("listAgents", {}));
 }
 
@@ -1013,15 +1016,9 @@ export async function sidebarPrefs(): Promise<SidebarPrefs> {
 
 // ── Bot pictures ─────────────────────────────────────────────────────────────
 //
-// A Grok Bot user can give a bot a picture instead of its shape. The app's own
-// rule (its roster code): a bot has a picture when avatarDataUrl or
-// avatarVersion is set. avatarDataUrl, when present, IS the picture; otherwise
-// the app asks the gateway's getAgentAvatar → { dataUrl, version } (a
-// "background" command: it never wakes a parked computer) and caches it per
-// version. We do the same. Cards cannot reach the network, so the picture
-// travels inside the card as a data: URI, center-cropped to 72px (36px avatars
-// at 2x) with macOS's sips: PNG when it has transparency, JPEG otherwise.
-// Only inline raster images are used; anything else keeps the shape.
+// Browser sessions return a signed storage URL. Older gateways return inline
+// pixels or a version for getAgentAvatar. Cards draw a cached 72px thumbnail
+// without making a network request or receiving a signed link.
 
 export const getAgentAvatar = (id: string) =>
   gateway<{ dataUrl?: string | null; version?: string | null } | null>("getAgentAvatar", { id });
@@ -1043,8 +1040,7 @@ const avatarFailures = new Map<string, number>();
 let avatarSlots = 3;
 const avatarQueue: (() => void)[] = [];
 
-const hasPicture = (a: Agent) => !a.isGroup && (!!a.avatarDataUrl || !!a.avatarVersion);
-const pictureKey = (a: Agent) => [a.id, a.avatarVersion ?? "",
+const pictureKey = (a: Agent, url?: URL) => [a.id, a.avatarVersion ?? "", url?.pathname ?? "",
   a.avatarDataUrl ? createHash("sha1").update(a.avatarDataUrl).digest("hex") : ""].join("\n");
 
 async function inAvatarSlot<T>(work: () => Promise<T>): Promise<T> {
@@ -1067,7 +1063,7 @@ function sips(args: string[]): Promise<string> {
 }
 
 /** An inline picture → a small square data: URI, or null when it is not a
- * raster image sips can read. Never logs the picture or where it came from. */
+ * raster image the system can decode. Never logs the picture or where it came from. */
 export async function shrinkAvatar(dataUrl: string): Promise<string | null> {
   const head = /^data:image\/(?:png|jpe?g|gif|webp|heic|heif|tiff|bmp);base64,/i.exec(dataUrl);
   if (!head) {
@@ -1080,6 +1076,30 @@ export async function shrinkAvatar(dataUrl: string): Promise<string | null> {
   try {
     const src = join(dir, "source");
     await writeFile(src, bytes);
+    if (process.platform === "win32") {
+      // The working directory supplies both paths; the command contains no user input.
+      const script = `
+        $ErrorActionPreference = 'Stop'
+        Add-Type -AssemblyName System.Drawing
+        $src = [Drawing.Image]::FromFile((Join-Path $PWD 'source'))
+        $side = [Math]::Min($src.Width, $src.Height)
+        $size = [Math]::Min(${AVATAR_PX}, $side)
+        $bmp = New-Object Drawing.Bitmap $size, $size
+        $g = [Drawing.Graphics]::FromImage($bmp)
+        try {
+          $g.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+          $dst = New-Object Drawing.Rectangle 0, 0, $size, $size
+          $g.DrawImage($src, $dst, [int](($src.Width-$side)/2), [int](($src.Height-$side)/2), $side, $side, [Drawing.GraphicsUnit]::Pixel)
+          $bmp.Save((Join-Path $PWD 'out.png'), [Drawing.Imaging.ImageFormat]::Png)
+        } finally { $g.Dispose(); $bmp.Dispose(); $src.Dispose() }
+      `;
+      await new Promise<void>((resolve, reject) => {
+        execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script],
+          { cwd: dir, timeout: 8_000, windowsHide: true }, (error) => error ? reject(error) : resolve());
+      });
+      const uri = `data:image/png;base64,${(await readFile(join(dir, "out.png"))).toString("base64")}`;
+      return uri.length <= AVATAR_IMAGE_MAX_CHARS ? uri : null;
+    }
     const info = await sips(["-g", "pixelWidth", "-g", "pixelHeight", "-g", "hasAlpha", src]);
     const width = Number(/pixelWidth: (\d+)/.exec(info)?.[1]);
     const height = Number(/pixelHeight: (\d+)/.exec(info)?.[1]);
@@ -1107,9 +1127,31 @@ export async function shrinkAvatar(dataUrl: string): Promise<string | null> {
   }
 }
 
-async function loadPicture(a: Agent): Promise<string | null> {
-  const source = a.avatarDataUrl || (await inAvatarSlot(() => getAgentAvatar(a.id)))?.dataUrl;
-  return typeof source === "string" && source ? shrinkAvatar(source) : null;
+async function readCloudPicture(url: URL): Promise<string | null> {
+  // The signed URL authenticates this request; never forward the account token.
+  const res = await fetch(url, { redirect: "error", credentials: "omit", signal: AbortSignal.timeout(5_000) });
+  if (!res.ok) throw new Error("Avatar download failed");
+  const mime = res.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+  if (!res.body || !mime || !/^image\/(?:png|jpe?g|gif|webp|heic|heif|tiff|bmp)$/.test(mime) ||
+      Number(res.headers.get("content-length")) > AVATAR_SOURCE_MAX_BYTES) {
+    await res.body?.cancel();
+    return null;
+  }
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  for await (const chunk of res.body) {
+    length += chunk.length;
+    if (length > AVATAR_SOURCE_MAX_BYTES) return null;
+    chunks.push(chunk);
+  }
+  return `data:${mime};base64,${Buffer.concat(chunks, length).toString("base64")}`;
+}
+
+async function loadPicture(a: Agent, url?: URL): Promise<string | null> {
+  return inAvatarSlot(async () => {
+    const source = a.avatarDataUrl || (url ? await readCloudPicture(url) : (await getAgentAvatar(a.id))?.dataUrl);
+    return source ? shrinkAvatar(source) : null;
+  });
 }
 
 function rememberPicture(key: string, uri: string | null): void {
@@ -1122,13 +1164,15 @@ function rememberPicture(key: string, uri: string | null): void {
  * once; new ones get AVATAR_WAIT_MS, then the roster goes out without them
  * (those bots show their shape this time). A failed read waits a few minutes
  * before it is tried again. */
-export async function withAvatarImages(agents: Agent[]): Promise<Agent[]> {
+export async function withAvatarImages(agents: Agent[], avatarUrls?: ReadonlyMap<string, URL>): Promise<Agent[]> {
   if (!Array.isArray(agents)) return agents;
   const pending: Promise<void>[] = [];
   let waiting = true;
   for (const a of agents) {
-    if (!a || typeof a !== "object" || !hasPicture(a)) continue;
-    const key = pictureKey(a);
+    if (!a || typeof a !== "object" || a.isGroup) continue;
+    const url = avatarUrls?.get(a.id);
+    if (!url && !a.avatarDataUrl && (avatarUrls || !a.avatarVersion)) continue;
+    const key = pictureKey(a, url);
     if (avatarCache.has(key)) {
       const uri = avatarCache.get(key);
       if (uri) a.avatarImage = uri;
@@ -1137,7 +1181,7 @@ export async function withAvatarImages(agents: Agent[]): Promise<Agent[]> {
     if (Date.now() - (avatarFailures.get(key) ?? 0) < AVATAR_RETRY_MS) continue;
     let load = avatarLoads.get(key);
     if (!load) {
-      load = loadPicture(a)
+      load = loadPicture(a, url)
         .then((uri) => { rememberPicture(key, uri); avatarFailures.delete(key); return uri; })
         .catch(() => { avatarFailures.set(key, Date.now()); return null; })
         .finally(() => avatarLoads.delete(key));

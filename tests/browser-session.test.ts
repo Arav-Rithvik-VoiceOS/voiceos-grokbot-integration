@@ -26,6 +26,9 @@ const seed = () =>
 const browser = await import("../browserSession.ts");
 const client = await import("../client.ts");
 const calls: { method: string; body: any }[] = [];
+const storageHost = "sand-box-stores.s3.us-east-1.amazonaws.com";
+let pictureUrl: string | undefined;
+let pictureReads = 0;
 let unknown = false,
   expired = false,
   deliveryStatus = "unknown",
@@ -33,6 +36,13 @@ let unknown = false,
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (u, init) => {
   const url = new URL(String(u));
+  if (url.hostname === storageHost) {
+    expect(new Headers(init?.headers).has("authorization")).toBe(false);
+    expect(init?.credentials).toBe("omit");
+    expect(init?.redirect).toBe("error");
+    pictureReads++;
+    return new Response(Bun.file(join(import.meta.dir, "../icon.png")), { headers: { "Content-Type": "image/png" } });
+  }
   expect(url.origin).toBe("https://api2.cursor.sh");
   expect(new Headers(init?.headers).get("authorization")).toBe(
     "Bearer test-session",
@@ -50,6 +60,7 @@ globalThis.fetch = (async (u, init) => {
           id: "server",
           name: "Assistant",
           viewerSessionId: "chat",
+          avatarUrl: pictureUrl,
         },
       ],
     },
@@ -139,6 +150,23 @@ test("same cards read browser roster, unread status, history and sidebar setting
   expect(await client.respondToWidget("assistant", "question", "Yes")).toEqual({
     accepted: true,
   });
+});
+test("cloud profile pictures reach the card without exposing the signed URL", async () => {
+  seed();
+  pictureUrl = `https://${storageHost}/avatar.png?signature=private`;
+  try {
+    const agents = await client.listAgents();
+    const { avatarMap } = await import("../cards.ts");
+    expect(avatarMap(agents).assistant).toMatch(/^data:image\/png;base64,/);
+    expect(JSON.stringify(agents)).not.toContain("signature");
+    pictureUrl = `https://${storageHost}/avatar.png?signature=rotated`;
+    expect(avatarMap(await client.listAgents())).toEqual(avatarMap(agents));
+    expect(pictureReads).toBe(1);
+    pictureUrl = "https://untrusted.example/avatar.png";
+    expect(avatarMap(await client.listAgents())).toEqual({});
+  } finally {
+    pictureUrl = undefined;
+  }
 });
 test("an unknown acknowledgement uses the same message ID across retries and never resends until settled", async () => {
   seed();

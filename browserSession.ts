@@ -225,10 +225,19 @@ export const browserRoster = () =>
     const byId = new Map(
       statuses.statuses.map((row) => [row.agentId, row] as const),
     );
-    return bots.flatMap((bot) => {
+    const avatarUrls = new Map<string, URL>();
+    const agents = bots.flatMap((bot) => {
       const status = byId.get(bot.id);
       const state = status?.client;
       if (state?.hiddenFromSidebar || state?.removedFromSidebar) return [];
+      const picture = bot.avatar.picture?.url;
+      if (picture && URL.canParse(picture)) {
+        const url = new URL(picture);
+        if (url.protocol === "https:" && !url.username && !url.password && !url.port &&
+            url.hostname === "sand-box-stores.s3.us-east-1.amazonaws.com") {
+          avatarUrls.set(bot.id, url);
+        }
+      }
       return [
         {
           ...cardBot(bot),
@@ -245,6 +254,7 @@ export const browserRoster = () =>
         },
       ];
     });
+    return { agents, avatarUrls };
   });
 async function findBot(client: GrokBotClient, id: string) {
   const bot = (await client.listBots()).bots.find((row) => row.id === id);
