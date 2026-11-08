@@ -228,13 +228,25 @@ test("group lookup preserves drafts and returns resolved member IDs", async () =
   expect(r.args.message).toBeUndefined();
   expect(writes).toEqual([]);
 });
-test("a lookup with no recipient returns every bot's role as plain JSON, never the roster card", async () => {
+test("a lookup without a recipient or a verified primary asks which bot", async () => {
   const r = await call("grokbot_prepare_message", {});
-  expect(r.ready).toBe(false);
-  expect(r.nextTool).toBe("grokbot_send");
-  expect(r.bots.map((b: any) => b.id)).toEqual(agents.filter(a => !a.isGroup).map(a => a.id));
-  expect(r._voiceos_glance).toBeUndefined();
+  expect(r.isError).toBe(true);
+  expect(r.error).toContain("Which Grok Bot");
   expect(writes).toEqual([]);
+});
+test("direct, prepared and card sends use the same unique Jerome, with no writes when ambiguous", async () => {
+  agents.push({ id:"j",name:"Jerome · BISV Hacks",title:"Sponsorships" });
+  const requestText = "Tell Jerome to collect sponsor emails";
+  const prep = await call("grokbot_prepare_message",{ bot:"Piper",requestText });
+  expect(prep).toMatchObject({ ready:true,args:{bot:"j"},recipient:{id:"j",name:"Jerome · BISV Hacks"},routing:{source:"explicit"} });
+  expect((await call("grokbot_send",{bot:"Jerome",message:"Hello",requestText})).botId).toBe("j");
+  agents.push({id:"j2",name:"Jerome · Calendar"});
+  const before=writes.length;
+  const ambiguous = await call("grokbot_prepare_message",{bot:"j",requestText});
+  expect(ambiguous.error).toContain("Jerome · Calendar");
+  expect((await call("grokbot_send",{bot:"Jerome · BISV Hacks",recipientId:"j",requestText,message:"Hello"})).isError).toBe(true);
+  expect(writes.length).toBe(before);
+  expect((await call("grokbot_card_send",{bot:"j2",message:"Hello"})).botId).toBe("j2");
 });
 test("a voice toggle flips one bot's Notify on updates switch, and skips a no-op write", async () => {
   const off = await call("grokbot_notifications", { bot: "piper", enabled: false });

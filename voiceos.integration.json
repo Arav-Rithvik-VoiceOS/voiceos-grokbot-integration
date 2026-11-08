@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "com.arav.bot",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "name": "Grok Bot",
   "summary": "Talk to your Grok Bot AI teammates by voice.",
   "description": "See your Grok Bot teammates, message one, catch up on what a bot said, create a new bot, or start a group chat with several at once — all by voice, from the notch.",
@@ -165,7 +165,7 @@
       "name": "grokbot_prepare_message",
       "title": "Check message recipients",
       "hidePermissionToggle": true,
-      "description": "Check the live Grok Bot roster before a group message, or when the user names no bot. Use FIRST for group messages. For ONE named bot, skip this and call grokbot_send directly: its hook verifies the name. When the user names no bot ('send this task to Grok Bot': Grok Bot is the app, not a bot), call this with no arguments to get every bot's role. Never pass the message here: write it once, in the next tool call. Pass names as the user said them. This read-only lookup does not send. On success call nextTool with the returned args plus the message. On failure stop and explain the recipient could not be found; do not guess another bot, create a bot, or retry automatically.",
+      "description": "Use FIRST to verify the recipient of a group send or a send with no named bot against the live roster. Pass a name exactly as spoken, or a short task/topic for routing an unnamed request. Respect the recipient returned by this tool. If it asks which bot, ask the user and stop. This tool does not send anything.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -194,6 +194,14 @@
           "groupName": {
             "type": "string",
             "description": "A new group name, composed as the user would type it."
+          },
+          "requestText": {
+            "type": "string",
+            "description": "Current user request supplied by VoiceOS."
+          },
+          "task": {
+            "type": "string",
+            "description": "Task or project context for a request with no named recipient."
           }
         },
         "required": []
@@ -215,7 +223,7 @@
           },
           "bot": {
             "type": "string",
-            "description": "One Grok Bot's name as the user said it, or its exact ID from grokbot_prepare_message. When the user named no bot, the one bot whose role fits the task (from the turn's Grok Bot roster), never a default. The SDK hook verifies the recipient. Unknown or group names are rejected: never substitute another bot."
+            "description": "The bot's name as spoken or the exact ID from preparation. For an unnamed task omit the bot. The live roster supplies a clear role or project match, then the primary bot if available. Ask which bot when an explicit name is ambiguous."
           },
           "message": {
             "type": "string",
@@ -224,11 +232,17 @@
           "recipientId": {
             "type": "string",
             "description": "Internal: recipient ID pinned by the preparation hook. Never compose or change this value."
+          },
+          "requestText": {
+            "type": "string",
+            "description": "Current user request supplied by VoiceOS."
+          },
+          "task": {
+            "type": "string",
+            "description": "Task or project context for a request with no named recipient."
           }
         },
-        "required": [
-          "bot"
-        ]
+        "required": []
       }
     },
     {
@@ -776,7 +790,7 @@
     {
       "name": "send_message",
       "tool": "grokbot_send",
-      "description": "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. A name the user says wins, even if another bot's role fits better. If the user names no bot, or the name is unclear or misheard, pick the one bot whose role clearly fits the task (school work → the school bot); 'Grok Bot', 'a bot' or 'my bot' is the app, not a name. If two bots fit equally or none fits, do not pick. 'Send this task to …' and 'dispatch …' are sends. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask <bot> how the test is going' → 'How's the test going?'). Drop the lead-in, keep the meaning and line breaks, capital first letter, right end punctuation. A long task is one whole message. Reject groups, multiple recipients, or separate actions outside the message.",
+      "description": "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. A name the user says wins, even if another bot's role fits better. If the user names no bot, let the integration route by project or role (school work → the school bot); 'Grok Bot', 'a bot' or 'my bot' is the app, not a name. If there is no clear match, the integration uses the user's primary bot. Ambiguous or unknown spoken names require clarification. 'Send this task to …' and 'dispatch …' are sends. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask <bot> how the test is going' → 'How's the test going?'). Drop the lead-in, keep the meaning and line breaks, capital first letter, right end punctuation. A long task is one whole message. Reject groups, multiple recipients, or separate actions outside the message.",
       "utterances": {
         "en": [
           "Send a message to {bot} asking {message}",

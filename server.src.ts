@@ -53,15 +53,16 @@ import { recordCardPoll, cardCovers } from "./cardWatch.ts";
 import { RFB_B64 } from "./assets.generated.ts";
 import { connectCard, guideCard, reconnectCard, showCard, rosterData, orbIcon, type ShowOpen, toBot, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
-import { PREPARE_DESCRIPTION, SEND_MODEL_DESCRIPTION, SEND_BOT_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
+import { PREPARE_DESCRIPTION, SEND_MODEL_DESCRIPTION, SEND_BOT_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, botChoiceLabel, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 import { conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
 import { needsAttention, toCardThread, type CardItem } from "./conversation.ts";
-import { IntentRoster, registerIntentSupport } from "./intents.ts";
+import { IntentRoster, registerIntentSupport, explicitRecipient } from "./intents.ts";
 import { INTENT_SLOT_VALUES_META_KEY } from "./intentSdk.generated.js";
 
 const server = new McpServer({ name: TOOLKIT, version: "1.0.0" });
 const intentRoster = new IntentRoster(readAgents);
 const listAgents = () => intentRoster.refresh();
+intentRoster.primary = async () => (await rosterPrefs()).mainId;
 /** The sidebar's pins, sections and Main Bot, as the Grok Bot app orders its
  * roster. Local files plus one quick gateway read, so it is memoized briefly:
  * a card and its first refreshes share one read, and a failure is just "no
@@ -839,6 +840,8 @@ server.registerTool("grokbot_prepare_message", {
     group: z.string().optional().describe("An existing group's name as the user said it, or its ID."),
     members: z.union([z.array(z.string()), z.string()]).optional().describe("Group members as the user said them, or their IDs."),
     groupName: z.string().optional().describe("A new group name, composed as the user would type it."),
+    requestText: z.string().optional().describe("Current user request supplied by VoiceOS."),
+    task: z.string().optional().describe("Task or project context for a request with no named recipient."),
     // No `message`: the model writes it once, in grokbot_send / grokbot_group.
     // Taking it here too made a long task get typed twice (~15 s more).
   },
@@ -848,20 +851,15 @@ server.registerTool("grokbot_prepare_message", {
   if (args.bot !== undefined && (args.group !== undefined || args.members !== undefined)) {
     throw new IntegrationError("not_found", "Choose one bot or a group of bots.");
   }
-  // No recipient at all ("send this task to Grok Bot"): hand back each bot's
-  // role so the model picks one. Plain JSON, no glance: grokbot_show would
-  // put the roster card on screen before the send's card.
-  if (args.bot === undefined && args.group === undefined && args.members === undefined && args.groupName === undefined) {
-    const bots = agents.filter(a => !a.isGroup);
-    if (!bots.length) throw new IntegrationError("not_found", "You don't have any Grok bots yet.");
-    return result({ ready: false, nextTool: "grokbot_send",
-      bots: bots.map(b => ({ id: b.id, name: b.name, role: [b.title, b.description].map(t => (t ?? "").trim()).filter(Boolean).join(": ") })),
-      message: "The user named no bot. Pick the one bot whose role fits the task and call grokbot_send with its id as bot and the whole message. If none or several fit, ask the user which bot." });
-  }
+  const individual = args.group === undefined && args.members === undefined && args.groupName === undefined;
+  let route: Awaited<ReturnType<typeof intentRoster.chooseRecipient>> | undefined;
   let target: Agent | undefined;
   let resolved: MessageArgs;
-  if (args.bot !== undefined) {
-    target = resolveMessageRecipient(args.bot, agents.filter(a => !a.isGroup));
+  if (individual) {
+    const bots = agents.filter(a => !a.isGroup);
+    if (!bots.length) throw new IntegrationError("not_found", "You don't have any Grok bots yet.");
+    route = await intentRoster.chooseRecipient(bots, args);
+    target = route.bot;
     resolved = { bot: target.id };
   } else {
     const { existing, memberIds } = resolveMessageGroup(args, agents);
@@ -877,13 +875,14 @@ server.registerTool("grokbot_prepare_message", {
     try { threads[target.id] = await recentRows(target.id); }
     catch { /* Registration can precede the first transcript. */ }
   }
-  const send = args.bot !== undefined;
+  const send = individual;
   const keep = [...(target ? [target.id, ...(target.memberIds ?? [])] : []), ...(Array.isArray(resolved.members) ? resolved.members : [])];
   const context = confirmationContext(send ? agents.filter(a => !a.isGroup) : agents, threads, keep, send);
   // NO glance here, on purpose: a glance on a pre-step becomes the turn's
   // result on screen, and the chat card grokbot_send / grokbot_group opens
   // a moment later must be the one the user sees.
-  return result({ ready: true, nextTool: args.bot !== undefined ? "grokbot_send" : "grokbot_group",
+  return result({ ready: true, nextTool: individual ? "grokbot_send" : "grokbot_group",
+    ...(route ? { recipient:{id:route.bot.id,name:route.bot.name,choiceLabel:botChoiceLabel(route.bot)}, routing:{source:route.source} } : {}),
     args: { ...resolved, confirmationContext: context }, message: "Recipients verified. Call nextTool with the returned args plus the message." });
 }));
 
@@ -932,7 +931,9 @@ const sendTool = server.registerTool(
     description: SEND_MODEL_DESCRIPTION,
     inputSchema: {
       confirmationContext: z.string().optional().describe(CONTEXT_DESCRIPTION),
-      bot: z.string().describe(SEND_BOT_DESCRIPTION),
+      bot: z.string().optional().describe(SEND_BOT_DESCRIPTION),
+      task: z.string().optional().describe("Current task or project context for routing."),
+      requestText: z.string().optional().describe("Current user request supplied by VoiceOS."),
       recipientId: z.string().optional().describe("Internal: recipient ID pinned by the preparation hook. Never compose or change this value."),
       message: z
         .string()
@@ -944,10 +945,18 @@ const sendTool = server.registerTool(
     },
     _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: [] } },
   },
-  async (args: { bot: string; message?: string; recipientId?: string }) =>
+  async (args: { bot?: string; message?: string; recipientId?: string; requestText?: string; task?: string }) =>
     handle("grokbot_send", async () => {
       const agents = await listAgents();
-      const bot = resolveMessageRecipient(args.recipientId ?? args.bot, agents.filter((a) => !a.isGroup));
+      const bots = agents.filter(a => !a.isGroup);
+      // A prepared ID is the user's approved recipient. Never switch it if the
+      // account's primary or project match changes while approval is pending.
+      const bot = args.recipientId ? bots.find(a => a.id === args.recipientId) : (await intentRoster.chooseRecipient(bots, args)).bot;
+      if (!bot) throw new IntegrationError("not_found", "The prepared Grok Bot is no longer on your roster. Which bot should I use?");
+      if (args.recipientId && args.requestText) {
+        const named = explicitRecipient(args.requestText, bots);
+        if (named && named.id !== bot.id) throw new IntegrationError("not_found", "The prepared recipient differs from the bot you named. Which one should receive this message?");
+      }
       const text = tidySpoken(args.message ?? "");
       // Read BEFORE sending: the card's history then ends just before this
       // message, which arrives as the fly-in and the live chat's next refresh.

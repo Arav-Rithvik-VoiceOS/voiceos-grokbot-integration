@@ -389,3 +389,32 @@ test("the send hook moves a guessed bot to the role match only when the turn nam
   now += 121_000;
   expect((await roster.beforeTool(hook({ bot: "Piper", message: "Hi" }))).updatedArgs).toMatchObject({ bot: "Piper", recipientId: "hq" });
 });
+
+test("spoken short names beat a guessed ID, and duplicate short names stop before default routing", async () => {
+  const bots: Agent[] = [{id:"j", name:"Jerome · BISV Hacks"}, {id:"a",name:"Assistant"}];
+  const roster = new IntentRoster(async()=>bots);
+  roster.primary = async()=>"a";
+  await roster.refresh();
+  const choose=(requestText:string,bot="a")=>roster.chooseRecipient(bots,{requestText,bot});
+  expect((await choose("Send a message to Jerome about calendar")).bot.id).toBe("j");
+  bots.push({id:"jj",name:"Jerome · Personal"});
+  await expect(choose("Tell Jerome to draft BISV sponsor emails","j")).rejects.toThrow("Which one");
+  await expect(choose("Tell Charlotte about the sponsors","a")).rejects.toThrow("Charlotte");
+  expect((await choose("Send hi to Jerome · Personal","a")).bot.id).toBe("jj");
+});
+test("unnamed tasks use discriminating project, profile or recent conversation evidence, then the actual primary",async()=>{
+  const bots:Agent[]=[{id:"first",name:"Jarvis · VoiceOS",description:"Email triage for the VoiceOS product"},{id:"main",name:"Scout"},{id:"j",name:"Jerome · BISV Hacks",title:"Event coordinator",lastMessagePreview:"Draft our robotics league sponsorship packet."}];
+  const roster=new IntentRoster(async()=>bots);
+  roster.primary=async()=>"main";
+  await roster.refresh();
+  const route=(requestText:string,task?:string)=>roster.chooseRecipient(bots,{bot:"first",requestText,task});
+  expect((await route("Ask Grok Bot to draft sponsor emails for BISV Hacks"))).toMatchObject({bot:{id:"j"},source:"role"});
+  expect((await route("Ask Grok Bot to draft those emails","Continuing our BISV Hacks project"))).toMatchObject({bot:{id:"j"},source:"role"});
+  expect((await route("Ask my bot to update the robotics league packet"))).toMatchObject({bot:{id:"j"},source:"role"});
+  expect((await route("Ask Grok Bot how it is going"))).toMatchObject({bot:{id:"main"},source:"primary"});
+  expect((await route("Ask Grok Bot to draft an email to Jerome"))).toMatchObject({bot:{id:"main"},source:"primary"});
+  bots[0].title=bots[2].title="Cloud engineering";
+  expect((await route("Ask Grok Bot about cloud engineering"))).toMatchObject({bot:{id:"main"},source:"primary"});
+  roster.primary=async()=>"missing";
+  await expect(route("Ask my bot for help")).rejects.toThrow("Which Grok Bot");
+});

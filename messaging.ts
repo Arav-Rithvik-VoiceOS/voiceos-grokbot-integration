@@ -1,15 +1,15 @@
 import { IntegrationError, normalize, type Agent, type TranscriptEntry } from "./client.ts";
 import { CONNECT_TYPES, entryState } from "./requestState.ts";
 
-export const PREPARE_DESCRIPTION = "Check the live Grok Bot roster before a group message, or when the user names no bot. Use FIRST for group messages. For ONE named bot, skip this and call grokbot_send directly: its hook verifies the name. When the user names no bot ('send this task to Grok Bot': Grok Bot is the app, not a bot), call this with no arguments to get every bot's role. Never pass the message here: write it once, in the next tool call. Pass names as the user said them. This read-only lookup does not send. On success call nextTool with the returned args plus the message. On failure stop and explain the recipient could not be found; do not guess another bot, create a bot, or retry automatically.";
+export const PREPARE_DESCRIPTION = "Use FIRST to verify the recipient of a group send or a send with no named bot against the live roster. Pass a name exactly as spoken, or a short task/topic for routing an unnamed request. Respect the recipient returned by this tool. If it asks which bot, ask the user and stop. This tool does not send anything.";
 // Two surfaces, like the official Claude Code and Manus integrations:
 // - SEND_DESCRIPTION is the short plain text the USER reads in the tool list.
 //   scripts/build-intents.ts copies it into voiceos.integration.json.
 // - SEND_MODEL_DESCRIPTION is the routing text the MODEL reads (when to call it,
 //   how to write the message). server.src.ts registers it on the MCP tool.
 export const SEND_DESCRIPTION = "Ask or tell one of your bots something. Its chat opens so you can keep talking.";
-export const SEND_MODEL_DESCRIPTION = "Send the user's message to one Grok Bot right away, then open its live chat, where the user keeps chatting. The message goes out as written, so write it TO the bot the way the user would type it ('ask <bot> how the test is going' → 'How's the test going?'). Use when the user asks to message, ask, or tell one bot something. Accepts a known bot name or an exact ID from grokbot_prepare_message. For one named bot, call this directly, not grokbot_prepare_message first. If the user names no bot ('send this task to Grok Bot', 'ask my bot': Grok Bot is the app, not a bot), pick the one bot whose role fits the task from the turn's Grok Bot roster, or call grokbot_prepare_message with no arguments to get the roles. Never fall back to a usual or default bot. Send long tasks whole, with their line breaks. Unknown, ambiguous, or group recipients are rejected; do not substitute another bot. After it returns, tell the user the message was sent.";
-export const SEND_BOT_DESCRIPTION = "One Grok Bot's name as the user said it, or its exact ID from grokbot_prepare_message. When the user named no bot, the one bot whose role fits the task (from the turn's Grok Bot roster), never a default. The SDK hook verifies the recipient. Unknown or group names are rejected: never substitute another bot.";
+export const SEND_MODEL_DESCRIPTION = "Send the user's message to one Grok Bot right away and open its live chat. Use when asked to send, tell, ask, or assign a task to a bot. Write the message to the bot, preserving the user's meaning and full task. Use an explicitly named bot as spoken. For an unnamed task, omit bot and supply any relevant project/topic in task. A clear role match takes precedence over the primary bot. If the resolver asks which bot, ask the user without sending.";
+export const SEND_BOT_DESCRIPTION = "The bot's name as spoken or the exact ID from preparation. For an unnamed task omit the bot. The live roster supplies a clear role or project match, then the primary bot if available. Ask which bot when an explicit name is ambiguous.";
 export const GROUP_DESCRIPTION = "Send the user's message to a Grok Bot group chat right away (an existing group, or a new one created from two or more named bots), then open that group's live chat. Use when the user asks to message several bots or a group. Spoken member or name changes are saved before it sends. Without a message, or with fewer than two bots for a new group, it only opens the group pane. Use AFTER grokbot_prepare_message succeeds for this request, copying its returned args including resolved group/member IDs, and adding the message. Never call after a missing or ambiguous recipient lookup.";
 export const THREAD_DESCRIPTION = "Read what one Grok Bot teammate said, found, or did. Use for ANY question about a bot's messages or results: what it said, summarize its work, answer a question from it, or draft something from it. Returns the message text in `thread`; read it and do what the user asked in your own words. Set show only when the user asks to see or open the conversation. Accounts a bot needs (Gmail, Google Calendar, Slack, …) cannot be connected by voice or in VoiceOS: tell the user to press \"Open in Grok Bot\" on that request in the bot's card, or open the bot's chat in the Grok Bot app, and connect it there.";
 // The card composer's send — the ONLY tool that sends a message. It has no
@@ -46,21 +46,40 @@ export function botChoiceLabel(bot: Agent): string {
   return label.length <= 200 ? label : label.slice(0, 199).trimEnd() + "…";
 }
 
-/** Sending requires an exact identity: partial matching can target another bot. */
+/** Spoken names use whole words. "Jerome" can identify "Jerome · BISV Hacks";
+ * "Jer" cannot. Groups keep their full names and card actions carry stable IDs. */
+export function spokenNames(bot: Agent): string[] {
+  if (bot.isGroup) return [bot.name];
+  const personal = bot.name.split(/\s+[·|—–-]\s+/u)[0].trim();
+  const first = personal.split(/\s+/)[0];
+  const aliases = /^(?:a|an|the|my|our|grok|bot|agent|team)$/i.test(first) ? [] : [first];
+  return [...new Set([bot.name, personal, ...aliases])].filter(Boolean);
+}
+
 export function resolveMessageRecipient(value: string, agents: Agent[]): Agent {
   const token = value.trim();
   const byId = agents.find(a => a.id === token);
-  if (byId) return byId;
+  return byId ?? resolveSpokenRecipient(token, agents);
+}
+
+/** A name from the user's speech cannot bypass ambiguity by matching an ID. */
+export function resolveSpokenRecipient(token: string, agents: Agent[]): Agent {
   const name = normalize(token);
-  const matches = name ? agents.filter(a => normalize(a.name) === name) : [];
+  const matches = name ? agents.filter(a => spokenNames(a).some(n => normalize(n) === name)) : [];
   if (matches.length === 1) return matches[0];
-  if (matches.length > 1) throw new IntegrationError("not_found", `More than one conversation is named "${token}". Which one do you mean?`);
+  if (matches.length > 1) {
+    const labels = matches.map(a => botChoiceLabel(a));
+    const choices = matches.map((a,i) => labels.indexOf(labels[i]) === labels.lastIndexOf(labels[i]) ? labels[i] : `${labels[i]} (ID ${a.id})`).join(" or ");
+    throw new IntegrationError("not_found", `More than one conversation matches "${token}". Which one do you mean: ${choices}?`);
+  }
   const labeled = agents.filter(a => botChoiceLabel(a) === token);
   if (labeled.length === 1) return labeled[0];
-  throw new IntegrationError("not_found", `I couldn't find a bot or group called "${token}" in the current roster. If you just created it, it may not be available yet. Try again once it appears in Grok Bot.`);
+  throw new IntegrationError("not_found", `I couldn't find a bot or group called "${token}" in the current roster. Which bot did you mean?`);
 }
 
 export interface MessageArgs {
+  requestText?: string;
+  task?: string;
   bot?: string;
   group?: string;
   members?: string | string[];
