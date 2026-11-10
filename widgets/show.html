@@ -53,7 +53,8 @@ __VOICEOS_SHAPES__
 .orb.big{width:56px;height:56px}.orb.small{width:24px;height:24px}.orb.mini{width:20px;height:20px}.orb.tiny{width:18px;height:18px}
 .orb.mini .mb,.orb.small .mb,.orb.tiny .mb{width:11px;height:11px;right:-3px;bottom:-3px;box-shadow:0 0 0 1.5px var(--fill-1)}.orb.mini .mb svg,.orb.small .mb svg,.orb.tiny .mb svg{width:7px;height:7px}
 .orb.mini .live,.orb.small .live,.orb.tiny .live{width:7px;height:7px;left:-2px;bottom:-2px;box-shadow:0 0 0 1.5px var(--fill-1)}
-.orb .mb{position:absolute;right:-2px;bottom:-2px;width:15px;height:15px;border-radius:50%;background:#fff;color:#111;display:grid;place-items:center;box-shadow:0 0 0 2px var(--bg)}
+/* The Main Bot star: the app's amber badge with a white star (sampled from the 0.78 sidebar). */
+.orb .mb{position:absolute;right:-2px;bottom:-2px;width:15px;height:15px;border-radius:50%;background:#E9993A;color:#fff;display:grid;place-items:center;box-shadow:0 0 0 2px var(--bg)}
 .orb.big .mb{width:18px;height:18px;right:0;bottom:0}
 .orb .mb svg{width:9px;height:9px}.orb.big .mb svg{width:11px;height:11px}
 .orb .live{position:absolute;left:-1px;bottom:-1px;width:10px;height:10px;border-radius:50%;background:var(--good);box-shadow:0 0 0 2px var(--bg)}
@@ -167,38 +168,46 @@ addEventListener('message',e=>{if(e.source!==parent)return;const m=e.data;if(!m|
 function invoke(name,args){return new Promise((resolve,reject)=>{const requestId='r'+(++_rq)+'_'+Date.now();_pending.set(requestId,{resolve,reject});parent.postMessage({type:'voiceos:invokeTool',name,args,requestId},'*');setTimeout(()=>{if(_pending.delete(requestId))reject({status:'unknown',error:'No response — check the app before trying again.'})},130000)})}
 function report(){if(document.hidden||!document.documentElement.offsetWidth)return;const h=Math.ceil(document.body.getBoundingClientRect().height);if(h>=8)parent.postMessage({type:'voiceos:resize',height:h},'*')}
 
-/* Motion — an original avatar liveness engine: wandering gaze, blinks, cursor-follow, per-state behavior.
-   The eyes may travel the whole face (LOOK_X/LOOK_Y, in % of the orb), in every direction. */
+/* Motion — the original avatar liveness engine (as of Oct 19, before VOS-1603): wandering gaze, blinks,
+   cursor-follow, per-state behavior. It runs only on the hovered orb (its row, tile or header under the
+   cursor). Every other orb rests, still, in its shape's own pose; leaving an orb eases it back to rest. */
 const Motion=(()=>{
  const R=(a,b)=>a+Math.random()*(b-a);
  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
- const LOOK_X=20,LOOK_Y=15;
- let pointer=null,ptrAt=0;
- addEventListener('pointermove',e=>{pointer={x:e.clientX,y:e.clientY};ptrAt=performance.now()});
- document.documentElement.addEventListener('pointerleave',()=>pointer=null);
+ const HOVER='.row,.tile,.hd';
+ let pointer=null,ptrAt=0,host=null;
  const live=new Set();
+ function hover(h){host=h;live.forEach(m=>{const on=!!h&&h.contains(m.el);if(on!==m.on){m.on=on;schedule(m)}})}
+ addEventListener('pointermove',e=>{pointer={x:e.clientX,y:e.clientY};ptrAt=performance.now();const h=e.target&&e.target.closest?e.target.closest(HOVER):null;if(h!==host)hover(h)});
+ document.documentElement.addEventListener('pointerleave',()=>{pointer=null;if(host)hover(null)});
+ addEventListener('blur',()=>{pointer=null;if(host)hover(null)});
  const st=m=>m.el.dataset.state||'idle';
  function later(m,fn,ms){const t=setTimeout(()=>{m.timers.delete(t);fn()},ms);m.timers.add(t)}
  function clear(m){m.timers.forEach(clearTimeout);m.timers.clear()}
  function gaze(m,x,y,dur){if(pointer)return;m.eyes.style.transition='transform '+dur+'ms cubic-bezier(.3,.7,.2,1)';m.eyes.style.transform='translate('+x+'%,'+y+'%)'}
  function blink(m,dbl){if(reduce)return;m.el.classList.add('blink');later(m,()=>{m.el.classList.remove('blink');if(dbl)later(m,()=>blink(m),170)},120)}
+ // At rest: no timers, eyes back on the shape's pose.
+ function rest(m){m.el.classList.remove('blink');m.eyes.style.transition='transform 300ms cubic-bezier(.3,.7,.2,1)';m.eyes.style.transform=''}
  function schedule(m){clear(m);const s=st(m);
+  if(s==='done')later(m,()=>set(m.el,'idle'),2200);
+  if(!m.on)return rest(m);
   const bl=()=>{blink(m,Math.random()<.2);later(m,bl,R(s==='working'?1600:2600,s==='working'?3200:5800))};later(m,bl,R(300,2400));
   const gz=()=>{
-   if(s==='idle'){gaze(m,R(-LOOK_X,LOOK_X),R(-LOOK_Y,LOOK_Y),R(500,900));later(m,()=>gaze(m,R(-3,3),R(-2,2),800),R(900,2400))}
+   if(s==='idle'){gaze(m,R(-14,14),R(-8,8),R(500,900));later(m,()=>gaze(m,0,0,800),R(900,2400))}
    else if(s==='working'){gaze(m,R(-16,-8),R(4,10),130);later(m,()=>gaze(m,R(8,16),R(4,10),130),R(220,420))}
-   else if(s==='thinking'){gaze(m,Math.random()<.75?LOOK_X:-LOOK_X,-12,600)}
+   else if(s==='thinking'){gaze(m,Math.random()<.75?14:-14,-12,600)}
    else if(s==='waiting'){gaze(m,0,-3,500)}
    else if(s==='blocked'){gaze(m,0,12,500)}
    else gaze(m,0,0,300);
    later(m,gz,s==='working'?R(600,1200):s==='idle'?R(2400,6000):R(1600,3200))};
   gz();
-  if(s==='done')later(m,()=>set(m.el,'idle'),2200);
  }
- function mount(el){if(el._m||!el.querySelector('.eyes'))return;const m=el._m={el,eyes:el.querySelector('.eyes'),timers:new Set()};live.add(m);schedule(m)}
+ function mount(el){if(el._m||!el.querySelector('.eyes'))return;const m=el._m={el,eyes:el.querySelector('.eyes'),timers:new Set(),on:!!host&&host.contains(el)};live.add(m);schedule(m)}
  function scan(){document.querySelectorAll('.av').forEach(mount);live.forEach(m=>{if(!m.el.isConnected){clear(m);live.delete(m);delete m.el._m}})}
- // Cursor-follow: every orb looks toward the cursor; the one under it (its row or tile) looks straight at you.
- function tick(){if(pointer&&!reduce){if(performance.now()-ptrAt>4000)pointer=null;else live.forEach(m=>{if(!m.el.isConnected)return;const r=m.el.getBoundingClientRect();if(!r.width)return;const dx=pointer.x-(r.left+r.width/2),dy=pointer.y-(r.top+r.height/2);const d=Math.hypot(dx,dy)||1,own=!!m.el.closest('.row:hover,.tile:hover,.hd:hover'),k=own?1:Math.min(1,d/140);m.eyes.style.transition='transform 200ms cubic-bezier(.2,.8,.2,1)';m.eyes.style.transform='translate('+(dx/d*LOOK_X*k).toFixed(1)+'%,'+(dy/d*LOOK_Y*k).toFixed(1)+'%)'})}requestAnimationFrame(tick)}
+ // The original cursor-follow, for the hovered orb only.
+ function tick(){if(host&&!host.isConnected)hover(null);
+  if(pointer&&!reduce){if(performance.now()-ptrAt>4000)pointer=null;else live.forEach(m=>{if(!m.on||!m.el.isConnected)return;const r=m.el.getBoundingClientRect();const dx=pointer.x-(r.left+r.width/2),dy=pointer.y-(r.top+r.height/2);const d=Math.hypot(dx,dy)||1,k=Math.min(1,d/140);m.eyes.style.transition='transform 200ms cubic-bezier(.2,.8,.2,1)';m.eyes.style.transform='translate('+(dx/d*16*k).toFixed(1)+'%,'+(dy/d*10*k).toFixed(1)+'%)'})}
+  requestAnimationFrame(tick)}
  requestAnimationFrame(tick);
  new MutationObserver(scan).observe(document.documentElement,{childList:true,subtree:true});
  function set(el,s){if(!el)return;el.dataset.state=s;if(el._m)schedule(el._m)}

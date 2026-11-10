@@ -50,6 +50,7 @@ import {
   type SidebarPrefs,
 } from "./client.ts";
 import { recordCardPoll, cardCovers } from "./cardWatch.ts";
+import { ReplyNotices, shortBotName } from "./replyNotices.ts";
 import { RFB_B64 } from "./assets.generated.ts";
 import { connectCard, guideCard, reconnectCard, showCard, rosterData, orbIcon, type ShowOpen, toBot, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
@@ -136,7 +137,16 @@ type ReminderButton = { id: string; label: string };
 /** The pill's face: the bot's name as its title and its orb as its icon (the
  * SDK's reminder `sender`; VoiceOS keeps Grok Bot's own logo on as a badge). */
 type ReminderSender = { name: string; icon?: string };
-const senderOf = (bot: Agent): ReminderSender => ({ name: bot.name.trim().slice(0, 64) || "Bot", icon: orbIcon(bot) });
+/** The SDK's cap on a sender icon (REMINDER_LIMITS.senderIconChars): a bigger one fails the whole notification. */
+const SENDER_ICON_CHARS = 32_768;
+function senderOf(bot: Agent): ReminderSender {
+  let icon = orbIcon(bot);
+  // A large photo avatar falls back to the bot's shape, so the notification still goes out.
+  if (icon.length > SENDER_ICON_CHARS) icon = orbIcon({ ...bot, avatarImage: undefined });
+  return { name: shortBotName(bot.name), ...(icon.length <= SENDER_ICON_CHARS ? { icon } : {}) };
+}
+/** One "<bot> replied" notification per bot, none for replies seen in the card (replyNotices.ts). */
+const replyNotices = new ReplyNotices();
 
 async function triggerReminder(
   message: string,
@@ -218,13 +228,16 @@ const REMINDER_ACTIONS: Record<string, (data: Record<string, unknown> | undefine
   async open_chat(data) {
     const botId = typeof data?.botId === "string" ? data.botId : "";
     if (!botId) throw new Error("This notification does not name a bot.");
+    replyNotices.looked(botId); // the next reply from this bot may notify again
     const newSince = typeof data?.newSince === "number" ? data.newSince : undefined;
     const ready = READY_VIEWS.get(botId);
     if (ready && ready.newSince === newSince) return { view: ready.view };
     return { view: await reminderView(botId, newSince) };
   },
-  // Nothing to do: answering ok is what makes the host dismiss the card.
-  async close() {},
+  // Answering ok is what makes the host dismiss the card. Closing it counts as seeing it.
+  async close(data) {
+    if (typeof data?.botId === "string" && data.botId) replyNotices.looked(data.botId);
+  },
 };
 
 server.server.setRequestHandler(ReminderActionRequest, async ({ params }) => {
@@ -275,6 +288,8 @@ function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, o
     const t0 = Date.now();
     let sawActivity = false; // saw it working, or saw at least one reply
     let absorbedOwn = false; // have we accounted for our own VoiceOS send yet?
+    // Replies not yet settled: they wait here while the card shows this chat.
+    let unsettled: TranscriptEntry[] = [];
     try {
       while (Date.now() - t0 < MAX_WATCH_MS) {
         await sleep(POLL_MS);
@@ -317,36 +332,51 @@ function watchThreadThenNotify(bot: Agent, seen: Iterable<string | undefined>, o
         }
         if (takeover) return;
 
-        const replies = fresh.filter(isBotReply);
+        unsettled = unsettled.concat(fresh.filter(isBotReply));
 
-        // ONE silent pill per send: "<bot> replied." with Open / Close. It never
+        // ONE silent pill per bot: "<bot> replied" with Open / Close. It never
         // quotes the reply, and once it's up we stop watching, so a bot that
-        // posts three messages still gives one pill. The next VoiceOS send
-        // starts a new watch, which can ping again.
-        if (replies.length) {
+        // posts three messages still gives one pill; a later send to the same
+        // bot adds none while that pill is still waiting (replyNotices.ts).
+        if (unsettled.length) {
           sawActivity = true;
+          const replies = unsettled;
           // The screen card is on screen and shows this reply itself (its message
           // bar polls grokbot_reply_check), so a pill would only repeat it.
           if (cardCovers(bot.id, replies[replies.length - 1].id)) {
+            unsettled = [];
             if (!busy) return;
             continue;
           }
+          const decision = replyNotices.decide(bot.id, replies.map((e) => e.id));
+          // Already read in the card's chat: nothing to tell.
+          if (decision === "seen") {
+            unsettled = [];
+            if (!busy) return;
+            continue;
+          }
+          // The card has this chat on screen: wait until it is read there or the notch closes.
+          if (decision === "wait") continue;
+          // This bot's notification is already up and covers these replies.
+          if (decision === "covered") return;
           // Open draws "New messages" above the first reply newer than this.
           const times = replies.map((e) => e.timestampMs).filter((t): t is number => typeof t === "number");
           const newSince = times.length ? Math.min(...times) - 1 : t0;
           await prepareReminderView(bot.id, newSince);
-          // The pill wears the bot: its orb and name on top, "replied." under it.
-          await triggerReminder("replied.", {
+          // The pill wears the bot: its orb and name on top, "<name> replied" under it.
+          const sender = senderOf(bot);
+          const id = await triggerReminder(`${sender.name} replied`, {
             speak: false,
             actions: REPLY_BUTTONS,
             data: { botId: bot.id, newSince },
-            sender: senderOf(bot),
+            sender,
           });
+          if (!id) replyNotices.failed(bot.id);
           return;
         }
 
         // Turn is over: it engaged, it's idle, and nothing fresh is left.
-        if (sawActivity && !busy && replies.length === 0) return;
+        if (sawActivity && !busy) return;
 
         // Never engaged at all → the send didn't wake it; give up quietly.
         if (!sawActivity && Date.now() - t0 > IDLE_STARTUP_MS) return;
@@ -777,6 +807,9 @@ server.registerTool("grokbot_card_snapshot", {
   annotations: { readOnlyHint: true },
 }, (args: { bot?: string; beforeSeq?: number }) => cardRequest("grokbot_card_snapshot", async () => {
   const [snapshot, prefs] = await Promise.all([conversationSnapshot(args.bot, args.beforeSeq), rosterPrefs()]);
+  // The chat pane reads only while the card is visible: these replies are on screen, so they never
+  // notify, and this bot's next reply may notify again (replyNotices.ts).
+  if (args.bot && "replyIds" in snapshot && args.beforeSeq === undefined) replyNotices.cardShowing(args.bot, snapshot.replyIds);
   // The same ordered roster the card was baked with, so a refresh keeps the sidebar order, pins and sections.
   return { ok: true, ...rosterData(snapshot.agents, prefs).card, thread: snapshot.thread, nextBeforeSeq: snapshot.nextBeforeSeq };
 }));

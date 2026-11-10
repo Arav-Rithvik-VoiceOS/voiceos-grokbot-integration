@@ -6,6 +6,7 @@ import {
   openGrokBotApp,
   openBotChat,
   readAttachmentImage,
+  isBotReply,
   type TranscriptEntry,
 } from "./client.ts";
 import {
@@ -114,6 +115,8 @@ export async function conversationSnapshot(bot?: string, beforeSeq?: number, tra
     // CardItems (no media paths, no `t`): versions match conversationEntry's.
     thread: boundThread(toCardThread(tail.entries ?? [])),
     nextBeforeSeq: tail.nextBeforeSeq,
+    /** The bot's replies in this read, for the "seen in the card" rule (server only, not sent to the card). */
+    replyIds: (tail.entries ?? []).filter(isBotReply).map((e) => e.id),
   };
 }
 

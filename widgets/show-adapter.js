@@ -56,16 +56,44 @@ boot=function(data,args,mode){const d=data&&Array.isArray(data.bots)?data:DEMO.d
  // Wait two frames so the pane has its final layout before the flight measures the box and the orb.
  if(voice&&a.sent)requestAnimationFrame(()=>requestAnimationFrame(()=>{if(lcPane&&lcPane.id===k)gbFlyIn(lcPane,voice)}));
  // Check the roster once per open, even behind a chat: the saved chat's own bot may be the deleted one.
- gbRoster()};
+ // Then keep the roster pane in step with Grok Bot while it is on screen (gbListLive).
+ gbRoster();gbListLive()};
 // The sidebar layout that rides with every roster: pinned ids, sections, the Main Bot.
 const GB_META=['pinned','sections','mainId'];
 function gbMeta(to,from){if(!from)return;for(const k of GB_META){if(k in from)to[k]=from[k];else delete to[k]}}
 const gbPick=from=>{const o={};for(const k of GB_META)if(from&&k in from)o[k]=from[k];return o};
 // One roster-only read (no bot = no transcript): drops bots and groups deleted in Grok Bot.
 // A card that booted before the host granted tools checks as soon as the grant arrives.
-function gbRoster(){gbRosterDue=!CAN_INVOKE;if(gbRosterDue)return;
- invoke('grokbot_card_snapshot',{}).then(r=>{const b=unpackResult(r);
-  if(b&&b.ok&&Array.isArray(b.bots)&&Array.isArray(b.groups))lcBots(b.bots,b.groups,null,true,b)}).catch(()=>{})}
+// auto: a background refresh, which spends only the card's automatic budget (LiveChat's AUTO cap).
+let gbRosterBusy=false;
+function gbRoster(auto){gbRosterDue=!CAN_INVOKE;if(gbRosterDue||gbRosterBusy)return;gbRosterBusy=true;
+ lcBridge.call('grokbot_card_snapshot',{},{auto:!!auto}).then(b=>{
+  if(b&&b.ok&&Array.isArray(b.bots)&&Array.isArray(b.groups))lcBots(b.bots,b.groups,null,true,b)}).catch(()=>{}).finally(()=>{gbRosterBusy=false})}
+/* The roster pane follows Grok Bot while it is on screen, like the app's sidebar: a bot you just messaged
+   in the app, or one that just answered, moves up. A read every 6 s while the roster is the visible pane
+   (the chat pane's own refresh already brings the roster), at most 200 per card so a card left open does
+   not spend the host's request budget. Showing the card again reads at once. */
+const GB_LIST_GAP=6e3,GB_LIST_MAX=200;let gbListN=0,gbListT=0;
+function gbListLive(){clearTimeout(gbListT);gbListT=setTimeout(gbListLive,GB_LIST_GAP);
+ if(document.hidden||lcPane||gbNew||gbListN>=GB_LIST_MAX)return;gbListN++;gbRoster(true)}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)gbListLive()});
+/* Grok Bot moves a conversation to the top of its sidebar (below the pinned tiles) the moment you send
+   in it. The card does the same at once, before the roster read catches up; a bump lasts 20 s, after
+   which the live roster's own order is the truth again. */
+const gbBumps=new Map(),GB_BUMP_MS=2e4;
+function gbBumped(d){const now=Date.now();for(const [id,t] of gbBumps)if(now-t>GB_BUMP_MS)gbBumps.delete(id);if(!gbBumps.size)return d;
+ const pinned=new Set(d.pinned||[]),list=rows(d);
+ // Oldest bump first, so the latest send ends on top.
+ for(const [id] of [...gbBumps].sort((a,b)=>a[1]-b[1])){const i=list.findIndex(x=>x.id===id);if(i<0||pinned.has(id))continue;
+  const [x]=list.splice(i,1),at=list.findIndex(y=>!pinned.has(y.id));list.splice(at<0?list.length:at,0,x)}
+ const order=list.map(x=>x.id);
+ d.bots=list.filter(x=>!isGroup(x));
+ d.groups=list.map((x,ix)=>[x,ix]).filter(([x])=>isGroup(x)).map(([x,ix])=>({...x,ix}));
+ if(Array.isArray(d.sections))d.sections=d.sections.map(s=>({...s,ids:order.filter(id=>(s.ids||[]).includes(id))}));
+ return d}
+const gbRosterKey=d=>JSON.stringify([d.bots||[],d.groups||[],...GB_META.map(k=>d[k]??null)]);
+function gbBump(id){if(!id)return;gbBumps.set(id,Date.now());const next=gbBumped({...D});
+ if(gbRosterKey(next)===gbRosterKey(D))return;D.bots=next.bots;D.groups=next.groups;if('sections' in next)D.sections=next.sections;render(D)}
 function gbOpen(p,instant){const panes=$('#panes');if(instant)panes.classList.add('gb-instant');
  // A reply notification's Open: the pane it opens marks the unseen replies, once (the saved pane drops it).
  gbNewSince=typeof p.newSince==='number'?{id:p.bot||p.group,t:p.newSince}:null;
@@ -167,7 +195,7 @@ function lcMount(b){const c=$('#chat'),list=$('#msgs',c),hd=$('.hd',c),form=$('#
   renderItem:m=>lcItem(m,id,!!b.group),onBots:(bots,gs,meta)=>lcBots(bots,gs,p,!!b.group,meta),statusLine:say,onScreen:()=>gbOpenScreen(b),
   onItems:(its,before)=>{D.threads[id]=its;D.nextBeforeSeqs=D.nextBeforeSeqs||{};D.nextBeforeSeqs[id]=before;gbSaveThread(id,its,before)},
   onLost:it=>{gbGiveBack(id,it.text);say('A message did not send. It is back in the box.',true)}});
- const back=$('#back',c),goBack=back.onclick;back.onclick=()=>{lcClose();gbPut({pane:null});if(goBack)goBack.call(back)};
+ const back=$('#back',c),goBack=back.onclick;back.onclick=()=>{lcClose();gbPut({pane:null});if(goBack)goBack.call(back);gbListLive()};
  gbNewSince=null;if(b.group)gbMountEdit(g,c);
  p.live.refresh()}
 // show.html's own row markup (thread()), one item at a time. Notices have no bot, so no orb. In a group
@@ -180,19 +208,20 @@ function lcItem(m,id,g){if(typeof m.sys==='string'&&!m.bot)return m.sys?'<div cl
  const sb=bots.find(x=>x.id===m.bot)||{name:m.sender||m.bot,color:'#888',shape:'blob'};
  return s.slice(0,i)+'<div class="from">'+av(sb,'tiny')+esc(sb.name)+'</div>'+s.slice(i)}
 // A refresh's roster: the open bot's header status, and the roster pane behind it for the back button.
-function lcBots(bots,groups,p,isGroup,meta){let changed=false;
+function lcBots(bots,groups,p,isGroup,meta){
  // Every caller passes a whole live roster (a snapshot), so it is saved for the next reopen as is.
  const layout=gbPick(meta);gbPut({roster:{bots,groups,...layout}});
- if(meta&&JSON.stringify(layout)!==JSON.stringify(gbPick(D))){gbMeta(D,meta);changed=true}
  // The live roster is the truth for groups this card made: one missing from it was deleted in Grok Bot,
  // so a reopened card must stop re-adding it. (Card calls run one at a time, so a refresh never races the create.)
  const made=gbGet().madeGroups||[];if(made.length){const live=new Map(groups.map(g=>[g.id,g]));
   const kept=made.filter(g=>live.has(g.id)).map(g=>({...g,...live.get(g.id)}));
   if(JSON.stringify(kept)!==JSON.stringify(made))gbPut({madeGroups:kept})}
- // An empty list is real too: every bot was deleted.
- if(JSON.stringify(bots)!==JSON.stringify(D.bots)){D.bots=bots;changed=true}
- if(JSON.stringify(groups)!==JSON.stringify(D.groups||[])){D.groups=groups;changed=true}
- if(!changed)return;render(D);
+ // An empty list is real too: every bot was deleted. The live roster in its sidebar order, plus any send
+ // bump still in its window, is what the pane shows; it redraws only when that differs (a redraw restarts
+ // every orb's eyes, so an unchanged roster must not redraw).
+ const next={bots,groups,...gbPick(D)};if(meta)gbMeta(next,meta);gbBumped(next);
+ if(gbRosterKey(next)===gbRosterKey(D))return;
+ D.bots=next.bots;D.groups=next.groups;gbMeta(D,next);render(D);
  if(isGroup||lcPane!==p)return;
  const bt=botById(D,p.id),hd=$('#chat .hd'),s=hd&&$('.st',hd),a=hd&&$('.av',hd);
  if(s)s.innerHTML='<span class="dot '+dotCls(bt)+'"></span>'+statusText(bt)+(bt.label?' · '+esc(bt.label):'');
@@ -203,7 +232,7 @@ function lcBots(bots,groups,p,isGroup,meta){let changed=false;
    in the real message), back to the box on failure, or 'orphan' when unconfirmed (a refresh that finds
    it confirms it; one that still lacks it 30 s later hands it back). Replies are looked for sooner. */
 function gbSend(p,v,files){files=files||[];const id=p.id,root=$('#chat'),names=files.map(x=>x.file.name);
- const localId=p.live.addLocal(v,names);gbFlying.add(localId);gbLaunch(v,localId,id);
+ const localId=p.live.addLocal(v,names);gbFlying.add(localId);gbLaunch(v,localId,id);gbBump(id);
  // A group with pending member/name edits saves them in the same call, before it sends.
  const e=p.group&&gbEdit&&gbEdit.id===id&&gbDirty(gbEdit)?gbEdit:null,edit=e&&{members:e.members.slice(),groupName:e.name.trim()||e.base.name};
  // Files first, one after another (the chips count up), then the one send that names them.
@@ -219,7 +248,7 @@ function gbSend(p,v,files){files=files||[];const id=p.id,root=$('#chat'),names=f
 /* Voice already sent this message: it still leaves the box and flies into the orb, as a tap send does.
    It lands on its real row if the pane's first refresh already brought it, else on a local 'sent' row
    that the next refresh swaps for the real one. */
-function gbFlyIn(p,v){const t=v.trim(),now=Date.now();
+function gbFlyIn(p,v){const t=v.trim(),now=Date.now();gbBump(p.id);
  const hit=p.live.items().filter(i=>i&&i.from==='me'&&!i.local&&String(i.text||'').trim()===t&&now-(+i.timestampMs||0)<12e4).pop();
  const id=hit?hit.id:p.live.addLocal(v);if(!hit)p.live.setLocal(id,'sent');
  gbLaunch(v,id,p.id);p.live.hurry()}
