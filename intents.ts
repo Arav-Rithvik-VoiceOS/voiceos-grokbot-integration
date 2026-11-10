@@ -11,8 +11,8 @@ export const intents: IntentDefinition[] = [
   {
     name: "list_bots", tool: "grokbot_list",
     description: "List the user's Grok Bot teammates and group chats. Only list bots, without sending a message or opening a bot's computer. Never when the user gives a task or message to send, even one that names no bot ('send this task to Grok Bot').",
-    utterances: { en: ["Show my Grok bots", "List my bots", "Show my bots", "Show me my bots", "List my Grok bots", "What bots do I have", "Grok Bot show", "Show Grok Bots"] },
-    response: { en: "Getting your bots." },
+    utterances: { en: ["Show my Grok bots", "List my bots", "Show my bots", "Show me my bots", "Show all my bots", "List my Grok bots", "What bots do I have", "Grok Bot show", "Show Grok Bots"] },
+    response: { en: "Opening Grok Bot." },
   },
   {
     name: "show_bot", tool: "grokbot_show",
@@ -75,9 +75,9 @@ export const intents: IntentDefinition[] = [
   },
   {
     name: "help", tool: "grokbot_help",
-    description: "Show how to set up and use Grok Bot (the bot list when the user already has bots), and what the user can say to it. Only a guide; do not message or create bots.",
-    utterances: { en: ["How do I use Grok Bot", "Help me set up Grok Bot", "How do I set up Grok Bot", "What can Grok Bot do", "Grok Bot help", "Show me how to use Grok Bot", "How does Grok Bot work"] },
-    response: { en: "Here's how Grok Bot works." },
+    description: "Open the Grok Bot sign-in card when the user asks to sign in, log in, or connect Grok Bot. Also show how to use Grok Bot.",
+    utterances: { en: ["Sign in to Grok Bot", "Can you sign in to Grok Bot", "Log in to Grok Bot", "Connect Grok Bot", "How do I use Grok Bot", "Help me set up Grok Bot", "How do I set up Grok Bot", "What can Grok Bot do", "Grok Bot help", "Show me how to use Grok Bot", "How does Grok Bot work"] },
+    response: { en: "Opening Grok Bot." },
   },
 ];
 

@@ -538,7 +538,14 @@ async function runTool(
   } catch (error) {
     if (error instanceof BrowserLoginRequired && isWaking()) {
       browserLoginOffered = true;
-      return result({ ok: false, needsSetup: true, message: error.message }, connectCard(undefined, true));
+      // These display requests can finish by showing a sign-in card. An
+      // ok:false result sends the host into error recovery and skips that card.
+      // A blocked action must still report that the action did not complete.
+      const displayRequest = tool === "grokbot_help" || tool === "grokbot_list" || tool === "grokbot_show";
+      return result(
+        { ok: displayRequest ? undefined : false, needsSetup: true, message: error.message },
+        connectCard(undefined, true),
+      );
     }
     log(`${tool} failed:`, error);
     // "Not set up / needs a refresh" isn't a crash. On a Mac that never
@@ -724,7 +731,7 @@ server.registerTool(
   {
     title: "How to use Grok Bot",
     description:
-      "Show how to set up and use Grok Bot: when the user already has bots, a card with their bot list plus things they can say; otherwise a card with the setup steps for this device. Use when the user asks how to use or set up Grok Bot, what Grok Bot can do, or for help with this integration.",
+      "Open the Grok Bot sign-in card when asked to sign in, log in, or connect Grok Bot. The user opens the browser by clicking the button on the card. Use for setup or help as well. If already connected, show the bot list.",
     inputSchema: {
       page: z
         .enum(["setup", "keychain", "ideas"])
