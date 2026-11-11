@@ -7,7 +7,7 @@
  * markdown CSS, mark.png, rfb.b64). VoiceOS's Share button ships
  * only server.ts + widgetKit.ts + package.json + manifest + icon — the widgets/
  * folder and mark.png never travel, so a shared build crashes on boot with
- * `ENOENT widgets/connect.html` before it can serve a single tool.
+ * `ENOENT widgets/show.html` before it can serve a single tool.
  *
  * This writes assets.generated.ts with each asset as a plain string constant, so
  * `bun build` inlines them into the self-contained server.ts. Runtime-agnostic:
@@ -39,7 +39,7 @@ const minified = (rel) => transformSync(text(rel), {
   loader: rel.endsWith(".css") ? "css" : "js", minifyWhitespace: true, charset: "utf8", legalComments: "none",
 }).code.trim();
 
-const NAMES = ["connect", "show", "create", "computer", "guide"];
+const NAMES = ["show", "create", "computer", "guide", "reconnect"];
 const widgets = Object.fromEntries(NAMES.map((n) => [n, text(`widgets/${n}.html`)]));
 // The mark draws at 16px, so a 32px copy covers a 2x display; the 64px source
 // would spend ~3KB more of every card's glance budget on pixels no screen draws.

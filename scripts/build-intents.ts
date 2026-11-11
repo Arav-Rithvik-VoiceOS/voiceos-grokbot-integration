@@ -1,3 +1,4 @@
+import { FILES_DESCRIPTION } from "../notchAttachments.ts";
 import { intents } from "../intents.ts";
 import { GROUP_DESCRIPTION, PREPARE_DESCRIPTION, SEND_BOT_DESCRIPTION, SEND_DESCRIPTION } from "../messaging.ts";
 import { intentErrors } from "../sdk/intents.ts";
@@ -8,10 +9,17 @@ manifest.hooks = { ...manifest.hooks, preToolUse: { scope: "own" }, transcript: 
 if (!manifest.permissions.some((p: { kind: string }) => p.kind === "transcript"))
   manifest.permissions.push({ kind: "transcript", scope: "agent" });
 for (const tool of manifest.tools) {
+  if (tool.name === "grokbot_send" || tool.name === "grokbot_group")
+    tool.inputSchema.properties.files = { type: "array", maxItems: 4, items: { type: "string", pattern: "^attached_file_\\d+$" }, description: FILES_DESCRIPTION };
+  if (tool.name === "grokbot_prepare_message" || tool.name === "grokbot_send") {
+    tool.inputSchema.properties.requestText = { type:"string", description:"Current user request supplied by VoiceOS." };
+    tool.inputSchema.properties.task = { type:"string", description:"Task or project context for a request with no named recipient." };
+  }
   if (tool.name === "grokbot_prepare_message") tool.description = PREPARE_DESCRIPTION;
   if (tool.name === "grokbot_group") tool.description = GROUP_DESCRIPTION;
   if (tool.name !== "grokbot_send") continue;
   tool.description = SEND_DESCRIPTION;
+  tool.inputSchema.required = (tool.inputSchema.required ?? []).filter((name:string) => name !== "bot");
   tool.inputSchema.properties.bot.description = SEND_BOT_DESCRIPTION;
   tool.inputSchema.properties.recipientId = { type: "string", description: "Internal: recipient ID pinned by the preparation hook. Never compose or change this value." };
 }

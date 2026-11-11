@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { toCardItem, toCardThread, toThread as threadItems, boundThread, type CardItem } from "../conversation.ts";
 import { conversationSnapshot, conversationEntry, conversationTransport } from "../conversationService.ts";
 import {
-  renderCard, showCard, connectCard, guideCard, glanceChars,
+  renderCard, showCard, reconnectCard, guideCard, glanceChars,
   relTime, toThread, toBot, MAX_GLANCE_CHARS, confirmationContext, CONFIRMATION_CONTEXT_CHARS,
 } from "../cards.ts";
 import {
@@ -267,11 +267,11 @@ describe("renderCard asset injection", () => {
     expect(!!baked.data.threads.b0[0].deferred).toBe(!!baked.data.threads.b1[0].deferred);
   });
   test("other cards carry none of it", () => {
-    for (const html of [htmlOf(connectCard()), renderCard("create", { data: {}, args: {} })])
+    for (const html of [htmlOf(reconnectCard()), renderCard("create", { data: {}, args: {} })])
       for (const marker of ["const LiveChat"]) expect(html).not.toContain(marker);
   });
   test("the logo is embedded once per card, however many marks it draws", () => {
-    const cards = [showCard(roster(2)), connectCard()];
+    const cards = [showCard(roster(2)), reconnectCard()];
     for (const html of cards.map(htmlOf)) {
       expect(html.split(MARK_DATA_URI).length - 1).toBe(1);
       expect(html).not.toContain('class="mark"><i></i>');

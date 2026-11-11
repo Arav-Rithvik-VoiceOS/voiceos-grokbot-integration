@@ -389,3 +389,88 @@ test("the send hook moves a guessed bot to the role match only when the turn nam
   now += 121_000;
   expect((await roster.beforeTool(hook({ bot: "Piper", message: "Hi" }))).updatedArgs).toMatchObject({ bot: "Piper", recipientId: "hq" });
 });
+
+test("spoken short names beat a guessed ID, and duplicate short names stop before default routing", async () => {
+  const bots: Agent[] = [{id:"j", name:"Jerome · BISV Hacks"}, {id:"a",name:"Assistant"}];
+  const roster = new IntentRoster(async()=>bots);
+  roster.primary = async()=>"a";
+  await roster.refresh();
+  const choose=(requestText:string,bot="a")=>roster.chooseRecipient(bots,{requestText,bot});
+  expect((await choose("Send a message to Jerome about calendar")).bot.id).toBe("j");
+  bots.push({id:"jj",name:"Jerome · Personal"});
+  await expect(choose("Tell Jerome to draft BISV sponsor emails","j")).rejects.toThrow("Which one");
+  await expect(choose("Tell Charlotte about the sponsors","a")).rejects.toThrow("Charlotte");
+  expect((await choose("Send hi to Jerome · Personal","a")).bot.id).toBe("jj");
+});
+test("unnamed tasks use discriminating project, profile or recent conversation evidence, then the actual primary",async()=>{
+  const bots:Agent[]=[{id:"first",name:"Jarvis · VoiceOS",description:"Email triage for the VoiceOS product"},{id:"main",name:"Scout"},{id:"j",name:"Jerome · BISV Hacks",title:"Event coordinator",lastMessagePreview:"Draft our robotics league sponsorship packet."}];
+  const roster=new IntentRoster(async()=>bots);
+  roster.primary=async()=>"main";
+  await roster.refresh();
+  const route=(requestText:string,task?:string)=>roster.chooseRecipient(bots,{bot:"first",requestText,task});
+  expect((await route("Ask Grok Bot to draft sponsor emails for BISV Hacks"))).toMatchObject({bot:{id:"j"},source:"role"});
+  expect((await route("Ask Grok Bot to draft those emails","Continuing our BISV Hacks project"))).toMatchObject({bot:{id:"j"},source:"role"});
+  expect((await route("Ask my bot to update the robotics league packet"))).toMatchObject({bot:{id:"j"},source:"role"});
+  expect((await route("Ask Grok Bot how it is going"))).toMatchObject({bot:{id:"main"},source:"primary"});
+  expect((await route("Ask Grok Bot to draft an email to Jerome"))).toMatchObject({bot:{id:"main"},source:"primary"});
+  bots[0].title=bots[2].title="Cloud engineering";
+  expect((await route("Ask Grok Bot about cloud engineering"))).toMatchObject({bot:{id:"main"},source:"primary"});
+  roster.primary=async()=>"missing";
+  await expect(route("Ask my bot for help")).rejects.toThrow("Which Grok Bot");
+});
+
+test("a generic sponsor-email reminder ignores an ambiguous model guess and uses a distinctive preview phrase", async () => {
+  const bots: Agent[] = [
+    {id:"main", name:"Assistant"},
+    {id:"j1", name:"Jerome · BISV Hacks", lastMessagePreview:"I'll draft the sponsor emails today."},
+    {id:"j2", name:"Jerome · Home", lastMessagePreview:"Here's the email from the electrician."},
+  ];
+  const roster = new IntentRoster(async()=>bots);
+  roster.primary=async()=>"main";
+  let reads=0;
+  roster.recentTopics=async()=>{reads++;return [[],[],[]];};
+  const requestText="Tell Grok Bot to remind me to send out those sponsor emails";
+  const select=(bot:string)=>roster.chooseRecipient(bots,{requestText,bot});
+  expect(await select("Jerome")).toMatchObject({bot:{id:"j1"},source:"role"});
+  expect(await select("a stale model guess")).toMatchObject({bot:{id:"j1"},source:"role"});
+  expect(reads).toBe(0);
+  await expect(roster.chooseRecipient(bots,{requestText:"Tell Jerome to send out those sponsor emails",bot:"j1"})).rejects.toThrow("Which one");
+  await expect(roster.chooseRecipient(bots,{requestText:"Tell Keira about sponsors",bot:"j1"})).rejects.toThrow("Keira");
+  await expect(roster.chooseRecipient(bots,{requestText:"send Marlo hi",bot:"main"})).rejects.toThrow("Marlo");
+  await expect(roster.chooseRecipient(bots,{requestText:"send hi to Marlo",bot:"main"})).rejects.toThrow("Marlo");
+});
+test("follow-up uses complete recent chat coverage, never a single unrelated keyword or an incomplete roster", async () => {
+  const bots:Agent[]=[{id:"m",name:"Primary",description:"I manage reminders and emails."},{id:"j",name:"Jerome · BISV Hacks"},{id:"o",name:"Scout"}];
+  const roster=new IntentRoster(async()=>bots);
+  roster.primary=async()=>"m";
+  const requestText="Tell Grok Bot to remind me to send out those sponsor emails";
+  const route=()=>roster.chooseRecipient(bots,{requestText,bot:"unsound guess"});
+  let histories:string[][]=[["Calendar is clear"],["We sent three sponsor emails","See you tomorrow"],["Mail is ready"]];
+  let reads=0;
+  roster.recentTopics=async(_bots,_signal)=>{reads++;return histories;};
+  expect(await route()).toMatchObject({bot:{id:"j"},source:"role"});
+  histories[2].push("The sponsor emails look fine");
+  expect(await route()).toMatchObject({bot:{id:"m"},source:"primary"});
+  histories=[[], ["Sponsor is interested","An email arrived."], []];
+  expect(await route()).toMatchObject({bot:{id:"m"},source:"primary"});
+  histories=[[], ["We sent sponsor emails"]];
+  expect(await route()).toMatchObject({bot:{id:"m"},source:"primary"});
+  roster.recentTopics=async()=>{throw new Error("one conversation unavailable");};
+  expect(await route()).toMatchObject({bot:{id:"m"},source:"primary"});
+  const before=reads;
+  roster.recentTopics=async()=>{reads++;return [];};
+  expect((await roster.chooseRecipient(bots,{requestText:"Ask Grok Bot to send an email"})).source).toBe("primary");
+  expect((await roster.chooseRecipient(bots,{requestText:"Ask Grok Bot to do that again"})).source).toBe("primary");
+  expect((await roster.chooseRecipient([...bots,...Array.from({length:4},(_,i)=>({id:"extra"+i,name:"Extra "+i}))],{requestText})).source).toBe("primary");
+  expect(reads).toBe(before);
+});
+
+test("slow follow-up history is aborted and uses the verified primary", async () => {
+  const bots=[{id:"p",name:"Primary"},{id:"j",name:"Jerome"}];
+  const roster=new IntentRoster(async()=>bots);
+  roster.primary=async()=>"p";
+  let aborted=false;
+  roster.recentTopics=async(_bots,signal)=>new Promise((_resolve,reject)=>signal.addEventListener("abort",()=>{aborted=true;reject(new Error("aborted"));},{once:true}));
+  expect(await roster.chooseRecipient(bots,{requestText:"Ask Grok Bot to handle those sponsor emails"})).toMatchObject({bot:{id:"p"},source:"primary"});
+  expect(aborted).toBe(true);
+});

@@ -13,6 +13,11 @@ const bots: actual.Agent[] = [
   { id: "t", name: "Theo", avatarColor: "blue" },
 ];
 let agents: actual.Agent[], writes: any[], rejectSend: boolean;
+let rosterError: actual.IntegrationError | undefined;
+let signedInState: boolean | undefined;
+let connectedBefore = false;
+let appOpens = 0;
+let rosterReadWakes: boolean[] = [];
 let publishCreated = true;
 const EARLIER: actual.TranscriptEntry[] = [{ kind: "message", role: "user", content: "Earlier message", id: "old" }];
 let tail: actual.TranscriptEntry[] = EARLIER;
@@ -34,7 +39,11 @@ mock.module("@modelcontextprotocol/sdk/server/mcp.js", () => ({ McpServer: class
 mock.module("../client.ts", () => ({
   ...actual,
   log: () => {},
-  listAgents: async () => agents,
+  listAgents: async () => { rosterReadWakes.push(actual.isWaking()); if (rosterError) throw rosterError; return agents; },
+  grokBotSignIn: () => signedInState,
+  hasGrokBotApp: () => true,
+  hasConnectedBefore: () => connectedBefore,
+  openGrokBotApp: () => { appOpens++; },
   listAllAutomations: async () => [],
   createAgent: async (name: string) => {
     const bot = { id: "created", name };
@@ -53,8 +62,12 @@ mock.module("../client.ts", () => ({
     computerWindows.push(input);
     return { reused: false };
   },
-  sendPrompt: async (id: string, message: string) => {
-    writes.push(["send", id, message]);
+  uploadAttachment: async (id: string, name: string, base64: string) => {
+    writes.push(["upload", id, name, base64]);
+    return "/bot/uploads/" + name;
+  },
+  sendPrompt: async (id: string, message: string, files: actual.SentAttachment[] = []) => {
+    writes.push(["send", id, message, ...(files.length ? [files] : [])]);
     if (rejectSend) throw new actual.IntegrationError("upstream", "Send failed");
     return { accepted: true };
   },
@@ -78,7 +91,7 @@ mock.module("../client.ts", () => ({
 }));
 // server.ts is the published bundle (client.ts inlined), so mocks never reach it.
 await import("../server.src.ts");
-const call = async (name: string, args: any) => {
+const call = async (name: string, args: any, metadata?: Record<string, unknown>) => {
   try {
     if (name === "grokbot_send" && args.bot && !args.recipientId) {
       // Simulate the host preparation hook followed by approval. Direct
@@ -91,7 +104,8 @@ const call = async (name: string, args: any) => {
       if (prepared.decision === "block") return { isError: true, error: prepared.responseText };
       args = prepared.updatedArgs ?? args;
     }
-    const response = await handlers.get(name)!(args);
+    const handler = handlers.get(name)! as (args: any, extra: any) => Promise<any>;
+    const response = await handler(args, { _meta: metadata });
     return { ...JSON.parse(response.content[0].text), isError: response.isError };
   } catch (error) { return { isError: true, error: String(error) }; }
 };
@@ -100,6 +114,7 @@ const cardData = (r: any) => demoOf(r._voiceos_glance.blocks[0].html);
 beforeEach(() => {
   agents = [...bots.map(a => ({ ...a })), { id: "g", name: "Study group", isGroup: true, memberIds: ["p", "f"] }];
   writes = []; rejectSend = false;
+  rosterError = undefined; signedInState = undefined; connectedBefore = false; appOpens = 0; rosterReadWakes = [];
   publishCreated = true;
   tail = EARLIER;
   tailCursor = undefined;
@@ -107,6 +122,38 @@ beforeEach(() => {
   desktopProbe = { live: false, boxState: "absent" };
   computerWindows = [];
   openedChats = [];
+});
+
+test("notch attachment bytes upload to the prepared bot or group before a single message", async () => {
+  const bytes = Buffer.from([0, 255, 128, 1, 0]);
+  const meta = { "com.voiceos/attachments": { attached_file_0: { name: "proof.bin", base64: bytes.toString("base64") } } };
+  for (const [tool, recipient, id] of [["grokbot_send", { bot: "Piper" }, "p"], ["grokbot_group", { group: "Study group" }, "g"]] as const) {
+    writes.length = 0;
+    const r = await call(tool, { ...recipient, files: ["attached_file_0"] }, meta);
+    expect(r.sent).toBe(true);
+    expect(writes).toEqual([
+      ["upload", id, "proof.bin", bytes.toString("base64")],
+      ["send", id, "", [{ name: "proof.bin", path: "/bot/uploads/proof.bin", sha256: expect.any(String) }]],
+    ]);
+  }
+  writes.length = 0;
+  for (const args of [
+    { bot: "Piper", files: ["attached_file_1"] },
+    { bot: "Piper", files: ["/private/secret"] },
+    { bot: "Piper", recipientId: "t", requestText: "Send Piper the file", files: ["attached_file_0"] },
+  ]) expect((await call("grokbot_send", args, meta)).isError).toBe(true);
+  expect(writes).toEqual([]);
+});
+
+test("a card or notch cannot send a file one byte over the 4 MB limit", async () => {
+  const bytes = Buffer.alloc(4 * 1024 * 1024 + 1, 128);
+  const base64 = bytes.toString("base64");
+  expect((await call("grokbot_send", { bot: "Piper", files: ["attached_file_0"] }, {
+    "com.voiceos/attachments": { attached_file_0: { name: "big.mov", base64 } },
+  })).isError).toBe(true);
+  const r = await call("grokbot_card_upload", { bot: "p", uploadId: "big", name: "big.mov", total: base64.length, offset: 0, chunk: base64 });
+  expect(r).toMatchObject({ ok: false, message: expect.stringContaining("4 MB") });
+  expect(writes).toEqual([]);
 });
 
 test("an offline bot returns a clear result without opening a computer window", async () => {
@@ -218,13 +265,25 @@ test("group lookup preserves drafts and returns resolved member IDs", async () =
   expect(r.args.message).toBeUndefined();
   expect(writes).toEqual([]);
 });
-test("a lookup with no recipient returns every bot's role as plain JSON, never the roster card", async () => {
+test("a lookup without a recipient or a verified primary asks which bot", async () => {
   const r = await call("grokbot_prepare_message", {});
-  expect(r.ready).toBe(false);
-  expect(r.nextTool).toBe("grokbot_send");
-  expect(r.bots.map((b: any) => b.id)).toEqual(agents.filter(a => !a.isGroup).map(a => a.id));
-  expect(r._voiceos_glance).toBeUndefined();
+  expect(r.isError).toBe(true);
+  expect(r.error).toContain("Which Grok Bot");
   expect(writes).toEqual([]);
+});
+test("direct, prepared and card sends use the same unique Jerome, with no writes when ambiguous", async () => {
+  agents.push({ id:"j",name:"Jerome · BISV Hacks",title:"Sponsorships" });
+  const requestText = "Tell Jerome to collect sponsor emails";
+  const prep = await call("grokbot_prepare_message",{ bot:"Piper",requestText });
+  expect(prep).toMatchObject({ ready:true,args:{bot:"j"},recipient:{id:"j",name:"Jerome · BISV Hacks"},routing:{source:"explicit"} });
+  expect((await call("grokbot_send",{bot:"Jerome",message:"Hello",requestText})).botId).toBe("j");
+  agents.push({id:"j2",name:"Jerome · Calendar"});
+  const before=writes.length;
+  const ambiguous = await call("grokbot_prepare_message",{bot:"j",requestText});
+  expect(ambiguous.error).toContain("Jerome · Calendar");
+  expect((await call("grokbot_send",{bot:"Jerome · BISV Hacks",recipientId:"j",requestText,message:"Hello"})).isError).toBe(true);
+  expect(writes.length).toBe(before);
+  expect((await call("grokbot_card_send",{bot:"j2",message:"Hello"})).botId).toBe("j2");
 });
 test("a voice toggle flips one bot's Notify on updates switch, and skips a no-op write", async () => {
   const off = await call("grokbot_notifications", { bot: "piper", enabled: false });
@@ -253,7 +312,7 @@ test("creation reports pending registration without inventing a roster entry", a
 test("voice send sends at once and opens the bot's chat pane with the message marked sent (it flies in)", async () => {
   const r = await call("grokbot_send", { bot: "Piper", message: "Hello." });
   expect(writes).toEqual([["send", "p", "Hello."]]);
-  expect(r).toMatchObject({ sent: true, bot: "Piper", sentMessage: "Hello." });
+  expect(r).toMatchObject({ sent: true, bot: "Piper", botId: "p", sentMessage: "Hello." });
   expect(cardData(r).args).toEqual({ open: { bot: "p" }, message: "Hello.", sent: true });
   // History is read before the send, so the card never shows the message twice.
   expect(cardData(r).data.threads.p.map((i: any) => i.text)).not.toContain("Hello.");
@@ -293,7 +352,7 @@ test("host string member edits are saved on an existing group before a card send
 });
 test("voice send and group with no message still open (never error) and never write", async () => {
   const send = await call("grokbot_send", { bot: "Piper" });
-  expect(send).toMatchObject({ opened: true, sent: false });
+  expect(send).toMatchObject({ opened: true, sent: false, bot: "Piper", botId: "p" });
   const group = await call("grokbot_group", { members: ["p", "t"] });
   expect(group).toMatchObject({ opened: true, sent: false, newGroup: true, draft: "" });
   expect(writes).toEqual([]);
@@ -313,7 +372,7 @@ test("unknown members cannot be silently omitted from the recipients", async () 
 test("card send delivers once and returns no receipt; the card stays open", async () => {
   const r = await call("grokbot_card_send", { bot: "Piper", message: "From the card" });
   expect(writes).toEqual([["send", "p", "From the card"]]);
-  expect(r).toMatchObject({ sent: true, bot: "Piper", sentMessage: "From the card" });
+  expect(r).toMatchObject({ sent: true, bot: "Piper", botId: "p", sentMessage: "From the card" });
   expect(r.receipt).toBeUndefined();
   expect(r._voiceos_glance).toBeUndefined();
 });
@@ -413,6 +472,7 @@ test("reading a thread gives the model the message text and no card by default",
     { kind: "message", role: "user", fromAgent: { id: "f", name: "Finch" }, content: "I can help too.", id: "4" },
   ];
   const r = await call("grokbot_thread", { bot: "Piper" });
+  expect(r).toMatchObject({ bot: "Piper", botId: "p" });
   expect(r._voiceos_glance).toBeUndefined();
   expect(r.thread).toEqual([
     { from: "user", text: "What is my homework?", at: new Date(1_000).toISOString() },
@@ -425,6 +485,18 @@ test("reading a thread shows the card only when the user asks to see it", async 
   const r = await call("grokbot_thread", { bot: "Piper", show: true });
   expect(cardData(r).args.open).toEqual({ bot: "p" });
   expect(r.thread).toEqual([{ from: "user", text: "Earlier message" }]);
+});
+test("saved bot IDs retain conversation identity after a rename and name reuse", async () => {
+  agents.find(a => a.id === "p")!.name = "Piper Renamed";
+  agents.push({ id: "new-piper", name: "Piper" });
+  const thread = await call("grokbot_thread", { bot: "p", show: true });
+  expect(thread).toMatchObject({ bot: "Piper Renamed", botId: "p" });
+  expect(cardData(thread).args.open).toEqual({ bot: "p" });
+  for (const tool of ["grokbot_send", "grokbot_card_send"]) {
+    const sent = await call(tool, { bot: "p", message: "Keep this conversation" });
+    expect(sent).toMatchObject({ sent: true, bot: "Piper Renamed", botId: "p" });
+  }
+  expect(writes.map(write => write[1])).toEqual(["p", "p"]);
 });
 test("a long thread keeps the newest messages inside the size limit", async () => {
   tail = Array.from({ length: 6 }, (_, i) => ({ kind: "send-message", message: { content: `${i}:` + "x".repeat(4998) }, id: String(i) }));
@@ -459,8 +531,13 @@ test("manifest advertises exactly the registered server tools", async () => {
   }
   const cardSend = manifest.tools.find((t: any) => t.name === "grokbot_card_send");
   expect(cardSend.uiCallable).toBe(true);
-  expect(cardSend.inputSchema.required).toEqual(["message"]);
-  expect(Object.keys(cardSend.inputSchema.properties).sort()).toEqual(["bot", "group", "groupName", "members", "message"]);
+  // Files alone are a send too, so nothing is required; `attachments` are paths grokbot_card_upload returned.
+  expect(cardSend.inputSchema.required).toEqual([]);
+  expect(Object.keys(cardSend.inputSchema.properties).sort()).toEqual(["attachments", "bot", "group", "groupName", "members", "message"]);
+  const upload = manifest.tools.find((t: any) => t.name === "grokbot_card_upload");
+  expect(upload.uiCallable).toBe(true);
+  expect(upload.confirmation).toBeUndefined();
+  expect(upload.inputSchema.required).toEqual(["bot", "uploadId", "name", "offset", "total", "chunk"]);
   // No tool declares the old card-origin `via` metadata any more.
   for (const name of ["grokbot_send", "grokbot_group"]) {
     expect(Object.keys(manifest.tools.find((t: any) => t.name === name).inputSchema.properties)).not.toContain("via");
@@ -650,4 +727,61 @@ test("a spoken message is tidied before it goes out; typed card sends are sent a
   writes = [];
   await call("grokbot_card_send", { bot: "Piper", message: "lowercase on purpose" });
   expect(writes).toEqual([["send", "p", "lowercase on purpose"]]);
+});
+
+
+test("a parked connection failure does not become a Connect card", async () => {
+  rosterError = new actual.IntegrationError("session_unavailable", "Grok Bot's local connection isn't available.");
+  const r = await call("grokbot_show", {});
+  expect(r).toMatchObject({ isError: true, error: expect.stringContaining("local connection") });
+  expect(r.needsSetup).toBeUndefined();
+  expect(r._voiceos_glance).toBeUndefined();
+  expect(appOpens).toBe(0);
+});
+
+test("an explicit desktop sign-out still explains how to sign in without a card", async () => {
+  rosterError = new actual.IntegrationError("setup", "Grok Bot is signed out.");
+  const r = await call("grokbot_show", {});
+  expect(r).toMatchObject({ ok: false, needsSetup: true, message: "Grok Bot is signed out." });
+  expect(r._voiceos_glance).toBeUndefined();
+  expect(appOpens).toBe(1);
+});
+
+test("a sign-out after a past connection says so without the Connect card (VOS-1616)", async () => {
+  connectedBefore = true;
+  rosterError = new actual.IntegrationError("setup", "Grok Bot is signed out.");
+  const r = await call("grokbot_show", {});
+  expect(r).toMatchObject({ isError: true });
+  expect(r.error).toContain("Grok Bot is signed out.");
+  expect(r.needsSetup).toBeUndefined();
+  expect(appOpens).toBe(1);
+});
+
+test("the setup guide keeps sign-in checked while the local connection is unavailable", async () => {
+  signedInState = true;
+  rosterError = new actual.IntegrationError("session_unavailable", "Grok Bot's local connection isn't available.");
+  const r = await call("grokbot_help", {});
+  expect(cardData(r).data.setup.signedIn).toBe(true);
+  expect(r.botsUnknown).toBe(true);
+  expect(r.needsSetup).toBeUndefined();
+  expect(appOpens).toBe(0);
+});
+
+
+test("automatic card refreshes cannot wake a parked connection or open a setup card", async () => {
+  rosterError = new actual.IntegrationError("setup", "Grok Bot is signed out.");
+  const r = await call("grokbot_card_snapshot", {});
+  expect(r).toMatchObject({ ok: false, message: "Grok Bot is signed out." });
+  expect(rosterReadWakes).toEqual([false]);
+  expect(r.needsSetup).toBeUndefined();
+  expect(appOpens).toBe(0);
+});
+
+test("passive reply checks do not open the app when a session is rejected", async () => {
+  rosterError = new actual.IntegrationError("not_connected", "Grok Bot rejected the session.");
+  const r = await call("grokbot_reply_check", { bot: "Piper" });
+  expect(r.isError).toBe(true);
+  expect(rosterReadWakes).toEqual([false]);
+  expect(r.needsSetup).toBeUndefined();
+  expect(appOpens).toBe(0);
 });

@@ -14,10 +14,14 @@
  * user's OWN session on the user's OWN Mac. See SPIKE.md for the proof run and
  * PLAN.md for the design.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { browserSelected, browserSignedIn, browserRoster, browserTranscript, browserSend, browserGateway, browserCreate, browserRoom, browserMembers, browserRename, browserUpload, browserMarkRead, browserNotify, browserWidget } from "./browserSession.ts";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { pbkdf2Sync, createDecipheriv } from "node:crypto";
+import { pbkdf2Sync, createDecipheriv, createHash } from "node:crypto";
 import {
   openComputerWindow as launchComputerWindow,
   validateDesktopWebSocketUrl,
@@ -46,6 +50,8 @@ export type FailureKind =
   | "timeout"
   | "network"
   | "parked" // the cloud box is hibernated and this call did not wake it
+  | "session_unavailable" // a missing local route is not evidence of logout
+  | "reconnect" // no usable route and the box will not wake: the user must message a bot in Grok Bot, then reconnect
   | "upstream";
 
 /**
@@ -67,12 +73,54 @@ export class IntegrationError extends Error {
 // ── Local session: descriptor + Keychain → gateway creds ─────────────────────
 
 const DESCRIPTOR_PATH = `${process.env.HOME}/Library/Application Support/Grok Bot/gateway-descriptor.json`;
-/** True once the Grok Bot app has signed in on this Mac (it writes the
- * descriptor then). A file check only: no Keychain read, so no prompt. */
+const DESKTOP_STATUS_PATH = `${process.env.HOME}/Library/Application Support/Grok Bot/desktop-status.json`;
+
+/** Grok Bot removes its transient route when the cloud computer parks. */
 export const hasGatewaySession = () => existsSync(DESCRIPTOR_PATH);
-/** True when the Grok Bot app is installed in either Applications folder. */
+
+/** The app writes `signedIn: false` as it launches, until its Keychain read and
+ * token refresh finish (VOS-1616). A `false` this soon after launch is the app
+ * settling, not a sign-out, so it must not throw away the saved route. */
+const SIGN_IN_SETTLE_MS = 30_000;
+
+/** "settling" = the marker says signed out, but the running app launched less
+ * than SIGN_IN_SETTLE_MS ago. Undefined = no readable marker. */
+type SignIn = "in" | "out" | "settling";
+function savedSignIn(): SignIn | undefined {
+  try {
+    const status = JSON.parse(readFileSync(DESKTOP_STATUS_PATH, "utf8"));
+    if (status.version !== 1 || typeof status.signedIn !== "boolean") return undefined;
+    if (status.signedIn) return "in";
+    return appStarting(status) ? "settling" : "out";
+  } catch {
+    return undefined;
+  }
+}
+
+function appStarting(status: { pid?: unknown; startedAtMs?: unknown }): boolean {
+  if (typeof status.startedAtMs !== "number" || Date.now() - status.startedAtMs >= SIGN_IN_SETTLE_MS) return false;
+  if (typeof status.pid !== "number" || !Number.isInteger(status.pid)) return false;
+  try {
+    process.kill(status.pid, 0); // signal 0 only checks that the process exists
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException)?.code === "EPERM";
+  }
+}
+
+/** Only the app's settled signed-out marker proves logout. Older versions
+ * export just a descriptor; when both are absent, sign-in state is unknown. */
+export const grokBotSignIn = (): boolean | undefined => {
+  if (browserSelected()) return browserSignedIn();
+  const signIn = savedSignIn();
+  if (signIn === "in") return true;
+  if (signIn === "out") return false;
+  return hasGatewaySession() ? true : undefined;
+};
+export const hasGrokBotSignIn = grokBotSignIn;
 export const hasGrokBotApp = () =>
   existsSync("/Applications/Grok Bot.app") || existsSync(`${process.env.HOME}/Applications/Grok Bot.app`);
+
 // Chromium "Safe Storage" Keychain item the app writes its master key under.
 const KEYCHAIN_SERVICE = "Grok Bot Safe Storage";
 
@@ -82,127 +130,382 @@ interface GatewayCreds {
   networkToken?: string;
   vncPrimaryUrl?: string; // noVNC viewer URL for the shared cloud computer (port 6080)
   vncForkBaseUrl?: string; // origin that serves every bot's OWN desktop (port 6081), token-addressed
+  remembered?: boolean; // served from memory because the app removed its route file
 }
 
 /**
  * The token rotates (~12h) and the pod host changes per session, so creds are
- * re-derived from disk, not hardcoded. Decrypting on EVERY call would re-spawn
- * `security` each time, so cache briefly and re-derive when the cache is stale
- * or the gateway rejects the token (see gateway()).
+ * re-derived from disk, not hardcoded. Cache briefly and re-derive when the
+ * cache is stale or the gateway rejects the token (see gateway()).
  */
 let credsCache: { creds: GatewayCreds; at: number } | null = null;
 const CREDS_TTL_MS = 60_000;
 
-// `security` exits 44 when the Keychain item does not exist.
-const KEYCHAIN_ITEM_NOT_FOUND = 44;
-let keychainRead: Promise<string> | null = null;
-
 /**
- * The Chromium master key, read from the login Keychain.
+ * The last route that decrypted. Grok Bot deletes its route file the moment
+ * its cloud computer parks, and writes it again only when the app is relaunched
+ * while the computer is awake (its "kept asleep" flag resets only on an account
+ * change). A user request with no file would be stuck, because waking the
+ * computer needs the route. The remembered route lets that request send the
+ * wake headers itself.
  *
- * Async on purpose. The first read raises the one-time macOS "Allow / Always
- * Allow" prompt, and `security` does not return until the user answers. The
- * boot-time intent refresh reaches this before the host's `initialize`, so a
- * sync spawn froze the event loop, the handshake timed out, and the host
- * dropped the server — taking the prompt with it. Concurrent callers share one
- * read, so the user gets one prompt, not one per caller.
+ * It is kept in memory AND as a copy on disk (VOS-1608): the memory alone was
+ * lost on every VoiceOS restart, which is exactly when users hit "connection
+ * is off". The copy is the app's own entry, still encrypted with the app's
+ * Safe Storage key — never the decrypted route — so it is as safe at rest as
+ * the app's file. It stays tied to the account label the app wrote into its
+ * file, and expires on the app's own clock: 7 days after the app saved it
+ * (the app trusts its stored route for exactly that long). Any 401/403, the
+ * app's settled signed-out marker, or the app naming a different account
+ * deletes it; a real route file always wins.
  */
+let rememberedRoute: { creds: GatewayCreds; account: string; savedAtMs: number } | null = null;
+/** Grok Bot's own `maxAgeMs` for a stored route (10080 minutes). */
+const ROUTE_LIFE_MS = 7 * 24 * 60 * 60_000;
+const ROUTE_COPY_DIR = `${process.env.HOME}/Library/Application Support/VoiceOS Grok Bot`;
+const ROUTE_COPY_PATH = `${ROUTE_COPY_DIR}/route.json`;
+/** The app's route entry, as saved: `encrypted` is its Safe Storage ciphertext. */
+interface RouteCopy { version: 1; account: string; savedAtMs: number; encrypted: string }
+let lastRouteCopy: string | null = null;
+/** Set when the saved copy failed on the network in this process: the next
+ * attempt goes to the app's own recovery instead of the same dead route. The
+ * copy stays on disk for the next process; Wi-Fi comes back, routes do not. */
+let routeCopySkipped = false;
+
+/** Written the first time a gateway request works on this Mac (VOS-1616).
+ * From then on a failure is a broken connection, never first-run setup, so
+ * server.ts stops showing the Connect card. */
+const CONNECTED_PATH = `${ROUTE_COPY_DIR}/connected.json`;
+let connectedBefore: boolean | null = null;
+
+export function hasConnectedBefore(): boolean {
+  if (browserSelected()) return browserSignedIn();
+  connectedBefore ??= existsSync(CONNECTED_PATH);
+  return connectedBefore;
+}
+
+function markConnected(): void {
+  if (hasConnectedBefore()) return;
+  try {
+    mkdirSync(ROUTE_COPY_DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(CONNECTED_PATH, JSON.stringify({ version: 1, atMs: Date.now() }), { mode: 0o600 });
+    connectedBefore = true;
+  } catch (error) {
+    log(`connected flag not saved (${(error as NodeJS.ErrnoException)?.code ?? "write failed"})`);
+  }
+}
+
+/** The app's record of which account is signed in: its persisted
+ * `client-meta.account-slot` slice (the file name is that key in base32). */
+const ACCOUNT_SLOT_PATH = `${process.env.HOME}/Library/Application Support/Grok Bot/sand-client-persistence/onqw4zbomnwgszlooqxhg3djmnss4y3mnfsw45bnnvsxiyjomfrwg33vnz2c243mn52a.blob`;
+
+/** Whether the app's signed-in account is the one a route copy belongs to.
+ * The copy's `account` is the app's SHA-256 of the account slot (0.78.1 hashes
+ * the bare slot; the namespaced form is accepted too). Undefined when the app
+ * names no account, so a missing or older file never deletes a good copy. */
+function sameAccount(account: string): boolean | undefined {
+  try {
+    const slot = JSON.parse(readFileSync(ACCOUNT_SLOT_PATH, "utf8"))?.value;
+    if (typeof slot !== "string" || !slot) return undefined;
+    const bare = createHash("sha256").update(slot).digest("hex");
+    const namespaced = createHash("sha256").update("sand-account-slot").update("\0").update(slot).digest("hex");
+    return account === bare || account === namespaced;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeRouteCopy(copy: RouteCopy): void {
+  const serialized = JSON.stringify(copy);
+  if (serialized === lastRouteCopy) return;
+  try {
+    if (readFileSync(ROUTE_COPY_PATH, "utf8") === serialized) {
+      lastRouteCopy = serialized;
+      return;
+    }
+  } catch { /* no copy yet, or unreadable: write it */ }
+  try {
+    mkdirSync(ROUTE_COPY_DIR, { recursive: true, mode: 0o700 });
+    const tmp = `${ROUTE_COPY_PATH}.tmp`;
+    writeFileSync(tmp, serialized, { mode: 0o600 });
+    renameSync(tmp, ROUTE_COPY_PATH);
+    lastRouteCopy = serialized;
+  } catch (error) {
+    log(`route copy not saved (${(error as NodeJS.ErrnoException)?.code ?? "write failed"})`);
+  }
+}
+
+function deleteRouteCopy(): void {
+  lastRouteCopy = null;
+  try {
+    unlinkSync(ROUTE_COPY_PATH);
+  } catch { /* already gone */ }
+}
+
+function readRouteCopy(): RouteCopy | null {
+  try {
+    const copy = JSON.parse(readFileSync(ROUTE_COPY_PATH, "utf8")) as RouteCopy;
+    if (copy.version !== 1 || typeof copy.account !== "string" || typeof copy.savedAtMs !== "number" || typeof copy.encrypted !== "string") {
+      deleteRouteCopy();
+      return null;
+    }
+    return copy;
+  } catch {
+    return null;
+  }
+}
+
+const routeExpired = (savedAtMs: number) => Date.now() - savedAtMs > ROUTE_LIFE_MS;
+
+const DESCRIPTOR_RECOVERY_MS = 5_000;
+let descriptorRecovery: Promise<string> | null = null;
+
+/** The Safe Storage key never changes, so one read serves the whole process.
+ * Re-reading it with every creds refresh re-prompted users who clicked
+ * "Allow" instead of "Always Allow" once a minute. */
+let masterKeyCache: string | null = null;
+let keychainRead: Promise<string> | null = null;
+/** A hidden prompt must not hold a request until VoiceOS cancels it (60 s).
+ * The read itself keeps waiting, so answering the prompt late still helps. */
+const KEYCHAIN_WAIT_MS = 30_000;
+
+function signedOutError(): IntegrationError {
+  return new IntegrationError("setup", `${SERVICE_NAME} is signed out. Open the Grok Bot app and sign in, then try again.`);
+}
+
+function descriptorUnavailable(error: unknown): IntegrationError {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  log(`gateway descriptor unavailable (${code ?? "read failed"})`);
+  if (code !== "ENOENT") {
+    return new IntegrationError("session_unavailable", `${SERVICE_NAME}'s local connection file could not be read. Open the Grok Bot app and try again.`);
+  }
+  const signedIn = savedSignIn();
+  if (signedIn === "out") return signedOutError();
+  if (signedIn === "settling") {
+    return new IntegrationError("session_unavailable", `${SERVICE_NAME} is still starting. Try again in a few seconds.`);
+  }
+  if (signedIn === "in" && !isWaking()) {
+    return new IntegrationError("parked", `${SERVICE_NAME}'s cloud computer is asleep. Open the Grok Bot app to wake it, then try again.`);
+  }
+  if (signedIn === "in") return reconnectError();
+  // Sign-in state unknown (older app, unreadable status): say only what is known.
+  return new IntegrationError(
+    "session_unavailable",
+    `${SERVICE_NAME}'s local connection is off. Open Grok Bot and message any bot, then quit Grok Bot and open it again.`,
+  );
+}
+
+/** No route the user's request can use, and the box will not wake on its own.
+ * Relaunching alone is not enough: the app writes the route only when it
+ * connects while the cloud computer is awake, and messaging a bot wakes it.
+ * server.ts shows the Reconnect card for this kind; the card's button does
+ * the quit-and-reopen. */
+function reconnectError(): IntegrationError {
+  return new IntegrationError(
+    "reconnect",
+    `${SERVICE_NAME} needs a quick reconnect. Send any message in Grok Bot, then tap Reconnect.`,
+  );
+}
+
+/** The session is over (signed out, or the gateway refused the token): nothing
+ * remembered may be reused, in memory or on disk. */
+function forgetSession(): void {
+  credsCache = null;
+  rememberedRoute = null;
+  deleteRouteCopy();
+}
+
+/** User requests share one bounded recovery; background refreshes never join
+ * it or launch the app. Re-read the route after opening the existing session. */
+async function readDescriptor(): Promise<string> {
+  try {
+    return readFileSync(DESCRIPTOR_PATH, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" || !isWaking() || savedSignIn() === "out") {
+      throw descriptorUnavailable(error);
+    }
+  }
+  descriptorRecovery ??= (async () => {
+    openGrokBotApp();
+    const deadline = Date.now() + DESCRIPTOR_RECOVERY_MS;
+    for (;;) {
+      if (savedSignIn() === "out") throw signedOutError();
+      try {
+        return readFileSync(DESCRIPTOR_PATH, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" || Date.now() >= deadline) {
+          throw descriptorUnavailable(error);
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  })().finally(() => { descriptorRecovery = null; });
+  return descriptorRecovery;
+}
+
+/** Async so a first-time Keychain prompt cannot block the MCP handshake.
+ * Concurrent reads share one prompt; denial is not evidence of signing out. */
 function keychainKey(): Promise<string> {
+  if (masterKeyCache) return Promise.resolve(masterKeyCache);
   keychainRead ??= new Promise<string>((resolve, reject) => {
-    // Absolute path: the VoiceOS-spawned sandbox resets PATH, so a bare
-    // `security` is "command not found". GROKBOT_SECURITY_BIN is a test seam.
     execFile(
       process.env.GROKBOT_SECURITY_BIN || "/usr/bin/security",
       ["find-generic-password", "-w", "-s", KEYCHAIN_SERVICE],
       { encoding: "utf8" },
       (error, stdout) => {
         if (!error) return resolve(stdout.trim());
-        log("keychain read failed:", error);
-        reject(
-          error.code === KEYCHAIN_ITEM_NOT_FOUND
-            ? new IntegrationError(
-                "setup",
-                `${SERVICE_NAME} isn't set up on this Mac yet. Open the Grok Bot app and sign in, then try again.`,
-              )
-            : new IntegrationError(
-                "setup",
-                `${SERVICE_NAME} needs Keychain access. Try again and click Always Allow when macOS asks.`,
-              ),
-        );
+        // Errors may include captured secrets, so log only the exit code.
+        log(`keychain read failed (${String(error.code ?? error.name)})`);
+        reject(new IntegrationError(
+          "session_unavailable",
+          error.code === 44
+            ? `${SERVICE_NAME}'s saved session key is unavailable. Open the Grok Bot app to refresh its connection, then try again.`
+            : `${SERVICE_NAME} needs Keychain access. Try again and click Always Allow when macOS asks.`,
+        ));
       },
     );
-  }).finally(() => {
-    keychainRead = null;
+  }).then((key) => (masterKeyCache = key)).finally(() => { keychainRead = null; });
+  return waitForKeychain(keychainRead);
+}
+
+function waitForKeychain(read: Promise<string>): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const waited = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      log("keychain read still waiting; is the macOS prompt hidden?");
+      reject(new IntegrationError(
+        "session_unavailable",
+        `${SERVICE_NAME} is waiting for Keychain access. Look for the macOS Keychain popup, click Always Allow, then try again.`,
+      ));
+    }, KEYCHAIN_WAIT_MS);
   });
-  return keychainRead;
+  return Promise.race([read, waited]).finally(() => clearTimeout(timer));
 }
 
 /** Read + decrypt the descriptor into live gateway creds. */
-async function loadCreds(force = false): Promise<GatewayCreds> {
+async function loadCreds(force = false, keyRefreshed = false): Promise<GatewayCreds> {
+  if (browserSelected()) return browserGateway(isWaking());
+  if (savedSignIn() === "out") {
+    forgetSession();
+    throw signedOutError();
+  }
   if (!force && credsCache && Date.now() - credsCache.at < CREDS_TTL_MS) {
     return credsCache.creds;
   }
-
-  let raw: string;
-  try {
-    raw = readFileSync(DESCRIPTOR_PATH, "utf8");
-  } catch {
-    // No descriptor → the app has never run / signed in on this account.
-    throw new IntegrationError(
-      "setup",
-      `${SERVICE_NAME} isn't signed in on this Mac. Open the Grok Bot app and sign in, then try again.`,
-    );
+  // Only user requests may wake a computer the app put to sleep.
+  if (isWaking() && !hasGatewaySession()) {
+    const remembered = await rememberedCreds();
+    if (remembered) return remembered;
+  }
+  const raw = await readDescriptor();
+  // A key cached by an earlier call may predate a reinstall; see the catch.
+  const keyWasCached = masterKeyCache !== null;
+  // Keep Keychain failures out of the descriptor-decryption error handler.
+  const masterKey = await keychainKey();
+  // Sign-out can happen while the user is answering a Keychain prompt.
+  if (savedSignIn() === "out") {
+    forgetSession();
+    throw signedOutError();
   }
 
-  // Outside the try below: its catch would turn a Keychain error into the
-  // wrong "needs a refresh" message.
-  const masterKey = await keychainKey();
-
-  let baseUrl: string;
-  let token: string;
-  let networkToken: string | undefined;
-  let vncPrimaryUrl: string | undefined;
-  let vncForkBaseUrl: string | undefined;
+  let creds: GatewayCreds;
+  let copy: RouteCopy;
   try {
     const descriptor = JSON.parse(raw) as {
       entries: Record<string, { savedAtMs?: number; encrypted: string }>;
     };
     // One entry today, but pick the freshest defensively.
-    const entry = Object.values(descriptor.entries).sort(
-      (a, b) => (b.savedAtMs ?? 0) - (a.savedAtMs ?? 0),
-    )[0];
+    const [account, entry] = Object.entries(descriptor.entries).sort(
+      ([, a], [, b]) => (b.savedAtMs ?? 0) - (a.savedAtMs ?? 0),
+    )[0] ?? [];
     if (!entry) throw new Error("descriptor has no entries");
-
-    // Chromium Safe Storage v10: PBKDF2-HMAC-SHA1(keychainKey, "saltysalt",
-    // 1003, 16) → AES-128-CBC, IV = 16 spaces, over the blob after the "v10"
-    // prefix. Node's crypto strips the PKCS7 padding for us.
-    const blob = Buffer.from(entry.encrypted, "base64");
-    const aesKey = pbkdf2Sync(masterKey, "saltysalt", 1003, 16, "sha1");
-    const decipher = createDecipheriv("aes-128-cbc", aesKey, Buffer.alloc(16, 0x20));
-    const plain = Buffer.concat([decipher.update(blob.subarray(3)), decipher.final()]).toString("utf8");
-
-    const creds = JSON.parse(plain) as {
-      baseUrl: string;
-      token: string;
-      headers?: Record<string, string>;
-      vncProxy?: { primaryUrl?: string; forkBaseUrl?: string };
-    };
-    baseUrl = creds.baseUrl.replace(/\/$/, "");
-    token = creds.token;
-    networkToken = creds.headers?.["x-anyrun-network-token"];
-    vncPrimaryUrl = creds.vncProxy?.primaryUrl;
-    vncForkBaseUrl = creds.vncProxy?.forkBaseUrl?.replace(/\/$/, "");
+    creds = decryptRoute(entry.encrypted, masterKey);
+    copy = { version: 1, account, savedAtMs: entry.savedAtMs ?? Date.now(), encrypted: entry.encrypted };
   } catch (error) {
-    log("descriptor decrypt failed:", error);
+    // Parse errors can contain decrypted session data. Never log their text.
+    log(`descriptor decrypt failed (${error instanceof Error ? error.name : "unknown error"})`);
+    // A reinstalled app writes a new Safe Storage key. Read it again now, once,
+    // rather than failing this request with a false "needs a refresh".
+    masterKeyCache = null;
+    if (keyWasCached && !keyRefreshed) return loadCreds(force, true);
     throw new IntegrationError(
       "not_connected",
       `${SERVICE_NAME} needs a refresh — open the Grok Bot app, then try again.`,
     );
   }
 
-  const creds = { baseUrl, token, networkToken, vncPrimaryUrl, vncForkBaseUrl };
   credsCache = { creds, at: Date.now() };
+  rememberedRoute = { creds, account: copy.account, savedAtMs: copy.savedAtMs };
+  routeCopySkipped = false;
+  writeRouteCopy(copy);
   return creds;
+}
+
+/** Chromium Safe Storage v10: PBKDF2-HMAC-SHA1(keychainKey, "saltysalt",
+ * 1003, 16) → AES-128-CBC, IV = 16 spaces, over the blob after the "v10"
+ * prefix. Node's crypto strips the PKCS7 padding for us. Throws on any
+ * mismatch; callers must never log the error text (it may hold route data). */
+function decryptRoute(encrypted: string, masterKey: string): GatewayCreds {
+  const blob = Buffer.from(encrypted, "base64");
+  const aesKey = pbkdf2Sync(masterKey, "saltysalt", 1003, 16, "sha1");
+  const decipher = createDecipheriv("aes-128-cbc", aesKey, Buffer.alloc(16, 0x20));
+  const plain = Buffer.concat([decipher.update(blob.subarray(3)), decipher.final()]).toString("utf8");
+  const route = JSON.parse(plain) as {
+    baseUrl: string;
+    token: string;
+    headers?: Record<string, string>;
+    vncProxy?: { primaryUrl?: string; forkBaseUrl?: string };
+  };
+  return {
+    baseUrl: route.baseUrl.replace(/\/$/, ""),
+    token: route.token,
+    networkToken: route.headers?.["x-anyrun-network-token"],
+    vncPrimaryUrl: route.vncProxy?.primaryUrl,
+    vncForkBaseUrl: route.vncProxy?.forkBaseUrl?.replace(/\/$/, ""),
+  };
+}
+
+/** The remembered route for a user request while the app's file is gone:
+ * from memory, else from the saved copy on disk. Null when there is none the
+ * request may use (expired, undecryptable, or refused earlier in this process). */
+async function rememberedCreds(): Promise<GatewayCreds | null> {
+  const account = rememberedRoute?.account ?? readRouteCopy()?.account;
+  if (account !== undefined && sameAccount(account) === false) {
+    // An account switch the app never sent us a 401 for: the old route must not answer for the new account.
+    log("Grok Bot is signed in to a different account; forgetting the saved route");
+    forgetSession();
+    return null;
+  }
+  if (rememberedRoute) {
+    if (!routeExpired(rememberedRoute.savedAtMs)) {
+      log("route file missing; trying the remembered route");
+      return { ...rememberedRoute.creds, remembered: true };
+    }
+    log("remembered route is past the app's 7-day route life; forgetting it");
+    rememberedRoute = null;
+    deleteRouteCopy();
+    return null;
+  }
+  if (routeCopySkipped) return null;
+  const copy = readRouteCopy();
+  if (!copy) return null;
+  if (routeExpired(copy.savedAtMs)) {
+    log("saved route copy is past the app's 7-day route life; deleting it");
+    deleteRouteCopy();
+    return null;
+  }
+  try {
+    const creds = decryptRoute(copy.encrypted, await keychainKey());
+    rememberedRoute = { creds, account: copy.account, savedAtMs: copy.savedAtMs };
+    log("route file missing; trying the saved route copy");
+    return { ...creds, remembered: true };
+  } catch (error) {
+    if (error instanceof IntegrationError) throw error; // Keychain: the user can act on it
+    // A reinstalled app has a new Safe Storage key: the copy is unreadable.
+    log(`saved route copy could not be decrypted (${error instanceof Error ? error.name : "unknown error"}); deleting it`);
+    deleteRouteCopy();
+    return null;
+  }
 }
 
 /** The noVNC viewer URL for the shared cloud computer (for the live screen card). */
@@ -275,6 +578,8 @@ const WAKE_HEADERS = {
   "x-anyrun-hibernation-lower-bound-s": "900",
   "x-anyrun-hibernation-upper-bound-s": "18000",
 };
+/** How long a user request may hold while a parked box wakes behind it. */
+const WAKE_TIMEOUT_MS = 45_000;
 const quiet = new AsyncLocalStorage<true>();
 /** Runs background work (polls, watches) without waking a parked box, so it
  * never keeps the box on after the app parks it. It then fails as "parked". */
@@ -397,6 +702,9 @@ export async function gateway<T = unknown>(
 ): Promise<T> {
   const creds = await loadCreds(_retried);
   const started = performance.now();
+  // A route the app removed means its box is asleep, and the proxy holds the
+  // request while the box wakes (7 s measured; the normal read limit is 8 s).
+  if (creds.remembered && isWaking()) timeoutMs = Math.max(timeoutMs, WAKE_TIMEOUT_MS);
 
   let status: number;
   let text: string;
@@ -421,16 +729,23 @@ export async function gateway<T = unknown>(
     if (curled) {
       status = curled.status;
       text = curled.text;
+    } else if (creds.remembered && !_retried) {
+      // The remembered route is unreachable; fall back to the app's own
+      // recovery. The copy stays on disk for a later process.
+      rememberedRoute = null;
+      routeCopySkipped = true;
+      return gateway<T>(command, body, { timeoutMs, _retried: true });
     } else {
       throw classifyThrown(error, timeoutMs);
     }
   }
 
-  log(`${command} → ${status} in ${Math.round(performance.now() - started)}ms`);
+  log(`${command} → ${status} in ${Math.round(performance.now() - started)}ms${creds.remembered ? " (remembered route)" : ""}`);
 
   if (status === 401 || status === 403) {
+    // The remembered route holds this token (or an older one): drop both.
+    forgetSession();
     if (!_retried) {
-      credsCache = null;
       return gateway<T>(command, body, { timeoutMs, _retried: true });
     }
     throw new IntegrationError(
@@ -438,7 +753,11 @@ export async function gateway<T = unknown>(
       `${SERVICE_NAME} rejected the session — open the Grok Bot app to refresh it, then try again.`,
     );
   }
+  // This request asked the proxy to wake the box and it still answered
+  // "asleep": the box will not wake from here. Background reads stay "parked".
+  if (status === 417 && isWaking()) throw reconnectError();
   if (status >= 400) throw classifyStatus(status, text);
+  markConnected();
 
   try {
     return JSON.parse(text) as T;
@@ -499,6 +818,14 @@ function classifyStatus(status: number, text: string): IntegrationError {
   if (status === 417) {
     return new IntegrationError("parked", `${SERVICE_NAME}'s cloud computer is asleep. Open the Grok Bot app to wake it, then try again.`);
   }
+  // A bare 404 from the proxy: no computer answers at this route any more. The
+  // app moved or re-provisioned its box and keeps the new route in memory only
+  // (it never rewrites gateway-descriptor.json), so every command 404s until
+  // the user wakes the box in Grok Bot and the app reconnects. The Reconnect
+  // card says exactly that; a plain "returned an error" left the user stuck.
+  if (status === 404 && !detail) {
+    return new IntegrationError("reconnect", `${SERVICE_NAME}'s connection is out of date. In Grok Bot, send any bot a message and wait for its reply, then tap Reconnect.`);
+  }
   if (status === 429 || /rate limit|too many requests/.test(low)) {
     return new IntegrationError("rate_limited", `${SERVICE_NAME} is busy — wait a moment and try again.`);
   }
@@ -527,8 +854,13 @@ export interface Agent {
   description?: string;
   title?: string;
   avatarDataUrl?: string | null;
+  /** Set when the bot wears a picture instead of its shape (Grok Bot's own test). */
+  avatarVersion?: string | null;
   avatarShape?: string | null;
   avatarColor?: string | null;
+  /** Ours, not the gateway's: the bot's picture as a small data: URI, filled in
+   * by listAgents (see "Bot pictures" below). Absent → draw the shape. */
+  avatarImage?: string;
   isGroup?: boolean;
   memberIds?: string[];
   isRunning?: boolean;
@@ -541,6 +873,9 @@ export interface Agent {
   lastActivityAt?: number;
   /** The per-bot "Notify on updates" switch in the Grok Bot app (on by default). */
   notifyOnUpdatesEnabled?: boolean;
+  /** The app's roster sorts an unpinned row by the newer of these two. */
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface TranscriptEntry {
@@ -569,7 +904,305 @@ export interface TranscriptEntry {
 }
 
 export async function listAgents() {
-  return gateway<Agent[]>("listAgents", {});
+  if (browserSelected()) {
+    const { agents, avatarUrls } = await browserRoster();
+    return withAvatarImages(agents, avatarUrls);
+  }
+  return withAvatarImages(await gateway<Agent[]>("listAgents", {}));
+}
+
+// ── Sidebar preferences: pins, sections, the main bot ────────────────────────
+//
+// The Grok Bot app keeps pinned bots and sidebar sections in the user's Cursor
+// account (gRPC GetGrokBotUserRuntimeSettings), which this integration cannot
+// call. The app also caches them on this Mac, in its client persistence store:
+// one JSON blob per "slice", named by the base32 of its key. Those caches are
+// what the app itself shows when it opens offline, so they are what the roster
+// card reads (verified on Grok Bot 0.78.1):
+//   sand.client.slice.client-meta.account-slot        → "<account slot>"
+//   sand.client.slice.account.<slot>.ui-agent-refs    → { pinnedAgentIds, collapsedSectionIds, … }
+//   sand.client.slice.account.<slot>.sidebar.last-sections → { sections: [{ id, name, agentIds, isCollapsed }] }
+// The slot is URL-encoded in the key (auth0|user_… → auth0%7Cuser_…). Older
+// app versions kept the same two fields in ~/.grokbot/settings.json; that is
+// the fallback. The main ("Main Bot") bot is a gateway command, getMainAgent.
+
+const PERSISTENCE_DIR = `${process.env.HOME}/Library/Application Support/Grok Bot/sand-client-persistence`;
+const SETTINGS_PATH = `${process.env.HOME}/.grokbot/settings.json`;
+const SLICE = "sand.client.slice.";
+
+export interface SidebarSection { id: string; name: string; agentIds: string[]; isCollapsed?: boolean }
+export interface SidebarPrefs {
+  /** Pinned bot and group ids, in the app's pin order. */
+  pinnedIds: string[];
+  /** The app's sidebar sections, in its order; empty when the user made none. */
+  sections: SidebarSection[];
+  /** The user's "Main Bot" (Grok Bot's star badge), when known. */
+  mainId?: string;
+}
+
+/** RFC 4648 base32, lower case, unpadded: how the app names its persistence blobs. */
+export function base32(text: string): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+  const bytes = Buffer.from(text, "utf8");
+  let bits = 0, value = 0, out = "";
+  for (const byte of bytes) {
+    value = (value << 8) | byte; bits += 8;
+    while (bits >= 5) { out += alphabet[(value >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  if (bits > 0) out += alphabet[(value << (5 - bits)) & 31];
+  return out;
+}
+
+function readSlice(dir: string, key: string): unknown {
+  try {
+    const blob = JSON.parse(readFileSync(join(dir, `${base32(SLICE + key)}.blob`), "utf8"));
+    return blob && typeof blob === "object" && "value" in blob ? (blob as { value: unknown }).value : undefined;
+  } catch { return undefined; }
+}
+
+const idList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+function sectionList(v: unknown): SidebarSection[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((s): SidebarSection[] => {
+    if (!s || typeof s !== "object") return [];
+    const { id, name, agentIds, isCollapsed } = s as Record<string, unknown>;
+    if (typeof id !== "string" || !id) return [];
+    return [{ id, name: typeof name === "string" ? name : "", agentIds: idList(agentIds), ...(isCollapsed === true ? { isCollapsed: true } : {}) }];
+  });
+}
+
+/** Pins and sections from the app's local caches (never the network). Missing
+ * or unreadable files mean "none", never an error: the roster still shows. */
+export function readSidebarPrefs(paths: { dir?: string; settings?: string } = {}): Omit<SidebarPrefs, "mainId"> {
+  if (browserSelected() && !paths.dir && !paths.settings) return { pinnedIds: [], sections: [] };
+  const dir = paths.dir ?? PERSISTENCE_DIR;
+  const slot = readSlice(dir, "client-meta.account-slot");
+  const scope = typeof slot === "string" && slot ? `account.${encodeURIComponent(slot)}.` : null;
+  const refs = scope ? readSlice(dir, `${scope}ui-agent-refs`) as Record<string, unknown> | undefined : undefined;
+  const side = scope ? readSlice(dir, `${scope}sidebar.last-sections`) as Record<string, unknown> | undefined : undefined;
+  let pinnedIds = idList(refs?.pinnedAgentIds);
+  let sections = sectionList(side?.sections);
+  if (!refs || !side) {
+    // Older apps: the same fields in the settings file.
+    try {
+      const settings = JSON.parse(readFileSync(paths.settings ?? SETTINGS_PATH, "utf8")) as Record<string, unknown>;
+      if (!refs) pinnedIds = idList(settings.pinnedAgentIds);
+      if (!side) sections = sectionList(settings.sidebarSections);
+    } catch { /* no settings file: nothing pinned, no sections */ }
+  }
+  // The app remembers which sections the user folded separately from the sections themselves.
+  const collapsed = new Set(idList(refs?.collapsedSectionIds));
+  if (collapsed.size) sections = sections.map((s) => (collapsed.has(s.id) ? { ...s, isCollapsed: true } : s));
+  return { pinnedIds, sections };
+}
+
+/** The user's Main Bot, or undefined when the gateway has none or is slow.
+ * A roster read: it never wakes a parked box and never delays the card. */
+export async function mainAgentId(timeoutMs = 2_500): Promise<string | undefined> {
+  try {
+    const main = await withoutWaking(() => gateway<{ agentId?: string | null } | null>("getMainAgent", {}, { timeoutMs }));
+    return typeof main?.agentId === "string" && main.agentId ? main.agentId : undefined;
+  } catch (error) {
+    log("getMainAgent skipped:", error instanceof Error ? error.message : error);
+    return undefined;
+  }
+}
+
+/** Everything the roster card orders by, best-effort and quick. */
+export async function sidebarPrefs(): Promise<SidebarPrefs> {
+  const [local, mainId] = await Promise.all([Promise.resolve().then(() => readSidebarPrefs()), mainAgentId()]);
+  return { ...local, ...(mainId ? { mainId } : {}) };
+}
+
+// ── Bot pictures ─────────────────────────────────────────────────────────────
+//
+// Browser sessions return a signed storage URL. Older gateways return inline
+// pixels or a version for getAgentAvatar. Cards draw a cached 72px thumbnail
+// without making a network request or receiving a signed link.
+
+export const getAgentAvatar = (id: string) =>
+  gateway<{ dataUrl?: string | null; version?: string | null } | null>("getAgentAvatar", { id });
+
+const AVATAR_PX = 72;
+const AVATAR_SOURCE_MAX_BYTES = 8 * 1024 * 1024;
+/** A shrunk picture over this many characters is not used (the shape is). */
+export const AVATAR_IMAGE_MAX_CHARS = 24_000;
+/** How long one roster read waits for pictures it has not seen yet. Loads
+ * that miss it keep going and land in the cache for the next read. */
+const AVATAR_WAIT_MS = 1_200;
+const AVATAR_RETRY_MS = 5 * 60_000;
+const AVATAR_CACHE_MAX = 200;
+/** key (bot id + picture version) → data URI, or null: no usable picture. */
+const avatarCache = new Map<string, string | null>();
+const avatarLoads = new Map<string, Promise<string | null>>();
+const avatarFailures = new Map<string, number>();
+/** Grok Bot's own sidebar fetches at most 3 pictures at a time. */
+let avatarSlots = 3;
+const avatarQueue: (() => void)[] = [];
+
+const pictureKey = (a: Agent, url?: URL) => [a.id, a.avatarVersion ?? "", url?.pathname ?? "",
+  a.avatarDataUrl ? createHash("sha1").update(a.avatarDataUrl).digest("hex") : ""].join("\n");
+
+async function inAvatarSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (avatarSlots === 0) await new Promise<void>((resolve) => avatarQueue.push(resolve));
+  else avatarSlots--;
+  try {
+    return await work();
+  } finally {
+    const next = avatarQueue.shift();
+    if (next) next();
+    else avatarSlots++;
+  }
+}
+
+function sips(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("/usr/bin/sips", args, { encoding: "utf8", timeout: 5_000 }, (error, stdout) =>
+      error ? reject(error) : resolve(stdout));
+  });
+}
+
+/** An inline picture → a small square data: URI, or null when it is not a
+ * raster image the system can decode. Never logs the picture or where it came from. */
+export async function shrinkAvatar(dataUrl: string): Promise<string | null> {
+  const head = /^data:image\/(?:png|jpe?g|gif|webp|heic|heif|tiff|bmp);base64,/i.exec(dataUrl);
+  if (!head) {
+    log("bot picture skipped: not an inline raster image");
+    return null;
+  }
+  const bytes = Buffer.from(dataUrl.slice(head[0].length), "base64");
+  if (bytes.length === 0 || bytes.length > AVATAR_SOURCE_MAX_BYTES) return null;
+  const dir = await mkdtemp(join(tmpdir(), "grokbot-avatar-"));
+  try {
+    const src = join(dir, "source");
+    await writeFile(src, bytes);
+    if (process.platform === "win32") {
+      // The working directory supplies both paths; the command contains no user input.
+      const script = `
+        $ErrorActionPreference = 'Stop'
+        Add-Type -AssemblyName System.Drawing
+        $src = [Drawing.Image]::FromFile((Join-Path $PWD 'source'))
+        $side = [Math]::Min($src.Width, $src.Height)
+        $size = [Math]::Min(${AVATAR_PX}, $side)
+        $bmp = New-Object Drawing.Bitmap $size, $size
+        $g = [Drawing.Graphics]::FromImage($bmp)
+        try {
+          $g.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+          $dst = New-Object Drawing.Rectangle 0, 0, $size, $size
+          $g.DrawImage($src, $dst, [int](($src.Width-$side)/2), [int](($src.Height-$side)/2), $side, $side, [Drawing.GraphicsUnit]::Pixel)
+          $bmp.Save((Join-Path $PWD 'out.png'), [Drawing.Imaging.ImageFormat]::Png)
+        } finally { $g.Dispose(); $bmp.Dispose(); $src.Dispose() }
+      `;
+      await new Promise<void>((resolve, reject) => {
+        execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script],
+          { cwd: dir, timeout: 8_000, windowsHide: true }, (error) => error ? reject(error) : resolve());
+      });
+      const uri = `data:image/png;base64,${(await readFile(join(dir, "out.png"))).toString("base64")}`;
+      return uri.length <= AVATAR_IMAGE_MAX_CHARS ? uri : null;
+    }
+    const info = await sips(["-g", "pixelWidth", "-g", "pixelHeight", "-g", "hasAlpha", src]);
+    const width = Number(/pixelWidth: (\d+)/.exec(info)?.[1]);
+    const height = Number(/pixelHeight: (\d+)/.exec(info)?.[1]);
+    if (!width || !height) return null;
+    const alpha = /hasAlpha: yes/.test(info);
+    const side = Math.min(width, height);
+    const size = Math.min(AVATAR_PX, side);
+    // Resample first (short side → size), then crop the middle square: sips
+    // applies the two in its own order within one call, so they are two calls.
+    let scaled = src;
+    if (side > size) {
+      scaled = join(dir, "scaled");
+      await sips(["-z", String(Math.round((height * size) / side)), String(Math.round((width * size) / side)), src, "--out", scaled]);
+    }
+    const out = join(dir, alpha ? "out.png" : "out.jpg");
+    await sips(["-c", String(size), String(size), "-s", "format", alpha ? "png" : "jpeg",
+      ...(alpha ? [] : ["-s", "formatOptions", "82"]), scaled, "--out", out]);
+    const uri = `data:image/${alpha ? "png" : "jpeg"};base64,${(await readFile(out)).toString("base64")}`;
+    return uri.length <= AVATAR_IMAGE_MAX_CHARS ? uri : null;
+  } catch (error) {
+    log(`bot picture could not be read (${error instanceof Error ? error.name : "error"})`);
+    return null;
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function readCloudPicture(url: URL): Promise<string | null> {
+  // The signed URL authenticates this request; never forward the account token.
+  const res = await fetch(url, { redirect: "error", credentials: "omit", signal: AbortSignal.timeout(5_000) });
+  if (!res.ok) throw new Error("Avatar download failed");
+  const mime = res.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+  if (!res.body || !mime || !/^image\/(?:png|jpe?g|gif|webp|heic|heif|tiff|bmp)$/.test(mime) ||
+      Number(res.headers.get("content-length")) > AVATAR_SOURCE_MAX_BYTES) {
+    await res.body?.cancel();
+    return null;
+  }
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  for await (const chunk of res.body) {
+    length += chunk.length;
+    if (length > AVATAR_SOURCE_MAX_BYTES) return null;
+    chunks.push(chunk);
+  }
+  return `data:${mime};base64,${Buffer.concat(chunks, length).toString("base64")}`;
+}
+
+async function loadPicture(a: Agent, url?: URL): Promise<string | null> {
+  return inAvatarSlot(async () => {
+    const source = a.avatarDataUrl || (url ? await readCloudPicture(url) : (await getAgentAvatar(a.id))?.dataUrl);
+    return source ? shrinkAvatar(source) : null;
+  });
+}
+
+function rememberPicture(key: string, uri: string | null): void {
+  avatarCache.delete(key);
+  avatarCache.set(key, uri);
+  if (avatarCache.size > AVATAR_CACHE_MAX) avatarCache.delete(avatarCache.keys().next().value!);
+}
+
+/** Fills `avatarImage` on bots that wear a picture. Cached pictures land at
+ * once; new ones get AVATAR_WAIT_MS, then the roster goes out without them
+ * (those bots show their shape this time). A failed read waits a few minutes
+ * before it is tried again. */
+export async function withAvatarImages(agents: Agent[], avatarUrls?: ReadonlyMap<string, URL>): Promise<Agent[]> {
+  if (!Array.isArray(agents)) return agents;
+  const pending: Promise<void>[] = [];
+  let waiting = true;
+  for (const a of agents) {
+    if (!a || typeof a !== "object" || a.isGroup) continue;
+    const url = avatarUrls?.get(a.id);
+    if (!url && !a.avatarDataUrl && (avatarUrls || !a.avatarVersion)) continue;
+    const key = pictureKey(a, url);
+    if (avatarCache.has(key)) {
+      const uri = avatarCache.get(key);
+      if (uri) a.avatarImage = uri;
+      continue;
+    }
+    if (Date.now() - (avatarFailures.get(key) ?? 0) < AVATAR_RETRY_MS) continue;
+    let load = avatarLoads.get(key);
+    if (!load) {
+      load = loadPicture(a, url)
+        .then((uri) => { rememberPicture(key, uri); avatarFailures.delete(key); return uri; })
+        .catch(() => { avatarFailures.set(key, Date.now()); return null; })
+        .finally(() => avatarLoads.delete(key));
+      avatarLoads.set(key, load);
+    }
+    pending.push(load.then((uri) => { if (uri && waiting) a.avatarImage = uri; }));
+  }
+  if (pending.length) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([Promise.all(pending), new Promise((resolve) => { timer = setTimeout(resolve, AVATAR_WAIT_MS); })]);
+    clearTimeout(timer);
+    waiting = false;
+  }
+  return agents;
+}
+
+/** Tests only: forget every cached picture. */
+export function resetAvatarCache(): void {
+  avatarCache.clear();
+  avatarLoads.clear();
+  avatarFailures.clear();
 }
 
 // ── Automations (Grok's name for scheduled tasks) ────────────────────────────
@@ -603,15 +1236,37 @@ export interface AutomationEntry {
 /** Every scheduled task across all bots, each tagged with its agentId. */
 export const listAllAutomations = () => gateway<AutomationEntry[]>("listAllAutomations", {});
 
-export const sendPrompt = (agentId: string, prompt: string) =>
-  gateway<{ accepted?: boolean }>("sendPrompt", { agentId, prompt }, { timeoutMs: WRITE_TIMEOUT_MS });
+/** A file already uploaded to the bot's computer (uploadAttachment): the path
+ * the gateway handed back, and the name the user saw. */
+export interface SentAttachment { path: string; name: string; sha256?: string }
+export const sendPrompt = (agentId: string, prompt: string, attachments: SentAttachment[] = []) =>
+  browserSelected() ? browserSend(agentId, prompt, attachments) : gateway<{ accepted?: boolean }>("sendPrompt", {
+    agentId, prompt,
+    // The app's own send body: parallel path and name lists, only when there are files.
+    ...(attachments.length ? { attachmentPaths: attachments.map((a) => a.path), attachmentNames: attachments.map((a) => a.name) } : {}),
+  }, { timeoutMs: WRITE_TIMEOUT_MS });
+
+/** Put a file on the bot's computer the way the app's composer does
+ * (gateway uploadAttachment: whole file, base64), and return the path a send
+ * can reference. The gateway names the stored copy; whichever field it uses,
+ * a string path comes back or this throws. */
+export async function uploadAttachment(agentId: string, filename: string, bytesBase64: string): Promise<string> {
+  if (browserSelected()) return browserUpload(agentId, filename, bytesBase64);
+  const r = await gateway<Record<string, unknown> | string | null>("uploadAttachment", { agentId, filename, bytesBase64 }, { timeoutMs: WRITE_TIMEOUT_MS * 3 });
+  const path = typeof r === "string" ? r : r && typeof r === "object" ? (r.path ?? r.attachmentPath ?? r.filePath ?? (r.attachment as { path?: unknown } | undefined)?.path) : undefined;
+  if (typeof path !== "string" || !path) {
+    log("uploadAttachment: unexpected result shape", r && typeof r === "object" ? Object.keys(r) : typeof r);
+    throw new IntegrationError("upstream", `${SERVICE_NAME} did not store the file.`);
+  }
+  return path;
+}
 
 export const createAgent = (
   name: string,
   description: string,
   opts: { title?: string; notificationsEnabled?: boolean; avatarShape?: string; avatarColor?: string } = {},
 ) =>
-  gateway<Agent>(
+  browserSelected() ? browserCreate(name, description, opts) : gateway<Agent>(
     "createAgent",
     {
       name,
@@ -627,6 +1282,7 @@ export const createAgent = (
   );
 
 export const createGroup = async (name: string, memberAgentIds: string[], description?: string): Promise<Agent> => {
+  if (browserSelected()) return browserRoom(name, memberAgentIds, description);
   const created = await gateway<Agent | { agent: Agent }>(
     "createGroup",
     { name, memberAgentIds, ...(description ? { description } : {}) },
@@ -637,14 +1293,14 @@ export const createGroup = async (name: string, memberAgentIds: string[], descri
 
 // Gateway contracts verified against Grok Bot's shipped RPC schema.
 export const setGroupMembers = (id: string, memberAgentIds: string[]) =>
-  gateway("setGroupMembers", { id, memberAgentIds }, { timeoutMs: WRITE_TIMEOUT_MS });
+  browserSelected() ? browserMembers(id, memberAgentIds) : gateway("setGroupMembers", { id, memberAgentIds }, { timeoutMs: WRITE_TIMEOUT_MS });
 
 /** Flip a bot's "Notify on updates" switch — the same one the Grok Bot app shows. */
 export const setAgentNotifyOnUpdates = (id: string, isEnabled: boolean) =>
-  gateway("setAgentNotifyOnUpdates", { id, isEnabled }, { timeoutMs: WRITE_TIMEOUT_MS });
+  browserSelected() ? browserNotify(id, isEnabled) : gateway("setAgentNotifyOnUpdates", { id, isEnabled }, { timeoutMs: WRITE_TIMEOUT_MS });
 
 export const renameGroup = (group: Agent, name: string) =>
-  gateway("updateAgent", {
+  browserSelected() ? browserRename(group.id, name) : gateway("updateAgent", {
     id: group.id,
     profile: {
       name, description: group.description ?? "",
@@ -655,12 +1311,15 @@ export const renameGroup = (group: Agent, name: string) =>
   }, { timeoutMs: WRITE_TIMEOUT_MS });
 
 export const transcriptTail = (id: string, limit = 8, beforeSeq?: number) =>
-  gateway<{ entries?: TranscriptEntry[]; nextBeforeSeq?: number }>("getAgentTranscriptTail", { id, limit, ...(beforeSeq !== undefined ? { beforeSeq } : {}) });
+  browserSelected() ? browserTranscript(id, limit, beforeSeq) : gateway<{ entries?: TranscriptEntry[]; nextBeforeSeq?: number }>("getAgentTranscriptTail", { id, limit, ...(beforeSeq !== undefined ? { beforeSeq } : {}) });
+
+export const markChatRead = (id: string) =>
+  browserSelected() ? browserMarkRead(id) : gateway("setAgentUnread", { id, isUnread: false }, { timeoutMs: WRITE_TIMEOUT_MS });
 
 export const respondToWidget = (agentId: string, entryId: string, value: string) =>
-  gateway<{ accepted?: boolean } | null>("respondToWidget", { agentId, entryId, value }, { timeoutMs: WRITE_TIMEOUT_MS });
+  browserSelected() ? browserWidget(agentId, entryId, value) : gateway<{ accepted?: boolean } | null>("respondToWidget", { agentId, entryId, value }, { timeoutMs: WRITE_TIMEOUT_MS });
 export const dismissWidget = (agentId: string, entryId: string) =>
-  gateway<{ accepted?: boolean }>("dismissWidget", { agentId, entryId }, { timeoutMs: WRITE_TIMEOUT_MS });
+  browserSelected() ? browserWidget(agentId, entryId) : gateway<{ accepted?: boolean }>("dismissWidget", { agentId, entryId }, { timeoutMs: WRITE_TIMEOUT_MS });
 export const readAttachmentImage = (path: string) =>
   gateway<{ dataUrl: string; width?: number; height?: number } | null>("readAttachmentImage", { path });
 
@@ -804,7 +1463,7 @@ export function openBotChat(agentId: string): Promise<void> {
   }
   const url = `grokbot://app/v1/agent?id=${agentId}`;
   return new Promise((resolve, reject) => {
-    execFile("/usr/bin/open", [url], (error) => {
+    execFile(process.platform === "win32" ? "rundll32.exe" : "/usr/bin/open", process.platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url], (error) => {
       if (error) {
         log("could not open bot chat:", error);
         reject(new IntegrationError("upstream", "Couldn't open Grok Bot."));
@@ -813,10 +1472,79 @@ export function openBotChat(agentId: string): Promise<void> {
   });
 }
 
+/** The Reconnect card's button (VOS-1608). The app writes its route file only
+ * when it connects while the cloud computer is awake, and it never wakes a
+ * computer it parked unless the user acts in it. So the card asks the user to
+ * message a bot first; this then restarts the app and waits for the file. */
+export async function reconnectGrokBot(): Promise<{ bots: number }> {
+  await quitGrokBotApp();
+  openGrokBotApp();
+  const deadline = Date.now() + BOOT_WAIT_MS;
+  while (!hasGatewaySession()) {
+    if (savedSignIn() === "out") throw signedOutError();
+    if (Date.now() >= deadline) {
+      throw new IntegrationError(
+        "reconnect",
+        `${SERVICE_NAME} is still asleep. In Grok Bot, send any message to a bot and wait for its reply, then tap Reconnect again.`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, RECONNECT_POLL_MS));
+  }
+  // Read the fresh file, not the route from before the restart.
+  credsCache = null;
+  rememberedRoute = null;
+  const agents = await listAgents();
+  return { bots: agents.length };
+}
+
+const RECONNECT_POLL_MS = 500;
+const QUIT_POLITE_MS = 4_000;
+const QUIT_WAIT_MS = 8_000;
+
+/** Ask the app to quit, then wait until it is gone, so `open` starts a fresh
+ * process instead of fronting the one still shutting down. The polite request
+ * may stall on macOS's Automation prompt; after a short wait the app's own
+ * pid (from its status file, checked against the live process list) gets a
+ * plain TERM, which Electron treats as quit. */
+async function quitGrokBotApp(): Promise<void> {
+  const polite = new Promise<void>((resolve) => {
+    execFile(process.env.GROKBOT_OSASCRIPT_BIN || "/usr/bin/osascript", ["-e", 'quit app "Grok Bot"'], () => resolve());
+  });
+  await Promise.race([polite, new Promise((resolve) => setTimeout(resolve, QUIT_POLITE_MS))]);
+  const pids = await grokBotPids();
+  if (pids.length === 0) return;
+  const pid = statusPid();
+  if (pid !== null && pids.includes(pid)) {
+    try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
+  }
+  const deadline = Date.now() + QUIT_WAIT_MS;
+  while (Date.now() < deadline && (await grokBotPids()).length > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
+function statusPid(): number | null {
+  try {
+    const status = JSON.parse(readFileSync(DESKTOP_STATUS_PATH, "utf8"));
+    return Number.isInteger(status.pid) ? status.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function grokBotPids(): Promise<number[]> {
+  return new Promise((resolve) => {
+    execFile(process.env.GROKBOT_PGREP_BIN || "/usr/bin/pgrep", ["-x", "Grok Bot"], { encoding: "utf8" }, (error, stdout) => {
+      if (error) return resolve([]); // exit 1: no such process
+      resolve(String(stdout).split("\n").map((line) => Number(line.trim())).filter((pid) => Number.isInteger(pid) && pid > 0));
+    });
+  });
+}
+
 /** Launch the Grok Bot app (used on the setup / not-connected path). */
 export function openGrokBotApp(): void {
   try {
-    execFile("/usr/bin/open", ["-a", "Grok Bot"], () => {});
+    execFile(process.env.GROKBOT_OPEN_BIN || "/usr/bin/open", ["-a", "Grok Bot"], () => {});
   } catch (error) {
     log("could not launch Grok Bot app:", error);
   }

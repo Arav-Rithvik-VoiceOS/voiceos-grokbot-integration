@@ -2,7 +2,7 @@ import type { IntentDefinition } from "./sdk/intents.ts";
 import type { PreToolUseHookInput, TranscriptHookInput, HookResult } from "./sdk/hooks.ts";
 import { type Agent, normalize, IntegrationError, log, isWaking, withoutWaking } from "./client.ts";
 import { confirmationContext, confirmationRows, type ConfirmRow } from "./cards.ts";
-import { resolveMessageRecipient, botChoiceLabel } from "./messaging.ts";
+import { resolveMessageRecipient, resolveSpokenRecipient, botChoiceLabel, spokenNames } from "./messaging.ts";
 import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { defineHooks, INTENT_SLOT_VALUES_META_KEY, INTENT_REFRESH_NOTIFICATION_METHOD } from "./intentSdk.generated.js";
@@ -11,8 +11,8 @@ export const intents: IntentDefinition[] = [
   {
     name: "list_bots", tool: "grokbot_list",
     description: "List the user's Grok Bot teammates and group chats. Only list bots, without sending a message or opening a bot's computer. Never when the user gives a task or message to send, even one that names no bot ('send this task to Grok Bot').",
-    utterances: { en: ["Show my Grok bots", "List my bots", "Show my bots", "Show me my bots", "List my Grok bots", "What bots do I have", "Grok Bot show", "Show Grok Bots"] },
-    response: { en: "Getting your bots." },
+    utterances: { en: ["Show my Grok bots", "List my bots", "Show my bots", "Show me my bots", "Show all my bots", "List my Grok bots", "What bots do I have", "Grok Bot show", "Show Grok Bots"] },
+    response: { en: "Opening Grok Bot." },
   },
   {
     name: "show_bot", tool: "grokbot_show",
@@ -23,7 +23,7 @@ export const intents: IntentDefinition[] = [
   },
   {
     name: "send_message", tool: "grokbot_send",
-    description: "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. A name the user says wins, even if another bot's role fits better. If the user names no bot, or the name is unclear or misheard, pick the one bot whose role clearly fits the task (school work → the school bot); 'Grok Bot', 'a bot' or 'my bot' is the app, not a name. If two bots fit equally or none fits, do not pick. 'Send this task to …' and 'dispatch …' are sends. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask <bot> how the test is going' → 'How's the test going?'). Drop the lead-in, keep the meaning and line breaks, capital first letter, right end punctuation. A long task is one whole message. Reject groups, multiple recipients, or separate actions outside the message.",
+    description: "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. A name the user says wins, even if another bot's role fits better. If the user names no bot, let the integration route by project or role (school work → the school bot); 'Grok Bot', 'a bot' or 'my bot' is the app, not a name. If there is no clear match, the integration uses the user's primary bot. Ambiguous or unknown spoken names require clarification. 'Send this task to …' and 'dispatch …' are sends. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask <bot> how the test is going' → 'How's the test going?'). Drop the lead-in, keep the meaning and line breaks, capital first letter, right end punctuation. A long task is one whole message. Reject groups, multiple recipients, or separate actions outside the message.",
     utterances: { en: ["Send a message to {bot} asking {message}", "Ask {bot} {message}", "Ask {bot} to {message}", "Message {bot} saying {message}", "Send {bot} a message saying {message}", "Tell Grok bot {bot} to {message}", "Grok Bot send {bot} {message}", "Have {bot} {message}", "Get {bot} to {message}", "Send this task to {bot}: {message}", "Send this to {bot}: {message}", "Dispatch a task to {bot}: {message}", "Dispatch {message} to {bot}", "Give {bot} this task: {message}", "Give {bot} a task to {message}", "Tell {bot} {message}", "Tell {bot} to {message}", "Say {message} to {bot}", "Message {bot} {message}", "Text {bot} {message}"] },
     slots: {
       bot: { type: "enum", valuesFrom: "tool", required: true },
@@ -75,9 +75,9 @@ export const intents: IntentDefinition[] = [
   },
   {
     name: "help", tool: "grokbot_help",
-    description: "Show how to set up and use Grok Bot, and what the user can say to it. Only a guide; do not list, message or create bots.",
-    utterances: { en: ["How do I use Grok Bot", "Help me set up Grok Bot", "How do I set up Grok Bot", "What can Grok Bot do", "Grok Bot help", "Show me how to use Grok Bot", "How does Grok Bot work"] },
-    response: { en: "Here's how Grok Bot works." },
+    description: "When asked to sign in or connect, direct the user to Apps → Grok Bot → Connect. If already connected, show the bot list. Use for setup or help as well.",
+    utterances: { en: ["Sign in to Grok Bot", "Can you sign in to Grok Bot", "Log in to Grok Bot", "Connect Grok Bot", "How do I use Grok Bot", "Help me set up Grok Bot", "How do I set up Grok Bot", "What can Grok Bot do", "Grok Bot help", "Show me how to use Grok Bot", "How does Grok Bot work"] },
+    response: { en: "Opening Grok Bot." },
   },
 ];
 
@@ -128,7 +128,7 @@ const GROK_TURN = /\bgrok\b|\bbots?\b|\bdispatch/i;
 const SEND_TURN = /\b(?:send|ask|tell|message|text|dispatch|task|assign|give)|(?:^|\b(?:can|could|will|would) you |\bplease )(?:have|get|make)\b/i;
 /** The host keeps at most 2,000 characters of one hook's context. */
 const ROSTER_CONTEXT_MAX = 2_000;
-const ROSTER_CONTEXT_HEAD = "Grok Bot routing (current, from the live Grok Bot app): Grok Bot is an app with several bots. 'Grok Bot', 'my bot' or 'my Grok bot' is never another name for one bot, even if saved memory or earlier turns say so: that is out of date. If the user names a bot, use that bot. If not, choose by role below: call grokbot_send with the one bot whose role fits the task best, and never fall back to a usual or default bot. If two fit equally or none fits, ask which bot. Bots (name — role):";
+const ROSTER_CONTEXT_HEAD = "Grok Bot routing (current, from the live Grok Bot app): Grok Bot is an app with several bots. 'Grok Bot', 'my bot' or 'my Grok bot' is never another name for one bot, even if saved memory or earlier turns say so: that is out of date. If the user names a bot, use that bot. If not, choose by role below: call grokbot_send with the one bot whose role fits the task best, and let the integration choose the verified primary (default bot) for an unclear or generic task. If an explicitly spoken name fits several bots, ask which one. Bots (name — role):";
 
 /** How long a spoken turn counts as the one a send belongs to. */
 const TURN_MAX_AGE_MS = 120_000;
@@ -136,7 +136,7 @@ const TURN_MAX_AGE_MS = 120_000;
 const ROLE_STOP = new Set(("the and for you your can could would should please hey grok bot bots task tasks ask asking send sending message tell dispatch "
   + "saying say want wants let know there any what whats this that these those with about from into out all are was were has have had will just "
   + "get got make need needs today tomorrow now some its them they their then than also our who how why when where which see check help him her "
-  + "his she one not never own under without every more most very really yes yeah okay like thing things").split(" "));
+  + "his she one not never own under without every more most very really yes yeah okay like thing things email emails draft write prepare create grokbot remind reminder reminders again follow out").split(" "));
 const roleWords = (text: string) => new Set(text.toLowerCase().replace(/['’]s\b/g, "").split(/[^a-z0-9]+/)
   .filter(w => w.length >= 3 && !ROLE_STOP.has(w)).map(w => (w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w)));
 
@@ -145,26 +145,110 @@ const roleWords = (text: string) => new Set(text.toLowerCase().replace(/['’]s\
 export function namesABot(text: string, bots: Agent[]): boolean {
   const spoken = ` ${text.replace(/['’]s\b/gi, "").split(/\s+/).map(normalize).filter(Boolean).join(" ")} `;
   return bots.some(b => {
-    const name = b.name.split(/\s+/).map(normalize).filter(Boolean).join(" ");
-    return !!name && spoken.includes(` ${name} `);
+    return spokenNames(b).some(alias => {
+      const name = alias.split(/\s+/).map(normalize).filter(Boolean).join(" ");
+      return !!name && spoken.includes(` ${name} `);
+    });
   });
 }
 
 /** Same word, or one starts the other ("sponsor" / "sponsorships", "hack" / "hackathon"). */
 const sameRoot = (a: string, b: string) => a === b || (Math.min(a.length, b.length) >= 4 && (a.startsWith(b) || b.startsWith(a)));
 
+// A common delivery medium ("emails") is weak evidence by itself. In a
+// phrase like "sponsor emails", it corroborates a distinctive subject word.
+const MEDIA = new Set(["email", "message", "draft", "report", "list", "note", "plan", "document", "file", "proposal", "packet"]);
+const COMMON_TOPIC = new Set(["old", "new", "original", "earlier", "recent", "previous", "last", "latest", "remind", "reminder", "update", "follow"]);
+const topicTokens = (text: string) => (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).map(w => w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w);
+function topicPhrases(text: string): Set<string> {
+  const tokens = topicTokens(text);
+  const phrases = new Set<string>();
+  const distinctive = (word: string) => word.length >= 3 && !ROLE_STOP.has(word) && !COMMON_TOPIC.has(word) && !MEDIA.has(word);
+  for (let i = 1; i < tokens.length; i++) {
+    const a = tokens[i - 1], b = tokens[i];
+    if ((distinctive(a) && (distinctive(b) || MEDIA.has(b))) || (MEDIA.has(a) && distinctive(b))) phrases.add(a + " " + b);
+  }
+  return phrases;
+}
+const hasTopicPhrase = (text: string, phrases: Set<string>) => {
+  const words = " " + topicTokens(text).join(" ") + " ";
+  return [...phrases].some(phrase => words.includes(" " + phrase + " "));
+};
+
 /** The one bot whose role (title, then description) best matches a turn that
  * names no bot. A word counts double in the title, and a word several roles
  * share counts less (split between them). No clear winner → undefined. */
 export function botForTask(text: string, bots: Agent[]): Agent | undefined {
-  const roles = bots.map(b => ({ b, title: [...roleWords(b.title ?? "")], all: [...roleWords(`${b.title ?? ""} ${b.description ?? ""}`)], score: 0 }));
+  const phrases = topicPhrases(text);
+  const roles = bots.map(b => {
+    const project = b.name.split(/\s+[·|—–-]\s+/u).slice(1).join(" ");
+    const title = [...roleWords(`${project} ${b.title ?? ""}`)];
+    const description = [...roleWords(b.description ?? "")];
+    const recent = [...roleWords((b.lastMessagePreview ?? "").slice(0, 400))];
+    return { b, title, description, recent, score: 0, recentHits: 0, profileHits: 0 };
+  });
   for (const w of roleWords(text)) {
-    const hits = roles.filter(r => r.all.some(x => sameRoot(w, x)));
-    for (const r of hits) r.score += (r.title.some(x => sameRoot(w, x)) ? 2 : 1) / hits.length;
+    const hits = roles.map(role => {
+      const has = (words: string[]) => words.some(x => sameRoot(w, x));
+      const weight = has(role.title) ? 3 : has(role.description) ? 2 : has(role.recent) ? 1 : 0;
+      return { role, weight };
+    }).filter(hit => hit.weight);
+    for (const { role, weight } of hits) {
+      role.score += weight / hits.length;
+      if (weight > 1) role.profileHits++; else role.recentHits++;
+    }
+  }
+  const previewMatches = roles.filter(r => hasTopicPhrase((r.b.lastMessagePreview ?? "").slice(0, 400), phrases));
+  if (previewMatches.length === 1) {
+    previewMatches[0].score += 2;
+    previewMatches[0].recentHits += 2;
   }
   const [top, next] = roles.sort((x, y) => y.score - x.score);
-  return top && top.score > 0 && top.score > (next?.score ?? 0) ? top.b : undefined;
+  if (!top || (!top.profileHits && top.recentHits < 2) || top.score < 1.5 || top.score - (next?.score ?? 0) < 1) return undefined;
+  return top.b;
 }
+
+const wordsOf = (value: string) => value.toLowerCase().replace(/['’]s\b/g, "").split(/[^a-z0-9]+/).filter(Boolean);
+const generalRecipient = /^(?:(?:my|the|a|our)\s+)?(?:grok\s*bot|bots?)\b/i;
+
+/** The addressee ends where the message starts. A name in "Ask Grok Bot to
+ * email Jerome" describes the task, while "Ask Jerome to email Grok Bot"
+ * explicitly selects Jerome. Match the longest whole roster name first. */
+function addressedName(request: string, bots: Agent[]): string | undefined {
+  const verb = /\b(send|dispatch|assign|deliver|forward|give|ask|tell|message|text|ping|have|get|instruct|say)\s+/i.exec(request);
+  if (!verb) return undefined;
+  let rest = request.slice(verb.index + verb[0].length).trim();
+  const direct = /^(?:ask|tell|message|text|ping|instruct|have|get)$/i.test(verb[1]);
+  let recipientSlot = direct;
+  if (!direct) {
+    const lead = /^(?:(?:(?:a|an|the|this|that|my|some)\s+)?(?:quick\s+|short\s+)?(?:message|note|text|request|task|work|job)|this|that|it|hi|hello)\s+(?:over\s+)?to\s+|^to\s+/i;
+    const prefix = lead.exec(rest);
+    if (prefix) { rest = rest.slice(prefix[0].length); recipientSlot = true; }
+  }
+  const namedPrefix = /^(?:(?:my|the|a)\s+)?(?:grok\s*)?bot\s+(?:named|called)\s+/i;
+  if (namedPrefix.test(rest)) { rest = rest.replace(namedPrefix,""); recipientSlot = true; }
+  else if (generalRecipient.test(rest)) return undefined;
+  const spoken = wordsOf(rest);
+  const candidates = bots.flatMap(b => spokenNames(b)).map(name => ({ name, words: wordsOf(name) }));
+  const matching = candidates.filter(c => c.words.length && (
+    c.words.every((word,i) => word === spoken[i]) ||
+    normalize(rest.split(/[\s,!?]+/)[0]) === normalize(c.name)
+  )).sort((a,b) => b.words.length - a.words.length);
+  if (matching.length) return matching[0].name;
+  // "Send Marlo hi" explicitly addresses Marlo even if no such bot exists.
+  // Never interpret a rejected addressee as an unnamed task for the primary.
+  const greeting = /^([\p{L}][\p{L}'’-]*(?: [\p{L}][\p{L}'’-]*)?)\s+["“']?(?:hi|hello|hey)\b/iu.exec(rest);
+  if (verb[1].toLowerCase() === "send" && greeting) return greeting[1];
+  if (!recipientSlot && !/^\S+\s+(?:a message|a note|a task|saying)\b/i.test(rest)) return undefined;
+  const unknown = /^([\p{L}][\p{L}0-9'’.-]*(?: [A-Z][\p{L}0-9'’.-]*){0,2})(?=\s+(?:to|about|that|saying|asking|and|if|for|what|how|when|whether|a message|a note|the message)\b|[:,!?]|$)/iu.exec(rest);
+  if (unknown && !/^(?:a|an|my|the|this|that|it|please|some|me|him|her|them|us)\b/i.test(unknown[1])) return unknown[1];
+  return undefined;
+}
+export function explicitRecipient(request: string, bots: Agent[]): Agent | undefined {
+  const name = addressedName(request, bots);
+  return name ? resolveSpokenRecipient(name, bots) : undefined;
+}
+export type RecipientRoute = { bot:Agent; source:"explicit"|"role"|"primary" };
 
 /** A model-copied confirmationContext, or undefined when missing or mangled. */
 function copiedContext(value: unknown): Record<string, any> | undefined {
@@ -260,15 +344,50 @@ export class IntentRoster {
 
   noteTurn(text: string) { this.lastTurn = { text, at: this.now() }; }
 
-  /** The model's pick for a send whose turn named no bot is a guess: saved
-   * memory can say "Grok Bot" means one bot, and the model follows it over
-   * the roles in the turn. When the turn names no bot and one bot's role
-   * clearly fits its words better, that bot gets the message instead. */
-  private routeUnnamed(picked: Agent, bots: Agent[]): Agent | undefined {
-    const turn = this.lastTurn;
-    if (!turn || this.now() - turn.at > TURN_MAX_AGE_MS || namesABot(turn.text, bots)) return undefined;
-    const best = botForTask(turn.text, bots);
-    return best && best.id !== picked.id ? best : undefined;
+  primary: () => Promise<string | undefined> = async () => undefined;
+  recentTopics?: (bots: Agent[], signal: AbortSignal) => Promise<string[][]>;
+
+  private async followUpRecipient(bots: Agent[], task: string): Promise<Agent | undefined> {
+    if (!this.recentTopics || bots.length < 2 || bots.length > 6 ||
+        !/\b(?:those|that|these|again|earlier|previously|follow[ -]?up|we discussed|we talked about)\b/i.test(task)) return undefined;
+    const phrases = topicPhrases(task);
+    if (!phrases.size) return undefined;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const histories = await Promise.race([
+        this.recentTopics(bots, controller.signal),
+        new Promise<undefined>(resolve => { timer = setTimeout(() => { controller.abort(); resolve(undefined); }, 1_400); }),
+      ]);
+      // One missing candidate could contain the very same topic. Require full
+      // roster coverage, and one bot with a matching phrase in one recent turn.
+      if (!histories || histories.length !== bots.length) return undefined;
+      const candidates = bots.filter((_, i) => histories[i].some(turn => hasTopicPhrase(turn, phrases)));
+      return candidates.length === 1 ? candidates[0] : undefined;
+    } catch { return undefined; } finally { clearTimeout(timer); controller.abort(); }
+  }
+
+  async chooseRecipient(bots: Agent[], input: { bot?: string; requestText?: string; task?: string; message?: string }): Promise<RecipientRoute> {
+    const freshTurn = this.lastTurn && this.now() - this.lastTurn.at <= TURN_MAX_AGE_MS ? this.lastTurn.text : undefined;
+    const request = input.requestText?.trim() || freshTurn;
+    const named = request && explicitRecipient(request,bots);
+    if (named) return { bot: named, source:"explicit" };
+    // If a caller explicitly supplied an unknown name, never replace it. A
+    // generic app reference is not a bot. Direct tool calls with no transcript
+    // can still use an exact ID or explicit short name.
+    const ref = input.bot?.trim();
+    if (!request && ref && !/^(?:(?:my|the|a|our)\s+)?(?:grok\s*bot|bots?)$/i.test(ref)) {
+      return { bot: resolveMessageRecipient(ref, bots), source: "explicit" };
+    }
+    const task = [request, input.task, input.message].filter(Boolean).join(" ");
+    const match = botForTask(task, bots);
+    if (match) return { bot:match, source:"role" };
+    const previous = await this.followUpRecipient(bots, task);
+    if (previous) return { bot: previous, source:"role" };
+    const primaryId = await this.primary();
+    const primary = bots.find(bot => bot.id === primaryId);
+    if (primary) return { bot:primary, source:"primary" };
+    throw new IntegrationError("not_found", "Which Grok Bot should handle this? No clear role match or primary bot is available.");
   }
 
   private async recent(botId: string): Promise<ConfirmRow[] | undefined> {
@@ -293,11 +412,22 @@ export class IntentRoster {
     if (input.toolName !== "grokbot_send") return {};
     try {
       await this.fresh();
-      if (typeof input.args.bot !== "string") throw new Error("Choose a Grok Bot to message.");
       const individuals = this.agents.filter(a => !a.isGroup);
-      let bot = resolveMessageRecipient(input.args.bot, individuals);
-      const routed = this.routeUnnamed(bot, individuals);
-      if (routed) { log(`send hook: no bot named; ${bot.name} → ${routed.name} by role`); bot = routed; }
+      const requestText = typeof input.args.requestText === "string" ? input.args.requestText : undefined;
+      let bot: Agent;
+      if (typeof input.args.recipientId === "string") {
+        const pinned = individuals.find(a => a.id === input.args.recipientId);
+        const named = requestText && explicitRecipient(requestText, individuals);
+        if (!pinned || (named && named.id !== pinned.id)) throw new IntegrationError("not_found", "The prepared recipient changed. Which Grok Bot did you mean?");
+        bot = pinned;
+      } else {
+        ({ bot } = await this.chooseRecipient(individuals, {
+          bot: typeof input.args.bot === "string" ? input.args.bot : undefined,
+          requestText,
+          task: typeof input.args.task === "string" ? input.args.task : undefined,
+          message: typeof input.args.message === "string" ? input.args.message : undefined,
+        }));
+      }
       // Cosmetic only: a copy that is mangled, or prepared for another bot, just
       // loses its rows, and a send without prepared rows reads them itself.
       const context = copiedContext(input.args.confirmationContext);
@@ -309,7 +439,7 @@ export class IntentRoster {
           ...input.args,
           // Preserve the enum name for host validation; pin its identity separately.
           // A send routed by role names its new bot, so the result and card agree.
-          ...(routed ? { bot: bot.name } : {}),
+          ...((input.args.bot === bot.id || input.args.bot === botChoiceLabel(bot) || input.args.bot === bot.name) ? {} : { bot: bot.name }),
           recipientId: bot.id,
           confirmationContext: confirmationContext(individuals, rows?.length ? { [bot.id]: rows } : {}, [bot.id], true),
         },
