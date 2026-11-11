@@ -9,7 +9,7 @@
 // FIRST import, on purpose: rebinds console.log/info/warn/debug to stderr
 // before any dependency runs, so no stray stdout line corrupts the MCP wire.
 import "./stdoutGuard.ts";
-import { BrowserLoginRequired, browserSelected, openBrowserLogin, browserPrefs, browserRoutingHistory } from "./browserSession.ts";
+import { BrowserLoginRequired, browserAccount, browserSelected, openBrowserLogin, browserPrefs, browserRoutingHistory } from "./browserSession.ts";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -170,6 +170,12 @@ async function triggerReminder(
     return null;
   }
 }
+
+// The trusted Settings window starts login through this private host request.
+server.server.setRequestHandler(z.object({
+  method: z.literal("voiceos/grokbot/account"),
+  params: z.object({ action: z.enum(["status", "connect", "disconnect"]) }),
+}), ({ params }) => browserAccount(params.action));
 
 // ── Reminder buttons ──────────────────────────────────────────────────────────
 //

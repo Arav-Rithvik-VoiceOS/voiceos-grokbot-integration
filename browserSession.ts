@@ -102,13 +102,19 @@ export async function openBrowserLogin(): Promise<void> {
     process.platform === "win32"
       ? ["url.dll,FileProtocolHandler", url.href]
       : [url.href];
-  await new Promise<void>((resolve, reject) =>
-    execFile(cmd, args, (error) =>
-      error
-        ? reject(new Error("Could not open the browser for Grok Bot."))
-        : resolve(),
-    ),
-  );
+  try {
+    await new Promise<void>((resolve, reject) =>
+      execFile(cmd, args, (error) =>
+        error
+          ? reject(new Error("Could not open the browser for Grok Bot."))
+          : resolve(),
+      ),
+    );
+  } catch (error) {
+    if (read<Pending>(pendingFile)?.uuid === flow.uuid)
+      rmSync(pendingFile, { force: true });
+    throw error;
+  }
   // Start polling now, even if the user waits before opening the notch again.
   void pollFlow(flow).catch(() => {});
 }
@@ -133,6 +139,30 @@ function pollFlow(flow: Pending): Promise<void> {
   polling = { uuid: flow.uuid, done };
   return done;
 }
+/** Settings and the notch use the same account-scoped browser exchange. */
+export async function browserAccount(action: "status" | "connect" | "disconnect"): Promise<{
+  state: "signed_out" | "pending" | "connected";
+}> {
+  if (!scope) throw new Error("Sign in to VoiceOS before connecting Grok Bot.");
+  if (action === "disconnect") {
+    // pollFlow verifies the outstanding request id before storing a session.
+    rmSync(pendingFile, { force: true });
+    rmSync(sessionFile, { force: true });
+    return { state: "signed_out" };
+  }
+  if (browserSignedIn()) return { state: "connected" };
+  const pending = read<Pending>(pendingFile);
+  if (pending && pending.expiresAt > Date.now()) {
+    // A process restart can leave a live browser tab waiting for its exchange.
+    void pollFlow(pending).catch(() => {});
+    return { state: "pending" };
+  }
+  if (action === "status") return { state: "signed_out" };
+  await openBrowserLogin();
+  if (browserSignedIn()) return { state: "connected" };
+  return { state: read<Pending>(pendingFile) ? "pending" : "signed_out" };
+}
+
 async function session(): Promise<Session> {
   const current = read<Session>(sessionFile);
   if (current?.accessToken) return current;

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import manifest from "../voiceos.integration.json";
+import { z } from "zod";
 
 test("signed-out sign-in and roster shortcuts return a renderable sign-in card", async () => {
   const home = mkdtempSync(join(tmpdir(), "grokbot-sign-in-"));
@@ -16,6 +17,12 @@ test("signed-out sign-in and roster shortcuts return a renderable sign-in card",
       env: { HOME: home, LOCALAPPDATA: home, VOICEOS_GROKBOT_SESSION_SCOPE: "a".repeat(64) },
       stderr: "ignore",
     }));
+    expect(manifest).not.toHaveProperty("setupGuide");
+    const accountState = z.object({ state: z.enum(["signed_out", "pending", "connected"]) });
+    for (const action of ["status", "disconnect"]) {
+      const reply = await client.request({ method: "voiceos/grokbot/account", params: { action } }, accountState);
+      expect(reply).toEqual({ state: "signed_out" });
+    }
     for (const phrase of ["Sign in to Grok Bot", "Can you sign in to Grok Bot", "Show my bots", "Show all my bots"]) {
       const intent = manifest.intents.find(i => i.utterances.en.includes(phrase));
       expect(intent).toBeDefined();

@@ -26,11 +26,15 @@ const file = join(
   "browser-session.json",
 );
 let opened: URL | undefined;
+let openCount = 0;
+let failToOpen = false;
+let allowExchange: Promise<void> | undefined;
 mock.module("node:child_process", () => ({
   ...cp,
   execFile(_exe: string, args: string[], cb: Function) {
     opened = new URL(args.at(-1)!);
-    cb(null);
+    openCount++;
+    cb(failToOpen ? new Error("open failed") : null);
   },
 }));
 const savedFetch = globalThis.fetch;
@@ -42,6 +46,7 @@ globalThis.fetch = (async (url) => {
     opened?.searchParams.get("uuid"),
   );
   expect(target.searchParams.get("verifier")).toBeTruthy();
+  await allowExchange;
   return Response.json({
     accessToken: "fixture",
     refreshToken: "never-persist",
@@ -68,4 +73,45 @@ test("connect opens provider PKCE sign-in and stores only this user's access ses
   expect(existsSync(join(file, "..", "pending-login.json"))).toBe(false);
   if (process.platform !== "win32")
     expect(statSync(file).mode & 0o777).toBe(0o600);
+});
+
+test("Settings can connect, check status, and disconnect this account", async () => {
+  const api = await import("../browserSession.ts");
+  const before = openCount;
+  expect(await api.browserAccount("disconnect")).toEqual({ state: "signed_out" });
+  expect(await api.browserAccount("status")).toEqual({ state: "signed_out" });
+  expect(openCount).toBe(before);
+
+  failToOpen = true;
+  try {
+    await expect(api.browserAccount("connect")).rejects.toThrow("Could not open the browser");
+    expect(await api.browserAccount("status")).toEqual({ state: "signed_out" });
+  } finally {
+    failToOpen = false;
+  }
+
+  let release!: () => void;
+  allowExchange = new Promise<void>((resolve) => { release = resolve; });
+  try {
+    const [first, second] = await Promise.all([api.browserAccount("connect"), api.browserAccount("connect")]);
+    expect(first.state).toBe("pending");
+    expect(second.state).toBe("pending");
+    expect(await api.browserAccount("status")).toEqual({ state: "pending" });
+    expect(openCount).toBe(before + 2); // one failed open, one successful open
+    expect(await api.browserAccount("disconnect")).toEqual({ state: "signed_out" });
+  } finally {
+    release();
+    allowExchange = undefined;
+  }
+  await Bun.sleep(10);
+  expect(await api.browserAccount("status")).toEqual({ state: "signed_out" });
+  expect(existsSync(file)).toBe(false);
+
+  await api.browserAccount("connect");
+  for (let i = 0; !existsSync(file) && i < 50; i++) await Bun.sleep(5);
+  expect(await api.browserAccount("status")).toEqual({ state: "connected" });
+  expect(await api.browserAccount("connect")).toEqual({ state: "connected" });
+  expect(openCount).toBe(before + 3);
+  expect(await api.browserAccount("disconnect")).toEqual({ state: "signed_out" });
+  expect(existsSync(file)).toBe(false);
 });

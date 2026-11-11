@@ -24,18 +24,11 @@ can still wake the computer after the file is gone. If that route is rejected or
 unreachable, open Grok Bot and message any bot to wake its computer, then quit
 Grok Bot (Cmd+Q) and open it again. Background reads never wake the computer.
 
-## Grok Bot setup: the Keychain popup
+## Connect Grok Bot
 
-The first time you use Grok Bot in VoiceOS, macOS asks for access to
-"Grok Bot Safe Storage" in your Keychain. The popup shows on your screen, not
-in VoiceOS. Type your Mac password and click **Always Allow**, so it does not
-ask again.
-
-![The macOS Keychain popup asking for access to Grok Bot Safe Storage, with an Always Allow button](docs/images/keychain-popup-setup.webp)
-
-VoiceOS's setup guide loads this same image from GitHub
-(`voiceos.integration.json` → `setupGuide`), because a shared integration
-cannot carry image files. Keep the file at this path on `main`.
+In VoiceOS, open Apps → Official → Grok Bot and choose **Connect**. Complete
+the account sign-in in your browser. VoiceOS can then show your bots and
+their chats while the Grok Bot desktop app is closed.
 
 ## What's in here
 

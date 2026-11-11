@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "com.arav.bot",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "name": "Grok Bot",
   "summary": "Talk to your Grok Bot AI teammates by voice.",
   "description": "See your Grok Bot teammates, message one, catch up on what a bot said, create a new bot, or start a group chat with several at once — all by voice, from the notch.",
@@ -57,19 +57,6 @@
       "default": true
     }
   ],
-  "setupGuide": {
-    "title": "Set up Grok Bot",
-    "blocks": [
-      {
-        "type": "heading",
-        "text": "Connect your Grok Bot account"
-      },
-      {
-        "type": "text",
-        "text": "Say “show my bots.” Choose Sign in to Grok Bot and complete the browser sign-in for the account that owns your bots. Then say “show my bots” again. Grok Bot can stay closed."
-      }
-    ]
-  },
   "tools": [
     {
       "name": "view_bot_desktop_live",
