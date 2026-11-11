@@ -41,7 +41,7 @@ if (!existsSync(src)) {
 
 // Freeze every runtime-read card asset (widget HTML, adapters, CSS, mark, rfb)
 // into assets.generated.ts FIRST, so the bundle below inlines them. Without this
-// a shared build boots straight into `ENOENT widgets/connect.html` — the
+// a shared build boots straight into `ENOENT widgets/show.html` — the
 // widgets/ folder never ships with the five files VoiceOS's Share button sends.
 const gen = spawnSync("node", ["scripts/inline-assets.mjs"], { cwd: dir, stdio: "inherit" });
 if (gen.status !== 0) { console.error("build-publish: inline-assets failed."); process.exit(gen.status ?? 1); }

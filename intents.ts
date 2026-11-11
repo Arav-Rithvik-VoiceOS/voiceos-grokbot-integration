@@ -75,7 +75,7 @@ export const intents: IntentDefinition[] = [
   },
   {
     name: "help", tool: "grokbot_help",
-    description: "Open the Grok Bot sign-in card when the user asks to sign in, log in, or connect Grok Bot. Also show how to use Grok Bot.",
+    description: "When asked to sign in or connect, direct the user to Apps → Grok Bot → Connect. If already connected, show the bot list. Use for setup or help as well.",
     utterances: { en: ["Sign in to Grok Bot", "Can you sign in to Grok Bot", "Log in to Grok Bot", "Connect Grok Bot", "How do I use Grok Bot", "Help me set up Grok Bot", "How do I set up Grok Bot", "What can Grok Bot do", "Grok Bot help", "Show me how to use Grok Bot", "How does Grok Bot work"] },
     response: { en: "Opening Grok Bot." },
   },

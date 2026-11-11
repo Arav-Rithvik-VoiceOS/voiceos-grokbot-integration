@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "com.arav.bot",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "name": "Grok Bot",
   "summary": "Talk to your Grok Bot AI teammates by voice.",
   "description": "See your Grok Bot teammates, message one, catch up on what a bot said, create a new bot, or start a group chat with several at once — all by voice, from the notch.",
@@ -106,7 +106,7 @@
       "name": "grokbot_help",
       "title": "How to use Grok Bot",
       "hidePermissionToggle": true,
-      "description": "Open the Grok Bot sign-in card when asked to sign in, log in, or connect Grok Bot. The user opens the browser by clicking the button on the card. Use for setup or help as well. If already connected, show the bot list.",
+      "description": "When asked to sign in or connect, direct the user to Apps → Grok Bot → Connect. If already connected, show the bot list. Use for setup or help as well.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -737,7 +737,7 @@
       "title": "Reconnect Grok Bot",
       "hidePermissionToggle": true,
       "uiCallable": true,
-      "description": "Internal — invoked by a Grok Bot connection card to open browser sign-in or repair a saved desktop connection. Do not call from voice.",
+      "description": "Internal — invoked by the Reconnect card to repair a saved desktop connection. Do not call from voice.",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -992,7 +992,7 @@
     {
       "name": "help",
       "tool": "grokbot_help",
-      "description": "Open the Grok Bot sign-in card when the user asks to sign in, log in, or connect Grok Bot. Also show how to use Grok Bot.",
+      "description": "When asked to sign in or connect, direct the user to Apps → Grok Bot → Connect. If already connected, show the bot list. Use for setup or help as well.",
       "utterances": {
         "en": [
           "Sign in to Grok Bot",

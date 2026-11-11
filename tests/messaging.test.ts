@@ -739,11 +739,11 @@ test("a parked connection failure does not become a Connect card", async () => {
   expect(appOpens).toBe(0);
 });
 
-test("an explicit sign-out still displays the Connect card", async () => {
+test("an explicit desktop sign-out still explains how to sign in without a card", async () => {
   rosterError = new actual.IntegrationError("setup", "Grok Bot is signed out.");
   const r = await call("grokbot_show", {});
   expect(r).toMatchObject({ ok: false, needsSetup: true, message: "Grok Bot is signed out." });
-  expect(r._voiceos_glance.blocks[0].html).toContain("Connect Grok Bot to VoiceOS");
+  expect(r._voiceos_glance).toBeUndefined();
   expect(appOpens).toBe(1);
 });
 

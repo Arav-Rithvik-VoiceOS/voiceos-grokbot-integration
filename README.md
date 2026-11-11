@@ -26,8 +26,8 @@ Grok Bot (Cmd+Q) and open it again. Background reads never wake the computer.
 
 ## Connect Grok Bot
 
-In VoiceOS, open Apps → Official → Grok Bot and choose **Connect**. Complete
-the account sign-in in your browser. VoiceOS can then show your bots and
+In VoiceOS, open Apps → Official. Turn on the **Grok Bot** switch, or open
+Grok Bot and choose **Connect**. Both open the same browser sign-in. VoiceOS can then show your bots and
 their chats while the Grok Bot desktop app is closed.
 
 ## What's in here

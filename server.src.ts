@@ -9,7 +9,7 @@
 // FIRST import, on purpose: rebinds console.log/info/warn/debug to stderr
 // before any dependency runs, so no stray stdout line corrupts the MCP wire.
 import "./stdoutGuard.ts";
-import { BrowserLoginRequired, browserAccount, browserSelected, openBrowserLogin, browserPrefs, browserRoutingHistory } from "./browserSession.ts";
+import { BrowserLoginRequired, browserAccount, browserSelected, browserPrefs, browserRoutingHistory } from "./browserSession.ts";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -54,7 +54,7 @@ import {
 import { recordCardPoll, cardCovers } from "./cardWatch.ts";
 import { ReplyNotices, shortBotName } from "./replyNotices.ts";
 import { RFB_B64 } from "./assets.generated.ts";
-import { connectCard, guideCard, reconnectCard, showCard, rosterData, orbIcon, type ShowOpen, toBot, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
+import { guideCard, reconnectCard, showCard, rosterData, orbIcon, type ShowOpen, toBot, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
 import { PREPARE_DESCRIPTION, SEND_MODEL_DESCRIPTION, SEND_BOT_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, botChoiceLabel, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 import { acknowledgeChat, conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
@@ -545,26 +545,19 @@ async function runTool(
     return await run();
   } catch (error) {
     if (error instanceof BrowserLoginRequired && isWaking()) {
-      browserLoginOffered = true;
-      // These display requests can finish by showing a sign-in card. An
-      // ok:false result sends the host into error recovery and skips that card.
-      // A blocked action must still report that the action did not complete.
       const displayRequest = tool === "grokbot_help" || tool === "grokbot_list" || tool === "grokbot_show";
-      return result(
-        { ok: displayRequest ? undefined : false, needsSetup: true, message: error.message },
-        connectCard(undefined, true),
-      );
+      return result({ ok: displayRequest ? undefined : false, needsSetup: true, message: error.message });
     }
     log(`${tool} failed:`, error);
     // "Not set up / needs a refresh" isn't a crash. On a Mac that never
     // connected it's the first-run state: speak the fix, open the app, and show
-    // the Connect card. No OAuth page. Once a connection has worked here, it is
+    // the desktop sign-in instructions. Once a connection has worked here, it is
     // never setup again (VOS-1616): a rejected or unreadable session gets the
     // Reconnect card, and a real sign-out gets its plain message.
     if (isWaking() && error instanceof IntegrationError && (error.kind === "setup" || error.kind === "not_connected")) {
       if (!hasConnectedBefore()) {
         openGrokBotApp();
-        return result({ ok: false, needsSetup: true, message: error.message }, connectCard());
+        return result({ ok: false, needsSetup: true, message: error.message });
       }
       if (error.kind === "not_connected") {
         reconnectOffered = true;
@@ -739,7 +732,7 @@ server.registerTool(
   {
     title: "How to use Grok Bot",
     description:
-      "Open the Grok Bot sign-in card when asked to sign in, log in, or connect Grok Bot. The user opens the browser by clicking the button on the card. Use for setup or help as well. If already connected, show the bot list.",
+      "When asked to sign in or connect, direct the user to Apps → Grok Bot → Connect. If already connected, show the bot list. Use for setup or help as well.",
     inputSchema: {
       page: z
         .enum(["setup", "keychain", "ideas"])
@@ -754,7 +747,7 @@ server.registerTool(
     handle("grokbot_help", async () => {
       if (browserSelected()) {
         // Reading through the same session also lets a pending sign-in finish.
-        // runTool shows the browser Connect card if sign-in is still needed.
+        // A signed-out request returns the Apps connection instructions.
         const agents = await listAgents();
         const [{ recent, cursors }, prefs] = await Promise.all([rosterThreads(agents), rosterPrefs()]);
         return result({ thingsToSay: HELP_PHRASES, message: agents.length ? "Grok Bot is connected. The card shows your bots." : "Grok Bot is connected. Say “create a bot named Scout” to get started." },
@@ -1411,16 +1404,11 @@ server.registerTool(
  * showed. Until one has been shown, the tool does nothing: the host cannot tell
  * a card's button from a model call, so the server keeps that line itself. */
 let reconnectOffered = false;
-let browserLoginOffered = false;
 server.registerTool("grokbot_reconnect", {
   title: "Reconnect Grok Bot",
-  description: "Internal — invoked by a Grok Bot connection card to open browser sign-in or repair a saved desktop connection. Do not call from voice.",
+  description: "Internal — invoked by the Reconnect card to repair a saved desktop connection. Do not call from voice.",
   inputSchema: {},
 }, () => cardRequest("grokbot_reconnect", async () => {
-  if (browserLoginOffered && browserSelected()) {
-    await openBrowserLogin();
-    return { ok: true, message: "Finish signing in in your browser, then say “show my bots” again." };
-  }
   if (!reconnectOffered) {
     return { ok: false, message: `Nothing to reconnect. ${SERVICE_NAME} will show a Reconnect card when it needs one.` };
   }

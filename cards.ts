@@ -29,7 +29,7 @@ import { toCardThread, boundThread, type CardItem } from "./conversation.ts";
 import { markdownPreview, renderMarkdown } from "./markdown.ts";
 import { GROK_ALL_SHAPE_IDS, SHAPE_ART, type GrokAnyShape, avatarCss } from "./avatarShapes.ts";
 
-type CardName = "connect" | "show" | "create" | "guide" | "reconnect";
+type CardName = "show" | "create" | "guide" | "reconnect";
 
 /** Swap the widgets' placeholder glyph (`.mark > i`) for the real logo, bare (no
  * tile), per the design handoff. Only the `.mark` glyph is targeted — but the
@@ -606,11 +606,6 @@ export function guideCard(setup: SetupState, bots: Agent[] = [], page: 0 | 1 | 2
     return { name: b.name, color: b.color, shape: b.shape, ...(img ? { img } : {}) };
   });
   return glance("guide", { data: { setup, bots: cast, kcImg: KEYCHAIN_POPUP_DATA_URI }, args: { page } }, 410, "Grok Bot");
-}
-
-/** connect.html — first-run / needs-sign-in status. */
-export function connectCard(account?: { name?: string; email?: string }, browserLogin = false) {
-  return glance("connect", { data: { account: account ?? { name: "You" }, browserLogin }, args: {} }, 156, "Grok Bot");
 }
 
 /** reconnect.html — the cloud computer is asleep and no saved route can wake

@@ -78,7 +78,7 @@ export const browserSignedIn = () =>
 export class BrowserLoginRequired extends Error {
   constructor() {
     super(
-      "Sign in to Grok Bot in your browser, then say “show my bots” again.",
+      "Open Apps, choose Grok Bot, then click Connect.",
     );
   }
 }
