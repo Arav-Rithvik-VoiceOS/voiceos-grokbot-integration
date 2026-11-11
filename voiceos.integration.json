@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "com.arav.bot",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "name": "Grok Bot",
   "summary": "Talk to your Grok Bot AI teammates by voice.",
   "description": "See your Grok Bot teammates, message one, catch up on what a bot said, create a new bot, or start a group chat with several at once — all by voice, from the notch.",
@@ -228,6 +228,15 @@
           "task": {
             "type": "string",
             "description": "Task or project context for a request with no named recipient."
+          },
+          "files": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "string",
+              "pattern": "^attached_file_\\d+$"
+            },
+            "description": "To send files attached to this VoiceOS request, put their attached_file_N references here. Include only the files the user wants sent, up to four files of 4 MB each. Never put paths or attachment references in the message instead."
           }
         },
         "required": []
@@ -328,7 +337,7 @@
           },
           "total": {
             "type": "integer",
-            "minimum": 1,
+            "minimum": 0,
             "description": "The whole file's base64 length."
           },
           "chunk": {
@@ -526,6 +535,15 @@
           "message": {
             "type": "string",
             "description": "The message to send, written TO the group the way the user would type it: lead-in commands removed, reported speech made direct."
+          },
+          "files": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "string",
+              "pattern": "^attached_file_\\d+$"
+            },
+            "description": "To send files attached to this VoiceOS request, put their attached_file_N references here. Include only the files the user wants sent, up to four files of 4 MB each. Never put paths or attachment references in the message instead."
           }
         },
         "required": []
@@ -548,6 +566,29 @@
           }
         },
         "required": []
+      },
+      "uiCallable": true,
+      "visibility": "agent"
+    },
+    {
+      "name": "grokbot_card_seen",
+      "title": "Mark conversation read",
+      "hidePermissionToggle": true,
+      "description": "Internal acknowledgement from a visible chat after the newest page is displayed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "bot": {
+            "type": "string"
+          },
+          "entryId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "bot",
+          "entryId"
+        ]
       },
       "uiCallable": true,
       "visibility": "agent"

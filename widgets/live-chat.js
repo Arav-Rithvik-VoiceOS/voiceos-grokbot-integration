@@ -201,6 +201,22 @@ const LiveChat=(()=>{
    items.push(it);stick=true;draw('bottom');saved();return it.id}
   function setLocal(id,state){const it=items.find(i=>i.id===id);if(!it||!it.local)return;items=items.map(i=>i.id===id?{...i,local:state}:i);draw();saved()}
   function dropLocal(id){items=items.filter(i=>i.id!==id);draw();saved()}
+  // Mark only the page the user saw. The roster poll and older-page loader never call this.
+  let seenPage='';
+  async function acknowledge(b,fresh){
+   if(dead||document.hidden||!list.isConnected||!fresh.length)return;
+   const row=[...(b.bots||[]),...(b.groups||[])].find(r=>r.id===bot);
+   const entryId=fresh[fresh.length-1].id;
+   if(!row||!entryId)return;
+   const revision=JSON.stringify([entryId,row.status,!!row.attention]);
+   if(!row.unread&&seenPage===revision)return;
+   try{
+    const result=await br.call('grokbot_card_seen',{bot,entryId},{auto:1});
+    if(!result.seen)return;
+    seenPage=revision;
+    if(!dead&&row.unread){delete row.unread;bots(b)}
+   }catch(_){/* The next visible refresh retries. */}
+  }
   function refresh(){if(dead)return noop();if(!list.isConnected){destroy();return noop()}
    if(busy)return busy;if(!br.canInvoke)return noop();if(over()){pause();return noop()}
    clearTimeout(timer);timer=0;br.refreshes++;last=Date.now();if(fast>=0&&++fast>=6)fast=-1;
@@ -208,7 +224,7 @@ const LiveChat=(()=>{
      // Loaded older rows stay above the newest page; a page with no overlap replaces them (the gap is "Earlier messages").
      const locals=items.filter(i=>i.local),kept=at<0?[]:items.slice(0,at).filter(i=>!ids.has(i.id)&&!i.local&&!i.id.startsWith('lc-anon-'));
      items=[...kept,...fresh];if(!kept.length)before=num(b.nextBeforeSeq);reconcile(fresh,locals);
-     bots(b);erred=false;draw();saved()})
+     bots(b);erred=false;draw();saved();return acknowledge(b,fresh)})
     .catch(e=>{if(!dead&&e.refused!=='auto')erred=true}) // a missed refresh is silent: the next one usually lands; out of automatic requests: just pause
     .finally(()=>{busy=null;if(!dead)over()?pause():schedule()});
    return busy}

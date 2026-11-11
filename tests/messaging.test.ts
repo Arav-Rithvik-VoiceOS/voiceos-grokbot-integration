@@ -62,8 +62,12 @@ mock.module("../client.ts", () => ({
     computerWindows.push(input);
     return { reused: false };
   },
-  sendPrompt: async (id: string, message: string) => {
-    writes.push(["send", id, message]);
+  uploadAttachment: async (id: string, name: string, base64: string) => {
+    writes.push(["upload", id, name, base64]);
+    return "/bot/uploads/" + name;
+  },
+  sendPrompt: async (id: string, message: string, files: actual.SentAttachment[] = []) => {
+    writes.push(["send", id, message, ...(files.length ? [files] : [])]);
     if (rejectSend) throw new actual.IntegrationError("upstream", "Send failed");
     return { accepted: true };
   },
@@ -87,7 +91,7 @@ mock.module("../client.ts", () => ({
 }));
 // server.ts is the published bundle (client.ts inlined), so mocks never reach it.
 await import("../server.src.ts");
-const call = async (name: string, args: any) => {
+const call = async (name: string, args: any, metadata?: Record<string, unknown>) => {
   try {
     if (name === "grokbot_send" && args.bot && !args.recipientId) {
       // Simulate the host preparation hook followed by approval. Direct
@@ -100,7 +104,8 @@ const call = async (name: string, args: any) => {
       if (prepared.decision === "block") return { isError: true, error: prepared.responseText };
       args = prepared.updatedArgs ?? args;
     }
-    const response = await handlers.get(name)!(args);
+    const handler = handlers.get(name)! as (args: any, extra: any) => Promise<any>;
+    const response = await handler(args, { _meta: metadata });
     return { ...JSON.parse(response.content[0].text), isError: response.isError };
   } catch (error) { return { isError: true, error: String(error) }; }
 };
@@ -117,6 +122,38 @@ beforeEach(() => {
   desktopProbe = { live: false, boxState: "absent" };
   computerWindows = [];
   openedChats = [];
+});
+
+test("notch attachment bytes upload to the prepared bot or group before a single message", async () => {
+  const bytes = Buffer.from([0, 255, 128, 1, 0]);
+  const meta = { "com.voiceos/attachments": { attached_file_0: { name: "proof.bin", base64: bytes.toString("base64") } } };
+  for (const [tool, recipient, id] of [["grokbot_send", { bot: "Piper" }, "p"], ["grokbot_group", { group: "Study group" }, "g"]] as const) {
+    writes.length = 0;
+    const r = await call(tool, { ...recipient, files: ["attached_file_0"] }, meta);
+    expect(r.sent).toBe(true);
+    expect(writes).toEqual([
+      ["upload", id, "proof.bin", bytes.toString("base64")],
+      ["send", id, "", [{ name: "proof.bin", path: "/bot/uploads/proof.bin", sha256: expect.any(String) }]],
+    ]);
+  }
+  writes.length = 0;
+  for (const args of [
+    { bot: "Piper", files: ["attached_file_1"] },
+    { bot: "Piper", files: ["/private/secret"] },
+    { bot: "Piper", recipientId: "t", requestText: "Send Piper the file", files: ["attached_file_0"] },
+  ]) expect((await call("grokbot_send", args, meta)).isError).toBe(true);
+  expect(writes).toEqual([]);
+});
+
+test("a card or notch cannot send a file one byte over the 4 MB limit", async () => {
+  const bytes = Buffer.alloc(4 * 1024 * 1024 + 1, 128);
+  const base64 = bytes.toString("base64");
+  expect((await call("grokbot_send", { bot: "Piper", files: ["attached_file_0"] }, {
+    "com.voiceos/attachments": { attached_file_0: { name: "big.mov", base64 } },
+  })).isError).toBe(true);
+  const r = await call("grokbot_card_upload", { bot: "p", uploadId: "big", name: "big.mov", total: base64.length, offset: 0, chunk: base64 });
+  expect(r).toMatchObject({ ok: false, message: expect.stringContaining("4 MB") });
+  expect(writes).toEqual([]);
 });
 
 test("an offline bot returns a clear result without opening a computer window", async () => {

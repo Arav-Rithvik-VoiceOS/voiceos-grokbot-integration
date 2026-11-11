@@ -29,6 +29,7 @@ const calls: { method: string; body: any }[] = [];
 const storageHost = "sand-box-stores.s3.us-east-1.amazonaws.com";
 let pictureUrl: string | undefined;
 let pictureReads = 0;
+let unreadCount = 1;
 let unknown = false,
   expired = false,
   deliveryStatus = "unknown",
@@ -52,6 +53,11 @@ globalThis.fetch = (async (u, init) => {
   calls.push({ method, body });
   if (expired)
     return Response.json({ code: "unauthenticated" }, { status: 401 });
+  if (method === "SetGrokBotAgentClientState" && body.markRead === true) {
+    expect(body).toEqual({ agentId: "assistant", markRead: true });
+    unreadCount = 0;
+    return Response.json({ state: { agentId: body.agentId } });
+  }
   const replies: Record<string, unknown> = {
     ListGrokBotAgents: {
       agents: [
@@ -68,7 +74,7 @@ globalThis.fetch = (async (u, init) => {
       statuses: [
         {
           agentId: "assistant",
-          client: { agentId: "assistant", unreadCount: 1 },
+          client: { agentId: "assistant", unreadCount },
         },
       ],
     },
@@ -96,8 +102,9 @@ globalThis.fetch = (async (u, init) => {
       },
     },
     UploadGrokBotAgentAttachmentChunk: {
-      receivedBytes: "2",
-      path: "/sandbox/proof.txt",
+      receivedBytes: String(Number(body.offset || 0) + Buffer.from(body.data || "", "base64").length),
+      ...(Number(body.offset || 0) + Buffer.from(body.data || "", "base64").length === Number(body.totalSize)
+        ? { path: "/sandbox/" + body.fileName } : {}),
     },
     RespondGrokBotWidget: { accepted: true },
     EnsureSandBox: {
@@ -151,6 +158,21 @@ test("same cards read browser roster, unread status, history and sidebar setting
     accepted: true,
   });
 });
+test("reading the roster or history leaves unread alone; only the displayed page clears it", async () => {
+  seed();
+  unreadCount = 1;
+  const { acknowledgeChat, conversationSnapshot } = await import("../conversationService.ts");
+  await conversationSnapshot();
+  await conversationSnapshot("assistant");
+  const writes = () => calls.filter(row => row.method === "SetGrokBotAgentClientState" && row.body.markRead).length;
+  expect(writes()).toBe(0);
+  expect(await acknowledgeChat("assistant", "older-message")).toMatchObject({ seen: false });
+  expect(writes()).toBe(0);
+  expect(await acknowledgeChat("assistant", "e1")).toMatchObject({ seen: true, botId: "assistant", entryId: "e1" });
+  expect((await client.listAgents())[0].hasUnread).toBe(false);
+  await acknowledgeChat("assistant", "e1");
+  expect(writes()).toBe(1);
+});
 test("cloud profile pictures reach the card without exposing the signed URL", async () => {
   seed();
   pictureUrl = `https://${storageHost}/avatar.png?signature=private`;
@@ -193,6 +215,28 @@ test("an unknown acknowledgement uses the same message ID across retries and nev
     calls.filter((c) => c.method === "SendGrokBotUserMessage"),
   ).toHaveLength(2);
 });
+test("a 3 MB binary is acknowledged chunk by chunk; re-uploaded bytes share an unresolved send", async () => {
+  seed();
+  calls.length = 0;
+  const { randomBytes, createHash } = await import("node:crypto");
+  const bytes = randomBytes(3 * 1024 * 1024);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const name = "video.mp4";
+  const path = await client.uploadAttachment("assistant", name, bytes.toString("base64"));
+  const chunks = calls.filter(c => c.method === "UploadGrokBotAgentAttachmentChunk").map(c => c.body);
+  expect(chunks).toHaveLength(12);
+  expect(chunks.every((c, i) => c.offset === String(i * 256 * 1024) && c.sha256Hex === sha256)).toBe(true);
+  expect(Buffer.concat(chunks.map(c => Buffer.from(c.data, "base64"))).equals(bytes)).toBe(true);
+  unknown = true;
+  deliveryStatus = "unknown";
+  try {
+    await expect(client.sendPrompt("assistant", "Video", [{name, path, sha256}])).rejects.toThrow("Delivery is unknown");
+    deliveryStatus = "GROK_BOT_SEND_STATUS_ACCEPTED";
+    await expect(client.sendPrompt("assistant", "Video", [{name, path: "/different/upload", sha256}])).resolves.toEqual({accepted:true});
+    expect(calls.filter(c => c.method === "SendGrokBotUserMessage")).toHaveLength(1);
+  } finally { unknown = false; }
+});
+
 test("gateway URLs are restricted, expired credentials ask for browser login, and no unscoped fallback occurs", async () => {
   seed();
   remoteHost = "malicious.example";

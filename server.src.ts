@@ -13,6 +13,8 @@ import { BrowserLoginRequired, browserAccount, browserSelected, openBrowserLogin
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { createHash } from "node:crypto";
+import { FILE_LIMIT, FILES_DESCRIPTION, checkAttachmentData, notchAttachments } from "./notchAttachments.ts";
 import {
   IntegrationError,
   withoutWaking,
@@ -55,7 +57,7 @@ import { RFB_B64 } from "./assets.generated.ts";
 import { connectCard, guideCard, reconnectCard, showCard, rosterData, orbIcon, type ShowOpen, toBot, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
 import { PREPARE_DESCRIPTION, SEND_MODEL_DESCRIPTION, SEND_BOT_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, botChoiceLabel, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
-import { conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
+import { acknowledgeChat, conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
 import { needsAttention, toCardThread, type CardItem } from "./conversation.ts";
 import { IntentRoster, registerIntentSupport, explicitRecipient } from "./intents.ts";
 import { INTENT_SLOT_VALUES_META_KEY } from "./intentSdk.generated.js";
@@ -521,7 +523,7 @@ function startAutomationWatch(): void {
 let _toolChain: Promise<unknown> = Promise.resolve();
 // Automatic card refreshes may use a live route, but must not reopen the app.
 const PASSIVE_TOOLS = new Set([
-  "grokbot_card_snapshot", "grokbot_card_entry", "grokbot_card_image", "grokbot_reply_check",
+  "grokbot_card_snapshot", "grokbot_card_seen", "grokbot_card_entry", "grokbot_card_image", "grokbot_reply_check",
 ]);
 
 async function handle(
@@ -827,6 +829,12 @@ server.registerTool("grokbot_card_snapshot", {
   return { ok: true, ...rosterData(snapshot.agents, prefs).card, thread: snapshot.thread, nextBeforeSeq: snapshot.nextBeforeSeq };
 }));
 
+server.registerTool("grokbot_card_seen", {
+  title: "Mark conversation read",
+  description: "Internal acknowledgement from a visible chat after the newest page is displayed.",
+  inputSchema: { bot: z.string(), entryId: z.string() },
+}, (args: { bot: string; entryId: string }) => cardRequest("grokbot_card_seen", () => acknowledgeChat(args.bot, args.entryId)));
+
 server.registerTool("grokbot_card_entry", {
   title: "Load complete conversation message",
   description: "Internal read-only loader for complete Grok Bot messages. The card automatically reads bounded chunks; no user action or native-app handoff is needed.",
@@ -972,6 +980,17 @@ async function sendToBot(bot: Agent, message: string, base?: { entries?: Transcr
   watchThreadThenNotify(bot, seen, message);
 }
 
+const notchFileRefs = z.array(z.string().regex(/^attached_file_\d+$/)).max(4).optional().describe(FILES_DESCRIPTION);
+async function uploadNotchFiles(target: string, files: ReturnType<typeof notchAttachments>): Promise<SentAttachment[]> {
+  const uploaded: SentAttachment[] = [];
+  for (const { name, base64 } of files) {
+    const path = await uploadAttachment(target, name, base64);
+    const sha256 = createHash("sha256").update(base64, "base64").digest("hex");
+    uploaded.push({ path, name, sha256 });
+  }
+  return uploaded;
+}
+
 // ── WRITE: grokbot_send — voice sends at once, then opens the bot's chat ──
 // No confirmation card and no draft to approve: "Send a message to Piper"
 // sends, and the card opens on Piper's chat with the message flying from the
@@ -987,6 +1006,7 @@ const sendTool = server.registerTool(
       bot: z.string().optional().describe(SEND_BOT_DESCRIPTION),
       task: z.string().optional().describe("Current task or project context for routing."),
       requestText: z.string().optional().describe("Current user request supplied by VoiceOS."),
+      files: notchFileRefs,
       recipientId: z.string().optional().describe("Internal: recipient ID pinned by the preparation hook. Never compose or change this value."),
       message: z
         .string()
@@ -998,7 +1018,7 @@ const sendTool = server.registerTool(
     },
     _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: [] } },
   },
-  async (args: { bot?: string; message?: string; recipientId?: string; requestText?: string; task?: string }) =>
+  async (args: MessageArgs & { recipientId?: string; files?: string[] }, extra) =>
     handle("grokbot_send", async () => {
       const agents = await listAgents();
       const bots = agents.filter(a => !a.isGroup);
@@ -1010,15 +1030,16 @@ const sendTool = server.registerTool(
         const named = explicitRecipient(args.requestText, bots);
         if (named && named.id !== bot.id) throw new IntegrationError("not_found", "The prepared recipient differs from the bot you named. Which one should receive this message?");
       }
+      const files = notchAttachments(args.files, extra?._meta);
       const text = tidySpoken(args.message ?? "");
       // Read BEFORE sending: the card's history then ends just before this
       // message, which arrives as the fly-in and the live chat's next refresh.
       const tail = await transcriptTail(bot.id, 20);
-      if (!text) {
+      if (!text && !files.length) {
         return result({ opened: true, sent: false, bot: bot.name, botId: bot.id, message: `Opened ${bot.name}. Nothing was sent.` },
           await conversationCard(agents, { bot: bot.id }, tail));
       }
-      await sendToBot(bot, text, tail);
+      await sendToBot(bot, text, tail, await uploadNotchFiles(bot.id, files));
       return result(
         { sent: true, bot: bot.name, botId: bot.id, sentMessage: text, message: `Sent your message to ${bot.name}.` },
         await conversationCard(agents, { bot: bot.id }, tail, text, true),
@@ -1060,7 +1081,7 @@ server.registerTool(
 // a stale upload is dropped), then the whole file goes to the bot's computer
 // through the gateway's own uploadAttachment, and the stored path comes back
 // for the send. Never confirmed by the host: the user picked the file.
-const UPLOAD_MAX_BASE64 = 4 * 1024 * 1024 * 4 / 3; // ~4 MB of file
+const UPLOAD_MAX_BASE64 = 4 * Math.ceil(FILE_LIMIT / 3);
 const UPLOAD_MAX_INFLIGHT = 6;
 const UPLOAD_STALE_MS = 10 * 60_000;
 const uploads = new Map<string, { bot: string; name: string; total: number; parts: string[]; have: number; at: number }>();
@@ -1079,7 +1100,7 @@ server.registerTool(
       name: z.string().min(1).max(255).describe("The file name."),
       type: z.string().optional().describe("The MIME type, if known."),
       offset: z.number().int().min(0).describe("Where this chunk starts, in base64 characters."),
-      total: z.number().int().min(1).describe("The whole file's base64 length."),
+      total: z.number().int().min(0).describe("The whole file's base64 length."),
       chunk: z.string().describe("This chunk, base64."),
     },
   },
@@ -1105,9 +1126,11 @@ server.registerTool(
       if (u.have > u.total) { uploads.delete(args.uploadId); throw new IntegrationError("upstream", "The file data was longer than expected. Attach it again."); }
       if (u.have < u.total) return { ok: true, received: u.have, total: u.total };
       uploads.delete(args.uploadId);
+      const data = u.parts.join("");
+      checkAttachmentData(data);
       const agents = await listAgents();
       const bot = resolveMessageRecipient(args.bot, agents);
-      const path = await uploadAttachment(bot.id, u.name, u.parts.join(""));
+      const path = await uploadAttachment(bot.id, u.name, data);
       return { ok: true, done: true, path, name: u.name };
     }),
 );
@@ -1205,12 +1228,12 @@ async function performGroupSend(args: { group?: string; members?: string | strin
 }
 
 /** Save member/name edits (or create the group) and send once. */
-async function sendToGroup(args: { group?: string; members?: string | string[]; groupName?: string; message?: string; attachments?: SentAttachment[] }, agents: Agent[]) {
+async function sendToGroup(args: { group?: string; members?: string | string[]; groupName?: string; message?: string; attachments?: SentAttachment[] }, agents: Agent[], files: ReturnType<typeof notchAttachments> = []) {
   const { existing, memberIds, bots, sameSet } = resolveMessageGroup(args, agents);
   const message = args.message?.trim() ?? "";
   const name = args.groupName?.trim() ?? existing?.name ?? "";
   const attachments = args.attachments ?? [];
-  if (!message && !attachments.length) throw new IntegrationError("not_found", "What should I send?");
+  if (!message && !attachments.length && !files.length) throw new IntegrationError("not_found", "What should I send?");
   if (memberIds.length < (existing ? 1 : 2)) throw new IntegrationError("not_found", existing ? "Keep at least one bot in the group." : "Choose at least two bots for a new group.");
   let target = existing;
   const savedName = name || memberIds.map(id => bots.find(a => a.id === id)!.name).join(" + ");
@@ -1221,7 +1244,7 @@ async function sendToGroup(args: { group?: string; members?: string | string[]; 
     target = await createGroup(savedName, memberIds);
     if (!target?.id) throw new IntegrationError("upstream", "The group was not created.");
   }
-  await sendPrompt(target.id, message, attachments);
+  await sendPrompt(target.id, message, files.length ? await uploadNotchFiles(target.id, files) : attachments);
   return { group: target.id, groupName: savedName, members: memberIds, created: !existing, sentMessage: message };
 }
 
@@ -1239,6 +1262,7 @@ server.registerTool(
     description: GROUP_DESCRIPTION,
     inputSchema: {
       confirmationContext: z.string().optional().describe(CONTEXT_DESCRIPTION),
+      files: notchFileRefs,
       group: z.string().optional().describe("An existing group's name as the user said it, or its exact id from a card. Omit for a new group."),
       members: z.union([z.array(z.string()), z.string()]).optional()
         .describe("Bots to include, as names the user said or exact ids. Omit to use an existing group's members, or to choose members in the card."),
@@ -1246,15 +1270,17 @@ server.registerTool(
       message: z.string().optional().describe("The message to send, written TO the group the way the user would type it: lead-in commands removed, reported speech made direct."),
     },
   },
-  async (args: { group?: string; members?: string | string[]; groupName?: string; message?: string }) =>
+  async (args: MessageArgs & { files?: string[] }, extra) =>
     handle("grokbot_group", async () => {
       const agents = await listAgents();
       const { existing, memberIds, sameSet } = resolveMessageGroup(args, agents);
       const draft = tidySpoken(args.message ?? "");
-      if (draft && (existing || memberIds.length >= 2)) {
+      const files = notchAttachments(args.files, extra?._meta);
+      if (files.length && !existing && memberIds.length < 2) throw new IntegrationError("not_found", "Choose at least two bots before sending a file to a new group.");
+      if ((draft || files.length) && (existing || memberIds.length >= 2)) {
         // Read BEFORE sending (see grokbot_send). A new group has no history.
         const tail = existing ? await transcriptTail(existing.id, 20) : {};
-        const s = await sendToGroup({ ...args, message: draft }, agents);
+        const s = await sendToGroup({ ...args, message: draft }, agents, files);
         // Re-read the roster: it now has the new group, or the saved edits.
         return result(
           { sent: true, group: s.groupName, members: s.members, created: s.created, sentMessage: s.sentMessage,

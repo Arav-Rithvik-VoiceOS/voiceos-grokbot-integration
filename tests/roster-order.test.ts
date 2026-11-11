@@ -54,6 +54,18 @@ describe("roster sections", () => {
     const all = { pinnedIds: [], sections: [{ id: "s", name: "All", agentIds: ["a", "b", "c", "d", "e"] }] };
     expect(rosterSections(orderRoster(agents), all).map((s) => s.id)).toEqual(["s"]);
   });
+  test("bot and group previews show plain message text before clipping", () => {
+    const source = "## **4.8-star rating**\n[Prague article on Wikipedia](https://example.org/" + "x".repeat(180) + ") and `city_name`";
+    const { card } = rosterData([bot("a", 1, { lastMessagePreview: source }), bot("g", 2, { isGroup: true, lastMessagePreview: source })]);
+    expect(card.bots[0].task).toBe("4.8-star rating Prague article on Wikipedia and city_name");
+    expect(card.groups[0].last).toBe(card.bots[0].task);
+    const clipped = rosterData([bot("a", 1, { lastMessagePreview: "**4.8-star rating" }), bot("b", 2, { lastMessagePreview: "[Prague article on Wikipedia](https://en.wik" })]);
+    expect(clipped.card.bots.map(row => row.task)).toEqual(["Prague article on Wikipedia", "4.8-star rating"]);
+    const partialLabel = rosterData([bot("a", 1, { lastMessagePreview: "[Prague article on Wiki…" }), bot("b", 2, { lastMessagePreview: "Keep [draft] as written" })]);
+    expect(partialLabel.card.bots.map(row => row.task)).toEqual(["Keep [draft] as written", "Prague article on Wiki…"]);
+    const long = rosterData([bot("a", 1, { lastMessagePreview: "**" + "x".repeat(150) + "**" })]);
+    expect(long.card.bots[0].task).toBe("x".repeat(119) + "…");
+  });
   test("the card carries pins, sections, the Main Bot and per-row flags", () => {
     const { card } = rosterData([...agents, bot("u", 1, { hasUnread: true })], { ...prefs, mainId: "d" });
     expect(card.pinned).toEqual(["b"]);

@@ -136,25 +136,38 @@ function gbDrawFiles(root){const box=$('#files',root),sb=$('.send',root),i=$('#m
  box.hidden=!gbFiles.length;
  box.innerHTML=gbFiles.map((f,ix)=>'<span class="file'+(f.up?' up':'')+'" data-f="'+ix+'">'+(f.url?'<img src="'+f.url+'" alt="">':'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5"/></svg>')+'<span>'+esc(f.file.name)+'</span><small>'+(f.up?f.up:gbSize(f.file.size))+'</small>'+(f.up?'':'<button class="x" type="button" aria-label="Remove">×</button>')+'</span>').join('');
  $$('.file .x',box).forEach(x=>x.onclick=()=>{const ix=+x.parentNode.dataset.f;const [g]=gbFiles.splice(ix,1);if(g&&g.url)URL.revokeObjectURL(g.url);gbDrawFiles(root)});
- if(sb&&i)sb.disabled=!i.value.trim()&&!gbFiles.length;report()}
+ if(sb&&i)sb.disabled=gbFiles.some(f=>f.up)||(!i.value.trim()&&!gbFiles.length);report()}
 function gbAddFiles(root,list,p){const add=Array.from(list||[]);if(!add.length)return;
  const next=gbFiles.slice();
  for(const f of add){if(next.some(x=>x.file.name===f.name&&x.file.size===f.size&&x.file.lastModified===f.lastModified))continue;
-  if(f.size>GB_FILE_MAX){if(p)p.say('Files must be under 4 MB each.');continue}
+  if(f.size>GB_FILE_MAX){if(p)p.say('Files can be up to 4 MB each.');continue}
   if(next.length>=GB_FILES_MAX){if(p)p.say('Attach up to '+GB_FILES_MAX+' files at a time.');break}
   next.push({file:f,url:gbKind(f)==='image'?URL.createObjectURL(f):'',up:''})}
  gbFiles=next;gbDrawFiles(root)}
-function gbClearFiles(root){gbFiles.forEach(f=>{if(f.url)URL.revokeObjectURL(f.url)});gbFiles=[];gbDrawFiles(root)}
+function gbClearFiles(root,sent){sent.forEach(f=>{if(f.url)URL.revokeObjectURL(f.url)});gbFiles=gbFiles.filter(f=>!sent.includes(f));gbDrawFiles(root)}
 const gbB64=file=>new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).replace(/^data:[^,]*,/,''));r.onerror=()=>no(new Error('Could not read '+file.name));r.readAsDataURL(file)});
-/* One file to the bot's computer: base64 in 30 KB pieces through grokbot_card_upload, the chip
-   counting up; the last piece answers with the stored path the send references. */
-async function gbUpload(root,entry,botId){const b64=await gbB64(entry.file),id='u'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
- let path='';for(let off=0;off<b64.length;off+=GB_CHUNK){const chunk=b64.slice(off,off+GB_CHUNK);
-  entry.up=Math.min(99,Math.round(off/b64.length*100))+'%';gbDrawFiles(root);
+// The card can measure its local copy. Only Grok Bot knows when the remote upload finishes.
+async function gbUpload(root,entry,botId){
+ if(entry.uploaded&&entry.uploaded.botId===botId)return entry.uploaded.file;
+ const update=label=>{entry.up=label;gbDrawFiles(root)};
+ update('Reading…');
+ const b64=await gbB64(entry.file),id='u'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+ let off=0;
+ do {
+  const chunk=b64.slice(off,off+GB_CHUNK),last=off+chunk.length===b64.length;
+  update(last?'Uploading to Grok Bot…':'Preparing '+Math.floor(off/b64.length*100)+'%');
   const r=await invoke('grokbot_card_upload',{bot:botId,uploadId:id,name:entry.file.name,type:entry.file.type||'',offset:off,total:b64.length,chunk});
-  const body=unpackResult(r);if(!body||body.ok===false)throw new Error((body&&body.message)||'The upload failed.');
-  if(body.done){path=body.path;break}}
- if(!path)throw new Error('The upload did not finish.');return {path,name:entry.file.name}}
+  const body=unpackResult(r);
+  if(last){
+   if(!body||!body.done||!body.path)throw new Error('Grok Bot did not confirm the upload.');
+   update('Uploaded');
+   const file={path:body.path,name:body.name||entry.file.name};
+   entry.uploaded={botId,file};return file;
+  }
+  off+=chunk.length;
+  if(!body||body.received!==off)throw new Error('VoiceOS did not receive the file.');
+ } while(off<b64.length);
+}
 wireComposer=function(root,onSend){const f=$('#compose',root),i=$('#msg',f),b=$('.send',f),pick=$('#pick',root),plus=$('#attach',root);
  gbFiles=[];
  const go=()=>{const v=i.value.trim(),p=lcPane,files=gbFiles.slice();
@@ -165,7 +178,7 @@ wireComposer=function(root,onSend){const f=$('#compose',root),i=$('#msg',f),b=$(
   if(p.group&&gbEdit&&gbEdit.id===p.id&&!gbEdit.members.length){p.say('Keep at least one bot in the group.',true);gbEdit.open=true;gbDrawEdit();return}
   if(files.some(x=>x.up))return; // an upload is already on its way
   i.value='';b.disabled=true;lcDrafts.delete(p.id);gbSaveDrafts();p.say('');gbSend(p,v,files)};
- i.addEventListener('input',()=>b.disabled=!i.value.trim()&&!gbFiles.length);b.addEventListener('click',e=>{e.preventDefault();go()});
+ i.addEventListener('input',()=>b.disabled=gbFiles.some(f=>f.up)||(!i.value.trim()&&!gbFiles.length));b.addEventListener('click',e=>{e.preventDefault();go()});
  i.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();go()}});
  if(plus&&pick){const newPane=gbNew&&gbNew.root===root;plus.disabled=newPane; // a group that does not exist yet takes text first
   plus.addEventListener('click',()=>pick.click());pick.addEventListener('change',()=>{gbAddFiles(root,pick.files,lcPane);pick.value=''})}
@@ -235,15 +248,22 @@ function gbSend(p,v,files){files=files||[];const id=p.id,root=$('#chat'),names=f
  const localId=p.live.addLocal(v,names);gbFlying.add(localId);gbLaunch(v,localId,id);gbBump(id);
  // A group with pending member/name edits saves them in the same call, before it sends.
  const e=p.group&&gbEdit&&gbEdit.id===id&&gbDirty(gbEdit)?gbEdit:null,edit=e&&{members:e.members.slice(),groupName:e.name.trim()||e.base.name};
- // Files first, one after another (the chips count up), then the one send that names them.
- const uploads=files.length?(async()=>{const out=[];for(const f of files)out.push(await gbUpload(root,f,id));gbClearFiles(root);return out})():Promise.resolve([]);
- uploads.then(att=>invoke('grokbot_card_send',{...(edit?{group:id,...edit}:{bot:id}),message:v,...(att.length?{attachments:att}:{})}))
-  .then(r=>{let body=null;try{body=unpackResult(r)}catch(e){throw {status:'failed',error:e.message}}
-   if(!body||body.sent!==true)throw {status:'failed',error:(body&&body.message)||'The send was not confirmed.'};gbLocal(id,localId,'sent');
+ // Lock every selected chip before the first asynchronous file read. A second click cannot send it twice.
+ files.forEach(f=>{f.up='Waiting…'});if(files.length)gbDrawFiles(root);
+ let sending=false;
+ const uploads=(async()=>{const out=[];for(const f of files)out.push(await gbUpload(root,f,id));return out})();
+ uploads.then(att=>{
+  files.forEach(f=>{f.up='Sending…'});if(files.length)gbDrawFiles(root);
+  sending=true;
+  return invoke('grokbot_card_send',{...(edit?{group:id,...edit}:{bot:id}),message:v,...(att.length?{attachments:att}:{})});
+ }).then(r=>{let body=null;try{body=unpackResult(r)}catch(e){throw {status:'failed',error:e.message}}
+   if(!body||body.sent!==true)throw {status:'failed',error:(body&&body.message)||'The send was not confirmed.'};
+   if(files.length)gbClearFiles(root,files);gbLocal(id,localId,'sent');
    if(edit)gbSaved(id,body.members||edit.members,body.groupName||edit.groupName)})
-  .catch(e=>{const st=e&&e.status;if(st==='unknown'){gbLocal(id,localId,'orphan');return}
-   gbLocal(id,localId,null);gbGiveBack(id,v);gbFiles.forEach(f=>f.up='');gbDrawFiles(root);
-   gbSay(id,'Not sent. Your message is back in the box.')})
+  .catch(e=>{if(sending&&e&&e.status==='unknown'){
+    if(files.length)gbClearFiles(root,files);gbLocal(id,localId,'orphan');gbSay(id,'Check the chat before sending again.');return}
+   gbLocal(id,localId,null);gbGiveBack(id,v);files.forEach(f=>{f.up=''});gbDrawFiles(root);
+   gbSay(id,sending?'Not sent. Your message is back in the box.':'The upload did not finish. Your message was not sent.')})
   .finally(()=>gbFlying.delete(localId))}
 /* Voice already sent this message: it still leaves the box and flies into the orb, as a tap send does.
    It lands on its real row if the pane's first refresh already brought it, else on a local 'sent' row

@@ -36,6 +36,9 @@ test("signed-out sign-in and roster shortcuts return a renderable sign-in card",
       expect(card.type).toBe("widget");
       expect(card.html).toContain('"browserLogin":true');
       expect(card.html).toContain("Sign in to Grok Bot</button>");
+      expect(card.html).toContain('class="voiceos-mk"');
+      expect(card.html).not.toContain('class="hero"');
+      expect(card.html).not.toContain('class="acct"');
     }
   } finally {
     await client.close();

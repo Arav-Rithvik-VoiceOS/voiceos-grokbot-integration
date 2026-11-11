@@ -14,7 +14,7 @@
  * user's OWN session on the user's OWN Mac. See SPIKE.md for the proof run and
  * PLAN.md for the design.
  */
-import { browserSelected, browserSignedIn, browserRoster, browserTranscript, browserSend, browserGateway, browserCreate, browserRoom, browserMembers, browserRename, browserUpload, browserNotify, browserWidget } from "./browserSession.ts";
+import { browserSelected, browserSignedIn, browserRoster, browserTranscript, browserSend, browserGateway, browserCreate, browserRoom, browserMembers, browserRename, browserUpload, browserMarkRead, browserNotify, browserWidget } from "./browserSession.ts";
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1238,7 +1238,7 @@ export const listAllAutomations = () => gateway<AutomationEntry[]>("listAllAutom
 
 /** A file already uploaded to the bot's computer (uploadAttachment): the path
  * the gateway handed back, and the name the user saw. */
-export interface SentAttachment { path: string; name: string }
+export interface SentAttachment { path: string; name: string; sha256?: string }
 export const sendPrompt = (agentId: string, prompt: string, attachments: SentAttachment[] = []) =>
   browserSelected() ? browserSend(agentId, prompt, attachments) : gateway<{ accepted?: boolean }>("sendPrompt", {
     agentId, prompt,
@@ -1312,6 +1312,9 @@ export const renameGroup = (group: Agent, name: string) =>
 
 export const transcriptTail = (id: string, limit = 8, beforeSeq?: number) =>
   browserSelected() ? browserTranscript(id, limit, beforeSeq) : gateway<{ entries?: TranscriptEntry[]; nextBeforeSeq?: number }>("getAgentTranscriptTail", { id, limit, ...(beforeSeq !== undefined ? { beforeSeq } : {}) });
+
+export const markChatRead = (id: string) =>
+  browserSelected() ? browserMarkRead(id) : gateway("setAgentUnread", { id, isUnread: false }, { timeoutMs: WRITE_TIMEOUT_MS });
 
 export const respondToWidget = (agentId: string, entryId: string, value: string) =>
   browserSelected() ? browserWidget(agentId, entryId, value) : gateway<{ accepted?: boolean } | null>("respondToWidget", { agentId, entryId, value }, { timeoutMs: WRITE_TIMEOUT_MS });

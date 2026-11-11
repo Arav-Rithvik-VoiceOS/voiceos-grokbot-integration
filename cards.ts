@@ -26,7 +26,7 @@ import {
   SCREEN_PANE_JS, SCREEN_PANE_CSS,
 } from "./assets.generated.ts";
 import { toCardThread, boundThread, type CardItem } from "./conversation.ts";
-import { renderMarkdown } from "./markdown.ts";
+import { markdownPreview, renderMarkdown } from "./markdown.ts";
 import { GROK_ALL_SHAPE_IDS, SHAPE_ART, type GrokAnyShape, avatarCss } from "./avatarShapes.ts";
 
 type CardName = "connect" | "show" | "create" | "guide" | "reconnect";
@@ -280,8 +280,7 @@ export function relTime(ms?: number): string {
 /** A latest-message line is one ellipsized row on screen; the gateway's preview
  * can be a whole reply, and every roster (cards, snapshots) carries one per bot. */
 const preview = (s?: string) => {
-  const one = (s ?? "").trim();
-  return one.length > 120 ? `${one.slice(0, 119).trimEnd()}…` : one;
+  return s ? markdownPreview(s) : "";
 };
 
 /** The flags a roster row draws beyond its orb and name: Grok Bot's blue unread
@@ -611,7 +610,7 @@ export function guideCard(setup: SetupState, bots: Agent[] = [], page: 0 | 1 | 2
 
 /** connect.html — first-run / needs-sign-in status. */
 export function connectCard(account?: { name?: string; email?: string }, browserLogin = false) {
-  return glance("connect", { data: { account: account ?? { name: "You" }, browserLogin }, args: {} }, 340, "Grok Bot");
+  return glance("connect", { data: { account: account ?? { name: "You" }, browserLogin }, args: {} }, 156, "Grok Bot");
 }
 
 /** reconnect.html — the cloud computer is asleep and no saved route can wake

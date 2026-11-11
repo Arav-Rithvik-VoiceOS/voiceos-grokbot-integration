@@ -329,7 +329,7 @@ export const browserSend = (
   useClient(async (client) => {
     const { sessionId } = await findBot(client, botId);
     const digest = createHash("sha256")
-      .update(JSON.stringify([botId, sessionId, text, attachments]))
+      .update(JSON.stringify([botId, sessionId, text, attachments.map(a => a.sha256 ? { name: a.name, sha256: a.sha256 } : a)]))
       .digest("hex");
     const directory = join(folder, "sends", digest);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -535,6 +535,11 @@ export async function browserPrefs(): Promise<SidebarPrefs> {
         agentIds: strings(g.agentIds),
       })),
   };
+}
+export async function browserMarkRead(agentId: string) {
+  const { state } = await rpc("SetGrokBotAgentClientState", { agentId, markRead: true });
+  if (state?.agentId !== agentId || Number(state.unreadCount ?? 0) !== 0)
+    throw new Error("Grok Bot did not confirm that this chat was read.");
 }
 export async function browserNotify(agentId: string, enabled: boolean) {
   const { state } = await rpc("SetGrokBotAgentClientState", {

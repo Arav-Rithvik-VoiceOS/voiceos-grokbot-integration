@@ -374,7 +374,7 @@ const FX = JSON.parse(document.getElementById('fx').textContent);
 const $ = s => document.querySelector(s);
 const frame = $('#card'), logEl = $('#log'), countsEl = $('#counts'), metaEl = $('#meta');
 const UI_CALLABLE = new Set(FX.uiCallable);
-const CARD_REQUEST = new Set(['grokbot_card_snapshot', 'grokbot_card_entry', 'grokbot_card_image', 'grokbot_card_action']);
+const CARD_REQUEST = new Set(['grokbot_card_snapshot', 'grokbot_card_seen', 'grokbot_card_entry', 'grokbot_card_image', 'grokbot_card_action']);
 const clone = v => JSON.parse(JSON.stringify(v));
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -562,6 +562,10 @@ const HANDLERS = {
     const out = { ok: true, bots: botsNow(t.group ? null : t.id), groups: FX.groups, ...FX.layout, thread: clone(t.base.concat(t.live)) };
     if (t.older.length) out.nextBeforeSeq = FX.olderCursor;
     return out;
+  },
+  grokbot_card_seen(a) {
+    const t = tgt(a.bot), newest = t.base.concat(t.live).at(-1);
+    return { ok: true, seen: newest?.id === a.entryId };
   },
   grokbot_card_entry(a) {
     const t = tgt(a.bot), f = t.full[a.entryId];
