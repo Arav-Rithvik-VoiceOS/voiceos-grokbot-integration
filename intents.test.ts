@@ -474,3 +474,28 @@ test("slow follow-up history is aborted and uses the verified primary", async ()
   expect(await roster.chooseRecipient(bots,{requestText:"Ask Grok Bot to handle those sponsor emails"})).toMatchObject({bot:{id:"p"},source:"primary"});
   expect(aborted).toBe(true);
 });
+
+test("VOS-1672: a bot named anywhere gets the message; no name uses patterns; unsure uses the primary", async () => {
+  const bots: Agent[] = [
+    {id:"jarvis", name:"Jarvis · VoiceOS", description:"Email triage for the VoiceOS product"},
+    {id:"scout", name:"Scout"},
+    {id:"main", name:"Main"},
+  ];
+  const roster = new IntentRoster(async()=>bots);
+  roster.primary = async()=>"main";
+  await roster.refresh();
+  const route = (requestText:string, bot="jarvis") => roster.chooseRecipient(bots,{requestText,bot});
+  // Named without a "tell X" pattern: still that bot, whatever the model picked.
+  expect(await route("Can Scout look at the venue list?")).toMatchObject({bot:{id:"scout"},source:"explicit"});
+  expect(await route("I need Scout's take on the venue list")).toMatchObject({bot:{id:"scout"},source:"explicit"});
+  // Not named: the role match, then the primary.
+  expect(await route("Ask Grok Bot to triage the VoiceOS product email", "scout")).toMatchObject({bot:{id:"jarvis"},source:"role"});
+  expect(await route("Ask Grok Bot how it is going", "scout")).toMatchObject({bot:{id:"main"},source:"primary"});
+  // Two different bots named: the model's pick if it is one of them, else the primary.
+  expect(await route("Jarvis and Scout should compare notes", "scout")).toMatchObject({bot:{id:"scout"},source:"explicit"});
+  expect(await route("Jarvis and Scout should compare notes", "nobody")).toMatchObject({bot:{id:"main"},source:"primary"});
+  // Two bots with the same name: ask, never guess.
+  bots.push({id:"scout2", name:"Scout · Home"});
+  await expect(route("Could Scout check this for me")).rejects.toThrow("Which one");
+  expect(await route("Could Scout Home check this for me")).toMatchObject({bot:{id:"scout2"},source:"explicit"});
+});

@@ -9,7 +9,7 @@
 // FIRST import, on purpose: rebinds console.log/info/warn/debug to stderr
 // before any dependency runs, so no stray stdout line corrupts the MCP wire.
 import "./stdoutGuard.ts";
-import { BrowserLoginRequired, browserAccount, browserSelected, browserPrefs, browserRoutingHistory } from "./browserSession.ts";
+import { BrowserLoginRequired, ClientVersionRejected, browserAccount, browserSelected, browserPrefs, browserRoutingHistory, expectHostVault, useHostVault } from "./browserSession.ts";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -172,6 +172,26 @@ async function triggerReminder(
     return null;
   }
 }
+
+// The app keeps the Grok Bot sign-in in the OS keystore (Keychain / DPAPI) and
+// says which Grok Bot client version to present. Tools wait until it is loaded.
+const VaultAnswer = z.object({ available: z.boolean(), value: z.string().nullable().optional() });
+const VersionAnswer = z.object({ version: z.string().nullable() });
+const vaultRequest = (params: Record<string, unknown>) =>
+  server.server.request({ method: "voiceos/grokbot/vault", params }, VaultAnswer, { timeout: 10_000 });
+expectHostVault();
+server.server.oninitialized = () =>
+  void useHostVault({
+    get: (key) => vaultRequest({ op: "get", key }),
+    set: (key, value) => vaultRequest({ op: "set", key, value }),
+    delete: (key) => vaultRequest({ op: "delete", key }),
+    clientVersion: async () =>
+      (await server.server.request(
+        { method: "voiceos/grokbot/client-version", params: { platform: process.platform === "win32" ? "win32" : "darwin" } },
+        VersionAnswer,
+        { timeout: 5_000 },
+      )).version,
+  });
 
 // The trusted Settings window starts login through this private host request.
 server.server.setRequestHandler(z.object({
@@ -548,6 +568,11 @@ async function runTool(
       const displayRequest = tool === "grokbot_help" || tool === "grokbot_list" || tool === "grokbot_show";
       return result({ ok: displayRequest ? undefined : false, needsSetup: true, message: error.message });
     }
+    // Grok Bot no longer takes our client version: say so plainly (VOS-1672).
+    if (error instanceof ClientVersionRejected) {
+      log(`${tool} failed:`, error);
+      return result({ ok: false, message: error.message });
+    }
     log(`${tool} failed:`, error);
     // "Not set up / needs a refresh" isn't a crash. On a Mac that never
     // connected it's the first-run state: speak the fix, open the app, and show
@@ -638,7 +663,7 @@ const showTool = server.registerTool(
   {
     title: "Show bots",
     description:
-      "Show the user's Grok Bot AI teammates, or one bot's live progress. Use when the user asks to see their bots, what bots they have, or what a specific bot is doing right now.",
+      "Show the user's Grok Bot AI teammates, or one bot's live progress. Use when the user asks to see their bots, what bots they have, or what a specific bot is doing right now. Also use whenever the user asks to open, show, or pull up Grok Bot, a bot, or a bot's chat or conversation (\"open my Grok Bot\", \"open Jarvis's chat\"): this opens the card in the notch at once. With no bot named, omit bot.",
     inputSchema: {
       bot: z
         .string()

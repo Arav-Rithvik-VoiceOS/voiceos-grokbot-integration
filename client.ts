@@ -866,6 +866,9 @@ export interface Agent {
   isRunning?: boolean;
   isRunningTurn?: boolean;
   isComposingMessage?: boolean;
+  /** What the bot is doing right now, as the Grok Bot app words it
+   * ("Finding today's date"). Browser login only; absent when idle. */
+  activityText?: string;
   awaitingUserResponse?: boolean | string | Record<string, unknown> | null;
   hasUnread?: boolean;
   unreadCount?: number;

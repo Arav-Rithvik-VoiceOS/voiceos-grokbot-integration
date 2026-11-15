@@ -277,6 +277,39 @@ export function relTime(ms?: number): string {
   return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+/** A chat shows a time only where it means something, like the Grok Bot
+ * app: above the first message, after a quiet gap, and on a new day.
+ * widgets/live-chat.js carries an exact port of chatStamp and chatStamps. */
+export const STAMP_GAP_MS = 15 * 60_000;
+const dayOf = (ms: number) => {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+};
+/** "Today 8:11 PM", "Yesterday 9:02 AM", "Monday 4:10 PM", "Nov 3, 4:10 PM",
+ * "Nov 3, 2025, 4:10 PM". */
+export function chatStamp(ms: number, now = Date.now()): string {
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const days = Math.round((dayOf(now) - dayOf(ms)) / 864e5);
+  if (days <= 0) return `Today ${time}`;
+  if (days === 1) return `Yesterday ${time}`;
+  if (days < 7) return `${d.toLocaleDateString(undefined, { weekday: "long" })} ${time}`;
+  const sameYear = d.getFullYear() === new Date(now).getFullYear();
+  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) })}, ${time}`;
+}
+/** One label (or undefined) per item. Rows like "Messaged Scout" never get one
+ * and do not count as the previous message. */
+export function chatStamps(items: { timestampMs?: number; sys?: unknown }[], now = Date.now()): (string | undefined)[] {
+  let prev: number | undefined;
+  return items.map((item) => {
+    const ms = Number(item.timestampMs);
+    if (typeof item.sys === "string" || !ms) return undefined;
+    const show = prev === undefined || ms - prev >= STAMP_GAP_MS || dayOf(ms) !== dayOf(prev);
+    prev = ms;
+    return show ? chatStamp(ms, now) : undefined;
+  });
+}
+
 /** A latest-message line is one ellipsized row on screen; the gateway's preview
  * can be a whole reply, and every roster (cards, snapshots) carries one per bot. */
 const preview = (s?: string) => {
@@ -318,6 +351,8 @@ export function toBot(a: Agent) {
     task: preview(a.lastMessagePreview),
     time: relTime(a.lastActivityAt),
     ...flags(a),
+    // The chat's working row shows it ("Finding today's date"); only while working.
+    ...(statusOf(a) === "working" && a.activityText ? { activity: a.activityText } : {}),
   };
 }
 
@@ -442,16 +477,15 @@ export function toGroup(a: Agent) {
   };
 }
 
-/** A message as baked into a card: the CardItem plus `t`, its relative-time
- * label. `t` is presentation only — it is added here, at render time, and never
+/** A message as baked into a card: the CardItem plus `t`, its time label
+ * when it starts a new stretch of the chat (chatStamps). `t` is presentation only — it is added here, at render time, and never
  * to snapshot/entry results (it would change their version hashes); the live
- * chat recomputes it with its port of relTime. */
+ * chat recomputes it with its port of chatStamps. */
 export type BakedItem = CardItem & { t?: string };
-const withTime = (items: CardItem[]): BakedItem[] =>
-  items.map((item) => {
-    const t = relTime(item.timestampMs);
-    return t ? { ...item, t } : item;
-  });
+const withTime = (items: CardItem[]): BakedItem[] => {
+  const stamps = chatStamps(items);
+  return items.map((item, i) => (stamps[i] ? { ...item, t: stamps[i] } : item));
+};
 
 /**
  * transcript entries → the card's `thread` shape (every user-facing message:

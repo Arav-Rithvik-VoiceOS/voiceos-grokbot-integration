@@ -177,7 +177,7 @@ const Motion=(()=>{
  const HOVER='.row,.tile,.hd';
  let pointer=null,ptrAt=0,host=null;
  const live=new Set();
- function hover(h){host=h;live.forEach(m=>{const on=!!h&&h.contains(m.el);if(on!==m.on){m.on=on;schedule(m)}})}
+ function hover(h){host=h;live.forEach(m=>{const on=m.always||!!h&&h.contains(m.el);if(on!==m.on){m.on=on;schedule(m)}})}
  addEventListener('pointermove',e=>{pointer={x:e.clientX,y:e.clientY};ptrAt=performance.now();const h=e.target&&e.target.closest?e.target.closest(HOVER):null;if(h!==host)hover(h)});
  document.documentElement.addEventListener('pointerleave',()=>{pointer=null;if(host)hover(null)});
  addEventListener('blur',()=>{pointer=null;if(host)hover(null)});
@@ -202,11 +202,12 @@ const Motion=(()=>{
    later(m,gz,s==='working'?R(600,1200):s==='idle'?R(2400,6000):R(1600,3200))};
   gz();
  }
- function mount(el){if(el._m||!el.querySelector('.eyes'))return;const m=el._m={el,eyes:el.querySelector('.eyes'),timers:new Set(),on:!!host&&host.contains(el)};live.add(m);schedule(m)}
+ // The chat's working row (.lc-orb) is always alive, like the Grok Bot app's; every other orb moves only on hover.
+ function mount(el){if(el._m||!el.querySelector('.eyes'))return;const always=!!el.closest('.lc-orb');const m=el._m={el,eyes:el.querySelector('.eyes'),timers:new Set(),always,on:always||!!host&&host.contains(el)};live.add(m);schedule(m)}
  function scan(){document.querySelectorAll('.av').forEach(mount);live.forEach(m=>{if(!m.el.isConnected){clear(m);live.delete(m);delete m.el._m}})}
  // The original cursor-follow, for the hovered orb only.
  function tick(){if(host&&!host.isConnected)hover(null);
-  if(pointer&&!reduce){if(performance.now()-ptrAt>4000)pointer=null;else live.forEach(m=>{if(!m.on||!m.el.isConnected)return;const r=m.el.getBoundingClientRect();const dx=pointer.x-(r.left+r.width/2),dy=pointer.y-(r.top+r.height/2);const d=Math.hypot(dx,dy)||1,k=Math.min(1,d/140);m.eyes.style.transition='transform 200ms cubic-bezier(.2,.8,.2,1)';m.eyes.style.transform='translate('+(dx/d*16*k).toFixed(1)+'%,'+(dy/d*10*k).toFixed(1)+'%)'})}
+  if(pointer&&!reduce){if(performance.now()-ptrAt>4000)pointer=null;else live.forEach(m=>{if(!m.on||m.always||!m.el.isConnected)return;const r=m.el.getBoundingClientRect();const dx=pointer.x-(r.left+r.width/2),dy=pointer.y-(r.top+r.height/2);const d=Math.hypot(dx,dy)||1,k=Math.min(1,d/140);m.eyes.style.transition='transform 200ms cubic-bezier(.2,.8,.2,1)';m.eyes.style.transform='translate('+(dx/d*16*k).toFixed(1)+'%,'+(dy/d*10*k).toFixed(1)+'%)'})}
   requestAnimationFrame(tick)}
  requestAnimationFrame(tick);
  new MutationObserver(scan).observe(document.documentElement,{childList:true,subtree:true});

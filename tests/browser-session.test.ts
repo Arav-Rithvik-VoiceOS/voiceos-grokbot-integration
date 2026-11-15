@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +18,21 @@ writeFileSync(
   JSON.stringify({ accessToken: "different-local-profile" }),
 );
 const path = join(dir, "browser-session.json");
+// A week-old send record: the first send of this run deletes it.
+const oldSend = join(dir, "sends", "old-digest");
+mkdirSync(oldSend, { recursive: true });
+const eightDaysAgo = (Date.now() - 8 * 24 * 60 * 60_000) / 1000;
+utimesSync(oldSend, eightDaysAgo, eightDaysAgo);
+/** Makes the newest send claim look `ms` old. */
+const ageNewestClaim = (ms: number) => {
+  const sends = join(dir, "sends");
+  const newest = readdirSync(sends)
+    .map((name) => join(sends, name))
+    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+  const claims = readdirSync(newest).filter((f) => f.endsWith(".claim")).sort();
+  const at = (Date.now() - ms) / 1000;
+  utimesSync(join(newest, claims.at(-1)!), at, at);
+};
 const seed = () =>
   writeFileSync(
     path,
@@ -214,6 +229,46 @@ test("an unknown acknowledgement uses the same message ID across retries and nev
   expect(
     calls.filter((c) => c.method === "SendGrokBotUserMessage"),
   ).toHaveLength(2);
+});
+test("a send Grok Bot never saw is released after a minute, so the same text can be sent again", async () => {
+  seed();
+  calls.length = 0;
+  unknown = true;
+  deliveryStatus = "GROK_BOT_SEND_STATUS_NOT_FOUND";
+  try {
+    await expect(client.sendPrompt("assistant", "ok")).rejects.toThrow("Delivery is unknown");
+    // Within the grace period the claim still holds: no second send.
+    await expect(client.sendPrompt("assistant", "ok")).rejects.toThrow("Delivery is unknown");
+    expect(calls.filter((c) => c.method === "SendGrokBotUserMessage")).toHaveLength(1);
+    ageNewestClaim(61_000);
+    unknown = false;
+    await expect(client.sendPrompt("assistant", "ok")).resolves.toEqual({ accepted: true });
+    const sends = calls.filter((c) => c.method === "SendGrokBotUserMessage");
+    expect(sends).toHaveLength(2);
+    expect(sends[0].body.messageId).not.toBe(sends[1].body.messageId);
+  } finally {
+    unknown = false;
+  }
+});
+test("a claim stuck pending for over ten minutes is released too", async () => {
+  seed();
+  calls.length = 0;
+  unknown = true;
+  deliveryStatus = "GROK_BOT_SEND_STATUS_PENDING";
+  try {
+    await expect(client.sendPrompt("assistant", "thanks")).rejects.toThrow("Delivery is unknown");
+    ageNewestClaim(5 * 60_000);
+    await expect(client.sendPrompt("assistant", "thanks")).rejects.toThrow("Delivery is unknown");
+    ageNewestClaim(11 * 60_000);
+    unknown = false;
+    await expect(client.sendPrompt("assistant", "thanks")).resolves.toEqual({ accepted: true });
+    expect(calls.filter((c) => c.method === "SendGrokBotUserMessage")).toHaveLength(2);
+  } finally {
+    unknown = false;
+  }
+});
+test("week-old send records are cleaned up", () => {
+  expect(existsSync(oldSend)).toBe(false);
 });
 test("a 3 MB binary is acknowledged chunk by chunk; re-uploaded bytes share an unresolved send", async () => {
   seed();

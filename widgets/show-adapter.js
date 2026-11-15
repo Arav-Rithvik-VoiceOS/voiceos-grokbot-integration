@@ -205,12 +205,17 @@ function lcMount(b){const c=$('#chat'),list=$('#msgs',c),hd=$('.hd',c),form=$('#
  const items=((D.threads&&D.threads[id])||[]).map(i=>i&&i.local==='sending'&&!gbFlying.has(i.id)?{...i,local:'orphan'}:i);
  p.live=LiveChat.mount({bridge:lcBridge,list,header:hd,target:{id,name:b.name,isGroup:!!b.group},
   items,nextBeforeSeq:D.nextBeforeSeqs&&D.nextBeforeSeqs[id],newSince:gbNewSince&&gbNewSince.id===id?gbNewSince.t:null,
-  renderItem:m=>lcItem(m,id,!!b.group),onBots:(bots,gs,meta)=>lcBots(bots,gs,p,!!b.group,meta),statusLine:say,onScreen:()=>gbOpenScreen(b),
+  renderItem:m=>lcItem(m,id,!!b.group),renderActivity:(s,t)=>gbActRow(b,s,t),updateActivity:gbActUpdate,onBots:(bots,gs,meta)=>lcBots(bots,gs,p,!!b.group,meta),statusLine:say,onScreen:()=>gbOpenScreen(b),
   onItems:(its,before)=>{D.threads[id]=its;D.nextBeforeSeqs=D.nextBeforeSeqs||{};D.nextBeforeSeqs[id]=before;gbSaveThread(id,its,before)},
   onLost:it=>{gbGiveBack(id,it.text);say('A message did not send. It is back in the box.',true)}});
  const back=$('#back',c),goBack=back.onclick;back.onclick=()=>{lcClose();gbPut({pane:null});if(goBack)goBack.call(back);gbListLive()};
  gbNewSince=null;if(b.group)gbMountEdit(g,c);
  p.live.refresh()}
+// The working row under the last message: the bot's face (spins in, then the Motion engine keeps its
+// eyes busy) and its status with a shimmer, as in the Grok Bot app.
+const gbActLabel=(s,t)=>t||(s==='typing'?'Typing…':'Working…');
+function gbActRow(b,s,t){return '<span class="lc-orb">'+av({...b,status:s==='typing'?'thinking':'working'},'mini')+'</span><span class="lc-act-t">'+esc(gbActLabel(s,t))+'</span>'}
+function gbActUpdate(row,s,t){const x=row.querySelector('.lc-act-t'),o=row.querySelector('.av');if(x)x.textContent=gbActLabel(s,t);if(o&&typeof Motion!=='undefined')Motion.set(o,s==='typing'?'thinking':'working')}
 // show.html's own row markup (thread()), one item at a time. Notices have no bot, so no orb. In a group
 // each bot's message is named, as in the group thread card. A local send reads "Sending…" until confirmed.
 function lcItem(m,id,g){if(typeof m.sys==='string'&&!m.bot)return m.sys?'<div class="sys">'+esc(m.sys)+'</div>':'';

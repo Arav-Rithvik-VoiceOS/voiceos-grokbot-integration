@@ -18,7 +18,15 @@ const LiveChat=(()=>{
  const IMG=new Map(),FULL=new Map(),keep=(m,k,v)=>{if(m.size>=32)m.delete(m.keys().next().value);m.set(k,v)};
  let anon=0;
 
- // Exact port of cards.ts relTime().
+ // Exact port of cards.ts chatStamp() / chatStamps(): a time only above the
+ // first message, after a 15-minute gap, or on a new day, like Grok Bot.
+ const GAPT=15*6e4,dayOf=ms=>{const d=new Date(ms);return new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime()};
+ function chatStamp(ms,now){now=now||Date.now();const d=new Date(ms),time=d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}),days=Math.round((dayOf(now)-dayOf(ms))/864e5);
+  if(days<=0)return 'Today '+time;if(days===1)return 'Yesterday '+time;if(days<7)return d.toLocaleDateString(undefined,{weekday:'long'})+' '+time;
+  const same=d.getFullYear()===new Date(now).getFullYear();return d.toLocaleDateString(undefined,same?{month:'short',day:'numeric'}:{month:'short',day:'numeric',year:'numeric'})+', '+time}
+ function chatStamps(list,now){let prev;return list.map(it=>{const ms=+it.timestampMs;if(typeof it.sys==='string'||!ms)return undefined;
+  const show=prev===undefined||ms-prev>=GAPT||dayOf(ms)!==dayOf(prev);prev=ms;return show?chatStamp(ms,now):undefined})}
+ // Exact port of cards.ts relTime() (the roster's "5m" labels).
  function relTime(ms){if(!ms)return '';const min=Math.floor((Date.now()-ms)/60000);if(min<1)return 'now';if(min<60)return min+'m';
   const hr=Math.floor(min/60);if(hr<24)return hr+'h';const day=Math.floor(hr/24);if(day===1)return 'Yesterday';
   if(day<7)return new Date(ms).toLocaleDateString(undefined,{weekday:'short'});return new Date(ms).toLocaleDateString(undefined,{month:'short',day:'numeric'})}
@@ -75,6 +83,22 @@ const LiveChat=(()=>{
   const top=el('button','sys lc-older','Earlier messages'),end=el('div','sys lc-paused','Live updates paused. Open this conversation again to continue.');
   // Grok Bot's unread divider (line · label · line) above the first bot message newer than o.newSince (epoch ms).
   const since=num(o&&o.newSince),nl=el('div','lc-new');nl.setAttribute('role','separator');nl.setAttribute('aria-label','New messages');nl.innerHTML='<i></i><span>New messages</span><i></i>';
+  // The bot's working row under the last message, like the Grok Bot app: its face
+  // and what it is doing ("Finding today's date", "Typing…"), gone once it replies.
+  const actRow=el('div','lc-act');actRow.setAttribute('role','status');actRow.setAttribute('aria-live','polite');
+  let actOn='',actText=null,actOut=0,expectUntil=0,sentAt=0;
+  function setAct(state,text){if(T.isGroup||!o.renderActivity)return;text=text||'';
+   if(!state){if(!actOn)return;actOn='';actText=null;actRow.classList.add('lc-act-out');clearTimeout(actOut);actOut=setTimeout(()=>{if(!actOn){actRow.remove();actRow.classList.remove('lc-act-out');rep()}},280);return}
+   clearTimeout(actOut);actRow.classList.remove('lc-act-out');
+   if(!actOn){try{actRow.innerHTML=o.renderActivity(state,text)||''}catch(_){actRow.innerHTML=''}actOn=state;actText=text;draw();return}
+   if(state===actOn&&text===actText)return;actOn=state;actText=text;
+   try{o.updateActivity?o.updateActivity(actRow,state,text):(actRow.innerHTML=o.renderActivity(state,text)||'')}catch(_){}rep()}
+  // Working until Grok Bot says otherwise; right after a send, until the reply lands.
+  function actFrom(b,fresh){const row=(b.bots||[]).find(r=>r.id===bot),st=row&&row.status;
+   if(sentAt&&fresh.some(i=>i.from!=='me'&&typeof i.sys!=='string'&&+i.timestampMs>=sentAt-2e3))expectUntil=0;
+   if(st==='thinking')return setAct('typing','');
+   if(st==='working')return setAct('working',typeof row.activity==='string'?row.activity:'');
+   setAct(Date.now()<expectUntil?'working':'','')}
   let pc=null;
   if(o.header&&!T.isGroup){pc=el('button','lc-pc');pc.title='View screen';pc.setAttribute('aria-label','View screen');pc.innerHTML=PC;
    const wm=o.header.querySelector('.mark');wm?wm.before(pc):o.header.append(pc);
@@ -126,9 +150,9 @@ const LiveChat=(()=>{
   function draw(mode){if(dead)return;
    const pin=stick,h0=list.scrollHeight,y0=list.scrollTop,a=mode?null:anchor();
    const old=new Map([...list.children].filter(n=>n.dataset.lc).map(n=>[n.dataset.lc,n]));
-   const ae=document.activeElement,nodes=items.map(it=>{const v=view(it),s=sig(v),t=relTime(v.timestampMs);let n=old.get(it.id);
+   const ae=document.activeElement,stamps=chatStamps(items.map(view)),nodes=items.map((it,ix)=>{const v=view(it),s=sig(v),t=stamps[ix]||'';let n=old.get(it.id);
     // Only the time label moved on ("4m" → "5m"): update it in place, so a focused answer field keeps focus.
-    if(n&&n.dataset.s===s){if(n.dataset.t!==t){const x=n.querySelector('[data-lc-t]');if(x)x.textContent=t;n.dataset.t=t}return n}
+    if(n&&n.dataset.s===s&&n.dataset.t===t)return n
     const fresh=!n;if(fresh){n=el('div','');n.dataset.lc=it.id}
     const fo=!fresh&&ae&&n.contains(ae)&&ae.matches('[data-lc-custom]')?[ae.selectionStart,ae.selectionEnd]:null;
     n.dataset.s=s;n.dataset.t=t;n.innerHTML=html(v,t);
@@ -143,9 +167,9 @@ const LiveChat=(()=>{
    const mine=items.filter(i=>i.from==='me'&&typeof i.text==='string');
    [...list.children].forEach(n=>{const x=n.dataset.lcMine;if(x==null||n.dataset.lc)return;const at=+n.dataset.lcAt||0;
     if(mine.some(i=>i.text.trim()===x&&(!i.timestampMs||i.timestampMs>=at-12e4))){const s=n.nextElementSibling;if(s&&!s.dataset.lc&&s.classList.contains('sys'))s.remove();n.remove()}});
-   const rest=[...list.children].filter(n=>!n.dataset.lc&&n!==top&&n!==end&&n!==nl&&!(items.length&&n.classList.contains('empty')));
+   const rest=[...list.children].filter(n=>!n.dataset.lc&&n!==top&&n!==end&&n!==nl&&n!==actRow&&!(items.length&&n.classList.contains('empty')));
    top.hidden=before==null;list.classList.toggle('lc-off',spent());
-   const want=[top,...nodes,...rest];if(paused)want.push(end);
+   const want=[top,...nodes,...(actOn||actRow.classList.contains('lc-act-out')&&actRow.isConnected?[actRow]:[]),...rest];if(paused)want.push(end);
    const ni=since==null?-1:items.findIndex(i=>i.from!=='me'&&!i.local&&typeof i.sys!=='string'&&+i.timestampMs>since);if(ni>=0)want.splice(ni+1,0,nl);
    // Move only what changed, so a focused answer field keeps focus across refreshes.
    let ref=list.firstChild;for(const n of want){if(n===ref)ref=ref.nextSibling;else list.insertBefore(n,ref)}
@@ -198,7 +222,7 @@ const LiveChat=(()=>{
   // names: files going with the send, shown as chips on the row until the delivered copy replaces it.
   function addLocal(text,names){const it={id:'lc-local-'+Date.now().toString(36)+'-'+(++anon),from:'me',text:String(text),timestampMs:Date.now(),local:'sending'};
    if(Array.isArray(names)&&names.length)it.media=names.map((n,i)=>({kind:'file',name:String(n),index:i}));
-   items.push(it);stick=true;draw('bottom');saved();return it.id}
+   items.push(it);stick=true;draw('bottom');sentAt=it.timestampMs;expectUntil=Date.now()+25e3;setAct('working','');saved();return it.id}
   function setLocal(id,state){const it=items.find(i=>i.id===id);if(!it||!it.local)return;items=items.map(i=>i.id===id?{...i,local:state}:i);draw();saved()}
   function dropLocal(id){items=items.filter(i=>i.id!==id);draw();saved()}
   // Mark only the page the user saw. The roster poll and older-page loader never call this.
@@ -224,7 +248,7 @@ const LiveChat=(()=>{
      // Loaded older rows stay above the newest page; a page with no overlap replaces them (the gap is "Earlier messages").
      const locals=items.filter(i=>i.local),kept=at<0?[]:items.slice(0,at).filter(i=>!ids.has(i.id)&&!i.local&&!i.id.startsWith('lc-anon-'));
      items=[...kept,...fresh];if(!kept.length)before=num(b.nextBeforeSeq);reconcile(fresh,locals);
-     bots(b);erred=false;draw();saved();return acknowledge(b,fresh)})
+     bots(b);erred=false;draw();actFrom(b,fresh);saved();return acknowledge(b,fresh)})
     .catch(e=>{if(!dead&&e.refused!=='auto')erred=true}) // a missed refresh is silent: the next one usually lands; out of automatic requests: just pause
     .finally(()=>{busy=null;if(!dead)over()?pause():schedule()});
    return busy}
@@ -272,7 +296,7 @@ const LiveChat=(()=>{
   const on=(t,f,x)=>(x||list)[dead?'removeEventListener':'addEventListener'](t,f);
   const wire=()=>{on('click',click);on('input',onInput);on('keydown',onKey);on('scroll',onScroll);on('visibilitychange',vis,document)};
 
-  function destroy(){if(dead)return;dead=true;clearTimeout(timer);timer=0;if(io)io.disconnect();if(rsz)rsz.disconnect();if(off)off();wire();if(pc)pc.remove();top.remove();end.remove();nl.remove()}
+  function destroy(){if(dead)return;dead=true;clearTimeout(timer);timer=0;clearTimeout(actOut);actRow.remove();if(io)io.disconnect();if(rsz)rsz.disconnect();if(off)off();wire();if(pc)pc.remove();top.remove();end.remove();nl.remove()}
 
   // Take over the list: keyed rows replace the handoff's first render (an empty-group note stays until messages arrive).
   [...list.childNodes].forEach(n=>{if(!(n.classList&&n.classList.contains('empty')&&!items.length))n.remove()});

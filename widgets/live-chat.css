@@ -48,3 +48,16 @@
 /* Grok Bot's unread divider (sand-unread-divider): a line, the label, a line — red here. */
 .lc-new{align-self:stretch;display:flex;align-items:center;gap:8px;margin:14px 0 8px;padding:2px 0;flex-shrink:0;color:var(--bad);font-size:11px;font-weight:500;line-height:14px}
 .lc-new i{flex:1 1 0;height:1px;background:currentColor;opacity:.6}
+/* The working row under the last message (Grok Bot's typing row): the face pops in and spins
+   once (its eyes slide off one side and back in from the other), then the label shimmers. */
+.lc-act{display:flex;align-items:center;gap:8px;align-self:flex-start;margin:6px 0 2px 2px;flex-shrink:0;transition:opacity .26s ease,transform .26s ease}
+.lc-act.lc-act-out{opacity:0;transform:scale(.85);transform-origin:10px 50%}
+.lc-orb{display:inline-flex;animation:lc-pop .32s cubic-bezier(.3,1.4,.5,1) both}
+/* backwards, not both: once the turn ends the Motion engine moves the eyes again. */
+.lc-orb .av .eyes{animation:lc-turn .9s .28s cubic-bezier(.45,0,.3,1) backwards}
+.lc-act-t{font-size:12.5px;line-height:18px;color:transparent;background:linear-gradient(90deg,var(--ink-3) 0 35%,var(--ink-1) 50%,var(--ink-3) 65% 100%) 0 0/260% 100%;-webkit-background-clip:text;background-clip:text;animation:lc-act-in .3s .2s ease both,lc-shine 1.8s linear infinite;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@keyframes lc-pop{0%{opacity:0;transform:scale(.3)}100%{opacity:1;transform:scale(1)}}
+@keyframes lc-turn{0%{transform:translate(0,0)}25%{transform:translate(-16%,12%)}55%{transform:translate(-130%,8%)}55.01%{transform:translate(130%,8%)}100%{transform:translate(0,0)}}
+@keyframes lc-act-in{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:none}}
+@keyframes lc-shine{from{background-position:100% 0}to{background-position:-60% 0}}
+@media (prefers-reduced-motion:reduce){.lc-orb,.lc-orb .av .eyes{animation:none}.lc-act-t{animation:none;color:var(--ink-3);background:none}}

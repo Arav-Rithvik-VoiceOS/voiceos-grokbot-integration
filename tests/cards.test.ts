@@ -3,7 +3,7 @@ import { toCardItem, toCardThread, toThread as threadItems, boundThread, type Ca
 import { conversationSnapshot, conversationEntry, conversationTransport } from "../conversationService.ts";
 import {
   renderCard, showCard, reconnectCard, guideCard, glanceChars,
-  relTime, toThread, toBot, MAX_GLANCE_CHARS, confirmationContext, CONFIRMATION_CONTEXT_CHARS,
+  relTime, chatStamp, chatStamps, toThread, toBot, MAX_GLANCE_CHARS, confirmationContext, CONFIRMATION_CONTEXT_CHARS,
 } from "../cards.ts";
 import {
   LIVE_CHAT_JS, LIVE_CHAT_CSS, MARKDOWN_CSS,
@@ -104,11 +104,29 @@ describe("card items", () => {
     expect(preview.text!.length).toBeLessThanOrEqual(160);
     expect(toCardItem(preview)).toEqual(preview);
   });
-  test("cards bake a relative-time label; nothing else does", () => {
+  test("cards bake a Grok Bot style time above the first message; nothing else does", () => {
     const [baked] = toThread([picture]);
-    expect(baked.t).toBe(relTime(picture.timestampMs));
-    expect(baked.t).toBe("5m");
+    expect(baked.t).toBe(chatStamp(picture.timestampMs!));
+    expect(baked.t).toMatch(/^(Today|Yesterday) \d{1,2}:\d{2}/);
     expect(toThread([upload])[0].t).toBeUndefined();
+  });
+  test("a chat shows a time only at the start, after a 15-minute gap, or on a new day", () => {
+    const now = new Date(2026, 10, 14, 20, 30).getTime();
+    const at = (h: number, m: number, day = 14) => ({ timestampMs: new Date(2026, 10, day, h, m).getTime() });
+    const stamps = chatStamps([
+      at(15, 31), at(15, 32), at(15, 40),   // one stretch: one time
+      { sys: "Messaged Scout", timestampMs: at(19, 0).timestampMs }, // a row, never a time
+      at(20, 11), at(20, 12),               // after a gap: a new time
+    ], now);
+    expect(stamps.map(s => s && s.replace(/\s/g, " "))).toEqual([
+      expect.stringMatching(/^Today 3:31 PM$/), undefined, undefined, undefined,
+      expect.stringMatching(/^Today 8:11 PM$/), undefined,
+    ]);
+    expect(chatStamp(at(9, 2, 13).timestampMs, now).replace(/\s/g, " ")).toBe("Yesterday 9:02 AM");
+    expect(chatStamp(at(16, 10, 9).timestampMs, now).replace(/\s/g, " ")).toBe("Monday 4:10 PM");
+    expect(chatStamp(at(16, 10, 3).timestampMs, now).replace(/\s/g, " ")).toBe("Nov 3, 4:10 PM");
+    // A day change always shows a time, even with no 15-minute gap.
+    expect(chatStamps([at(23, 55, 13), at(0, 1, 14)], now)[1]).toMatch(/^Today 12:01/);
   });
 });
 
@@ -192,7 +210,7 @@ describe("baked cards stay under the glance cap", () => {
     const agents = roster(4);
     const threads = { b0: toCardThread([picture]), b1: [] };
     const data = demo(htmlOf(showCard(agents, undefined, threads, { b0: 3, b1: 4 }))).data;
-    expect(data.threads.b0[0]).toMatchObject({ id: "picture", t: "5m" });
+    expect(data.threads.b0[0]).toMatchObject({ id: "picture", t: expect.stringMatching(/^(Today|Yesterday) /) });
     expect(data.threads.b1).toBeUndefined();
     expect(data.nextBeforeSeqs).toEqual({ b0: 3 });
   });
@@ -324,5 +342,23 @@ describe("guide card", () => {
   test("a bot name cannot end the payload script", () => {
     const html = htmlOf(guideCard({}, [{ id: "x", name: "</script><script>alert(1)</script>" }]));
     expect(scripts(html)).toHaveLength(1);
+  });
+});
+
+describe("the working row's activity text (VOS-1672)", () => {
+  test("Grok Bot's live.activity.text reaches a working bot's row, and only then", async () => {
+    const { activityTexts } = await import("../browserSession.ts");
+    const texts = activityTexts({ statuses: [
+      { agentId: "scout", live: { isRunning: true, activity: { kind: "tool", text: "  Finding\n today's date " } } },
+      { agentId: "idle", live: { activity: { text: "" } } },
+      { agentId: 7, live: { activity: { text: "bad id" } } },
+      { agentId: "long", live: { activity: { text: "x".repeat(400) } } },
+    ] });
+    expect(texts.get("scout")).toBe("Finding today's date");
+    expect(texts.has("idle")).toBe(false);
+    expect(texts.get("long")).toHaveLength(120);
+    expect(activityTexts(null).size).toBe(0);
+    expect(toBot({ id: "scout", name: "Scout", isRunning: true, activityText: "Finding today's date" }).activity).toBe("Finding today's date");
+    expect(toBot({ id: "scout", name: "Scout", activityText: "stale" }).activity).toBeUndefined();
   });
 });

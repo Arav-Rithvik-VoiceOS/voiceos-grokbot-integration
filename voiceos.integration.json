@@ -14,8 +14,8 @@
   ],
   "icon": "icon.png",
   "publisher": {
-    "id": "voiceos",
-    "name": "VoiceOS"
+    "id": "arav",
+    "name": "Arav D"
   },
   "runtime": {
     "kind": "local-mcp",
@@ -126,7 +126,7 @@
       "name": "grokbot_thread",
       "title": "Read a bot's messages",
       "hidePermissionToggle": true,
-      "description": "Read what one Grok Bot teammate said, found, or did. Use for ANY question about a bot's messages or results: what it said, summarize its work, answer a question from it, or draft something from it. Returns the message text in `thread`; read it and do what the user asked in your own words. Set show only when the user asks to see or open the conversation. Accounts a bot needs (Gmail, Google Calendar, Slack, …) cannot be connected by voice or in VoiceOS: tell the user to press \"Open in Grok Bot\" on that request in the bot's card, or open the bot's chat in the Grok Bot app, and connect it there.",
+      "description": "Read what one Grok Bot teammate said, found, or did. Use for ANY question about a bot's messages or results: what it said, summarize its work, answer a question from it, or draft something from it. Returns the message text in `thread`; read it and do what the user asked in your own words. Never use this only to open or show a chat: for \"open my Grok Bot\" or \"open Jarvis's chat\" use grokbot_show, which opens the card in the notch. Set show only when the user asks to see the conversation along with a question about it. Accounts a bot needs (Gmail, Google Calendar, Slack, …) cannot be connected by voice or in VoiceOS: tell the user to press \"Open in Grok Bot\" on that request in the bot's card, or open the bot's chat in the Grok Bot app, and connect it there.",
       "inputSchema": {
         "type": "object",
         "properties": {

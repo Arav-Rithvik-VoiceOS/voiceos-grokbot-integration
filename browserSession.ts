@@ -9,6 +9,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -42,10 +43,184 @@ const folder = scope ? join(baseFolder, "accounts", scope) : baseFolder;
 const sessionFile = join(folder, "browser-session.json");
 const pendingFile = join(folder, "pending-login.json");
 const lifetime = 10 * 60_000;
-const version = process.platform === "win32" ? "0.79.3" : "0.78.5";
+/** The Grok Bot client version we present when the app has no newer one
+ * (see clientVersion below). The only place these numbers live. */
+export const DEFAULT_CLIENT_VERSION =
+  process.platform === "win32" ? "0.79.3" : "0.78.5";
+let version = DEFAULT_CLIENT_VERSION;
 const api = "https://api2.cursor.sh";
 type Session = { accessToken: string; selectedTeamId?: number };
 type Pending = LoginFlow & { expiresAt: number };
+
+// ── Where the sign-in lives ──────────────────────────────────────────────────
+//
+// In VoiceOS the app keeps it, encrypted with the OS keystore (Keychain on
+// macOS, DPAPI on Windows), through the `voiceos/grokbot/vault` host request.
+// This process holds a copy in memory only. Older plain files from 1.0.0 are
+// moved into the vault once and deleted. Without a VoiceOS host (tests, dev
+// scripts) the files below are still used.
+
+/** The app's answer: `available: false` means no OS keystore on this computer. */
+export type HostVault = {
+  get(key: "session" | "pending"): Promise<{ available: boolean; value?: string | null }>;
+  set(key: "session" | "pending", value: string): Promise<{ available: boolean }>;
+  delete(key: "session" | "pending"): Promise<{ available: boolean }>;
+  clientVersion(): Promise<string | null>;
+};
+let vault: HostVault | undefined;
+/** Memory copy while the vault is in use; undefined = signed out / no request. */
+const memory: { session?: Session; pending?: Pending } = {};
+/** Keystore missing: keep the sign-in for this run only. */
+let memoryOnly = false;
+type Key = "session" | "pending";
+/** Keys read from the keystore this run. */
+const loaded = new Set<Key>();
+/** Keys changed in this run that the keystore does not have yet. */
+const unsaved = new Set<Key>();
+/** After a vault error, try again at the next tool call after this time. */
+let retryAt = 0;
+let loading: Promise<void> | undefined;
+const RETRY_MS = 60_000;
+let ready: Promise<void> = Promise.resolve();
+let markReady: () => void = () => {};
+
+/** Call at startup, before the host connects: tools wait for the vault. */
+export function expectHostVault(): void {
+  ready = new Promise((resolve) => (markReady = resolve));
+}
+
+function parse<T>(value: string | null | undefined): T | undefined {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Once the host is connected: load the sign-in and retire the plain files. */
+export async function useHostVault(host: HostVault): Promise<void> {
+  // Called once per process; start from nothing (tests call it again).
+  vault = host;
+  memoryOnly = false;
+  retryAt = 0;
+  loaded.clear();
+  unsaved.clear();
+  memory.session = memory.pending = undefined;
+  try {
+    await loadVault();
+    version = (await host.clientVersion().catch(() => null)) ?? version;
+  } finally {
+    markReady();
+  }
+}
+
+/** Every caller waits for this. After a vault error it tries the vault again
+ * (at most once a minute), so a startup race does not last the whole run. */
+async function vaultReady(): Promise<void> {
+  await ready;
+  if (!vault || memoryOnly || Date.now() < retryAt) return;
+  if (loaded.size < 2 || unsaved.size) await (loading ??= loadVault().finally(() => (loading = undefined)));
+}
+
+const legacyFile = (key: Key) => (key === "session" ? sessionFile : pendingFile);
+function usable<T>(key: Key, value: unknown): T | undefined {
+  if (key === "session") return (value as Session | undefined)?.accessToken ? (value as T) : undefined;
+  const flow = value as Pending | undefined;
+  return flow && flow.expiresAt > Date.now() ? (value as T) : undefined;
+}
+
+/**
+ * Reads each key the keystore has not given us yet, then saves what changed
+ * here. A failed read or write (the app refused because VoiceOS login is not
+ * ready, a timeout, a locked file) keeps the sign-in in memory and tries again
+ * later. It never writes a plain file; an old 1.0.0 file is only read, and is
+ * deleted once the keystore has its value.
+ */
+async function loadVault(): Promise<void> {
+  const host = vault!;
+  const keys = (["session", "pending"] as const).filter((key) => !loaded.has(key));
+  const answers = await Promise.allSettled(keys.map((key) => host.get(key)));
+  let failed = false;
+  answers.forEach((answer, i) => {
+    const key = keys[i];
+    if (answer.status === "rejected") {
+      failed = true;
+      // Until the keystore answers, an old file still signs the user in.
+      if (!unsaved.has(key) && !memory[key]) memory[key] = usable(key, read(legacyFile(key)));
+      return;
+    }
+    loaded.add(key);
+    if (!answer.value.available) memoryOnly = true;
+    if (unsaved.has(key)) return; // changed during this run: newer than the keystore
+    const stored = usable<Session & Pending>(key, parse(answer.value.value));
+    if (stored) memory[key] = stored;
+    else {
+      // Move a 1.0.0 plain-file sign-in into the keystore.
+      memory[key] = usable(key, read(legacyFile(key)));
+      if (memory[key]) unsaved.add(key);
+    }
+    if (memoryOnly) rmSync(legacyFile(key), { force: true });
+  });
+  for (const key of [...unsaved]) if (!(await persist(key))) failed = true;
+  retryAt = failed ? Date.now() + RETRY_MS : 0;
+}
+
+/** Saves one key in the keystore (a sign-out deletes it). False on an error:
+ * the key stays unsaved and the next vault retry tries again. */
+async function persist(key: Key): Promise<boolean> {
+  if (!vault) return true;
+  unsaved.add(key);
+  if (memoryOnly) return true;
+  try {
+    const value = memory[key];
+    const answer = value
+      ? await vault.set(key, JSON.stringify(value))
+      : await vault.delete(key);
+    if (!answer.available) memoryOnly = true;
+    else {
+      unsaved.delete(key);
+      rmSync(legacyFile(key), { force: true });
+    }
+    return true;
+  } catch {
+    retryAt = Math.min(retryAt || Infinity, Date.now() + RETRY_MS);
+    return false;
+  }
+}
+
+function getSession(): Session | undefined {
+  return vault ? memory.session : read<Session>(sessionFile);
+}
+function getPending(): Pending | undefined {
+  return vault ? memory.pending : read<Pending>(pendingFile);
+}
+/** Updates the copy this process reads at once (so two callers never race),
+ * then the keystore. */
+function setSession(value: Session | undefined): Promise<void> {
+  if (!vault) {
+    if (value) save(sessionFile, value);
+    else rmSync(sessionFile, { force: true });
+    return Promise.resolve();
+  }
+  memory.session = value;
+  // An old 1.0.0 file can still be here when the vault failed. A sign-out or a
+  // new sign-in replaces it, so it must never come back after a restart.
+  rmSync(sessionFile, { force: true });
+  return persist("session").then(() => {});
+}
+/** Updates the copy this process reads at once (so two callers never race),
+ * then the keystore. */
+function setPending(value: Pending | undefined): Promise<void> {
+  if (!vault) {
+    if (value) save(pendingFile, value);
+    else rmSync(pendingFile, { force: true });
+    return Promise.resolve();
+  }
+  memory.pending = value;
+  rmSync(pendingFile, { force: true });
+  return persist("pending").then(() => {});
+}
 
 function read<T>(file: string): T | undefined {
   try {
@@ -71,10 +246,8 @@ function save(file: string, value: unknown, exclusive = false) {
 export const browserSelected = () =>
   scope !== undefined ||
   process.platform === "win32" ||
-  existsSync(sessionFile) ||
-  existsSync(pendingFile);
-export const browserSignedIn = () =>
-  Boolean(read<Session>(sessionFile)?.accessToken);
+  Boolean(getSession() || getPending());
+export const browserSignedIn = () => Boolean(getSession()?.accessToken);
 export class BrowserLoginRequired extends Error {
   constructor() {
     super(
@@ -86,10 +259,16 @@ export class BrowserLoginRequired extends Error {
 // Persist the verifier until the exchange succeeds, so an MCP restart while the
 // browser is open does not discard the login. Only a click opens a browser.
 export async function openBrowserLogin(): Promise<void> {
-  let flow = read<Pending>(pendingFile);
+  await vaultReady();
+  return openLogin();
+}
+/** Callers have awaited `ready`; the claim below runs before any await, so two
+ * concurrent connects share one login request. */
+async function openLogin(): Promise<void> {
+  let flow = getPending();
   if (!flow || flow.expiresAt <= Date.now()) {
     flow = { ...createLogin(), expiresAt: Date.now() + lifetime };
-    save(pendingFile, flow);
+    await setPending(flow);
   }
   const url = new URL(flow.loginUrl);
   if (
@@ -111,8 +290,7 @@ export async function openBrowserLogin(): Promise<void> {
       ),
     );
   } catch (error) {
-    if (read<Pending>(pendingFile)?.uuid === flow.uuid)
-      rmSync(pendingFile, { force: true });
+    if (getPending()?.uuid === flow.uuid) await setPending(undefined);
     throw error;
   }
   // Start polling now, even if the user waits before opening the notch again.
@@ -123,16 +301,15 @@ function pollFlow(flow: Pending): Promise<void> {
   if (polling?.uuid === flow.uuid) return polling.done;
   const done = (async () => {
     const result = await pollLogin(flow, { maxAttempts: 65 });
-    if (
-      read<Pending>(pendingFile)?.uuid !== flow.uuid ||
-      flow.expiresAt < Date.now()
-    )
+    if (getPending()?.uuid !== flow.uuid || flow.expiresAt < Date.now())
       return;
-    save(sessionFile, {
+    // The refresh token is not kept: Grok Bot has no public refresh call, and
+    // an unused long-lived secret is only something more to lose.
+    await setSession({
       accessToken: result.accessToken,
       selectedTeamId: result.selectedTeamId,
     });
-    rmSync(pendingFile, { force: true });
+    await setPending(undefined);
   })().finally(() => {
     if (polling?.uuid === flow.uuid) polling = undefined;
   });
@@ -144,29 +321,31 @@ export async function browserAccount(action: "status" | "connect" | "disconnect"
   state: "signed_out" | "pending" | "connected";
 }> {
   if (!scope) throw new Error("Sign in to VoiceOS before connecting Grok Bot.");
+  await vaultReady();
   if (action === "disconnect") {
     // pollFlow verifies the outstanding request id before storing a session.
-    rmSync(pendingFile, { force: true });
-    rmSync(sessionFile, { force: true });
+    await setPending(undefined);
+    await setSession(undefined);
     return { state: "signed_out" };
   }
   if (browserSignedIn()) return { state: "connected" };
-  const pending = read<Pending>(pendingFile);
+  const pending = getPending();
   if (pending && pending.expiresAt > Date.now()) {
     // A process restart can leave a live browser tab waiting for its exchange.
     void pollFlow(pending).catch(() => {});
     return { state: "pending" };
   }
   if (action === "status") return { state: "signed_out" };
-  await openBrowserLogin();
+  await openLogin();
   if (browserSignedIn()) return { state: "connected" };
-  return { state: read<Pending>(pendingFile) ? "pending" : "signed_out" };
+  return { state: getPending() ? "pending" : "signed_out" };
 }
 
 async function session(): Promise<Session> {
-  const current = read<Session>(sessionFile);
+  await vaultReady();
+  const current = getSession();
   if (current?.accessToken) return current;
-  const flow = read<Pending>(pendingFile);
+  const flow = getPending();
   if (flow && flow.expiresAt > Date.now()) {
     // Newly restarted MCPs resume an outstanding exchange. A card read never
     // has to wait for a person to finish typing in the browser.
@@ -181,11 +360,27 @@ async function session(): Promise<Session> {
     } finally {
       clearTimeout(timer);
     }
-    const finished = read<Session>(sessionFile);
+    const finished = getSession();
     if (finished?.accessToken) return finished;
   }
   throw new BrowserLoginRequired();
 }
+/** Grok Bot turned away the client version we present. */
+export class ClientVersionRejected extends Error {
+  constructor() {
+    super(
+      "Grok Bot stopped accepting this connection version. VoiceOS is being updated for it. Try again later.",
+    );
+    this.name = "ClientVersionRejected";
+  }
+}
+const OUTDATED =
+  /\b(client|app)\b[^.]{0,40}\b(version|outdated|too old|update required|upgrade)\b|\bupdate (your|the) (app|client)\b|\bunsupported (client )?version\b/i;
+/** 426 Upgrade Required, or an error that names the client version. */
+export function isOutdatedClient(status: number | undefined, text: string): boolean {
+  return status === 426 || OUTDATED.test(text);
+}
+
 function platformHeaders(init?: RequestInit) {
   const headers = new Headers(init?.headers);
   headers.set("x-cursor-client-os", process.platform);
@@ -196,33 +391,45 @@ function platformHeaders(init?: RequestInit) {
     );
   return headers;
 }
-function rejectExpired(value: Session) {
-  if (read<Session>(sessionFile)?.accessToken === value.accessToken)
-    save(sessionFile, {});
+function rejectExpired(value: Session): never {
+  if (getSession()?.accessToken === value.accessToken) {
+    // Without a host, an empty file still marks this computer as browser login.
+    if (!vault) save(sessionFile, {});
+    else void setSession(undefined).catch(() => {});
+  }
   throw new BrowserLoginRequired();
 }
 async function useClient<T>(
   work: (client: GrokBotClient) => Promise<T>,
   signal?: AbortSignal,
+  /** Sees the raw JSON of these methods' replies, for fields the SDK drops. */
+  peek?: { methods: string[]; seen: (method: string, body: unknown) => void },
 ): Promise<T> {
   const value = await session();
   const client = new GrokBotClient({
     accessToken: value.accessToken,
     teamId: value.selectedTeamId,
     version,
-    fetchImpl: (url, init) =>
-      fetch(url, {
+    fetchImpl: async (url, init) => {
+      const response = await fetch(url, {
         ...init,
         headers: platformHeaders(init),
         signal: signal && init?.signal ? AbortSignal.any([signal, init.signal]) : signal ?? init?.signal,
         redirect: "error",
-      }),
+      });
+      const method = String(url).split("/").pop() ?? "";
+      if (peek?.methods.includes(method) && response.ok)
+        peek.seen(method, await response.clone().json().catch(() => null));
+      return response;
+    },
   });
   try {
     return await work(client);
   } catch (error) {
-    if ((error as { httpStatus?: number }).httpStatus === 401)
-      rejectExpired(value);
+    const status = (error as { httpStatus?: number }).httpStatus;
+    if (status === 401) rejectExpired(value);
+    if (status !== undefined && status >= 400 && isOutdatedClient(status, String((error as Error).message ?? "")))
+      throw new ClientVersionRejected();
     throw error;
   }
 }
@@ -244,8 +451,22 @@ function cardBot(bot: Bot): Agent {
     updatedAt: Number(bot.updatedAtMs),
   };
 }
-export const browserRoster = () =>
-  useClient(async (client) => {
+/** Each bot's current activity line from a raw ListGrokBotAgentStatuses reply
+ * (`live.activity.text`, "Finding today's date"). The SDK keeps only its kind. */
+export function activityTexts(body: unknown): Map<string, string> {
+  const out = new Map<string, string>();
+  const rows = (body as { statuses?: unknown })?.statuses;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const id = row?.agentId, text = row?.live?.activity?.text;
+    if (typeof id === "string" && typeof text === "string" && text.trim())
+      out.set(id, text.replace(/\s+/g, " ").trim().slice(0, 120));
+  }
+  return out;
+}
+
+export const browserRoster = () => {
+  let activity = new Map<string, string>();
+  return useClient(async (client) => {
     const { bots } = await client.listBots();
     const statuses = bots.length
       ? await client
@@ -281,11 +502,13 @@ export const browserRoster = () =>
             : undefined,
           lastMessagePreview: state?.lastMessagePreview,
           notifyOnUpdatesEnabled: state?.notifyOnUpdatesEnabled,
+          ...(activity.has(bot.id) ? { activityText: activity.get(bot.id) } : {}),
         },
       ];
     });
     return { agents, avatarUrls };
-  });
+  }, undefined, { methods: ["ListGrokBotAgentStatuses"], seen: (_m, body) => { activity = activityTexts(body); } });
+};
 async function findBot(client: GrokBotClient, id: string) {
   const bot = (await client.listBots()).bots.find((row) => row.id === id);
   if (!bot) throw new Error("That bot is no longer in your Grok Bot account.");
@@ -321,6 +544,43 @@ export const browserTranscript = (
           : undefined,
     };
   });
+/** A claim Grok Bot says it never saw is released after this long. */
+const CLAIM_GRACE_MS = 60_000;
+/** Any claim still unsettled after this long is released (send again). */
+const CLAIM_TTL_MS = 10 * 60_000;
+/** Send records older than this are deleted. */
+const SENDS_KEEP_MS = 7 * 24 * 60 * 60_000;
+let sendsSwept = false;
+
+/** Once per run: delete send records nobody needs any more. */
+function sweepSends(root: string, now = Date.now()) {
+  if (sendsSwept) return;
+  sendsSwept = true;
+  let names: string[];
+  try {
+    names = readdirSync(root);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const dir = join(root, name);
+    try {
+      if (now - statSync(dir).mtimeMs > SENDS_KEEP_MS)
+        rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Gone or unreadable: the next run tries again.
+    }
+  }
+}
+
+const claimAge = (file: string) => {
+  try {
+    return Date.now() - statSync(file).mtimeMs;
+  } catch {
+    return 0;
+  }
+};
+
 export const browserSend = (
   botId: string,
   text: string,
@@ -331,58 +591,76 @@ export const browserSend = (
     const digest = createHash("sha256")
       .update(JSON.stringify([botId, sessionId, text, attachments.map(a => a.sha256 ? { name: a.name, sha256: a.sha256 } : a)]))
       .digest("hex");
+    sweepSends(join(folder, "sends"));
     const directory = join(folder, "sends", digest);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const prior = readdirSync(directory).reduce((last, file) => {
-      const match = /^(\d+)\.claim$/.exec(file);
-      return match ? Math.max(last, Number(match[1])) : last;
-    }, 0);
-    // Settlement is per generation. A late acknowledgement from an earlier send
-    // must never unlock a newer intentional send of the same text.
-    const generation =
-      !prior || existsSync(join(directory, prior + ".settled"))
-        ? prior + 1
-        : prior;
-    const claim = join(directory, generation + ".claim");
-    const settle = () => save(join(directory, generation + ".settled"), {});
-    let messageId = randomUUID() as string;
-    let owner = true;
-    try {
-      save(claim, { messageId }, true);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const previous = read<{ messageId: string }>(claim);
-      if (!previous)
-        throw new Error("Another send finished. Check your conversation.");
-      messageId = previous.messageId;
-      owner = false;
-    }
-    if (owner) {
+    // At most two rounds: an earlier claim that Grok Bot never saw (or that is
+    // too old to trust) is released once, then this send gets a fresh one.
+    for (let round = 0; round < 2; round++) {
+      const prior = readdirSync(directory).reduce((last, file) => {
+        const match = /^(\d+)\.claim$/.exec(file);
+        return match ? Math.max(last, Number(match[1])) : last;
+      }, 0);
+      // Settlement is per generation. A late acknowledgement from an earlier send
+      // must never unlock a newer intentional send of the same text.
+      const generation =
+        !prior || existsSync(join(directory, prior + ".settled"))
+          ? prior + 1
+          : prior;
+      const claim = join(directory, generation + ".claim");
+      const settle = () => save(join(directory, generation + ".settled"), {});
+      let messageId = randomUUID() as string;
+      let owner = true;
       try {
-        await client.sendMessage({
-          botId,
-          sessionId,
-          text,
-          messageId,
-          attachmentPaths: attachments.map((a) => a.path),
-          attachmentNames: attachments.map((a) => a.name),
-        });
-        settle();
-        return { accepted: true };
+        save(claim, { messageId }, true);
       } catch (error) {
-        if ((error as { httpStatus?: number }).httpStatus === 401) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const previous = read<{ messageId: string }>(claim);
+        if (!previous)
+          throw new Error("Another send finished. Check your conversation.");
+        messageId = previous.messageId;
+        owner = false;
+      }
+      if (owner) {
+        try {
+          await client.sendMessage({
+            botId,
+            sessionId,
+            text,
+            messageId,
+            attachmentPaths: attachments.map((a) => a.path),
+            attachmentNames: attachments.map((a) => a.name),
+          });
           settle();
-          throw error;
+          return { accepted: true };
+        } catch (error) {
+          if ((error as { httpStatus?: number }).httpStatus === 401) {
+            settle();
+            throw error;
+          }
         }
       }
-    }
-    const result = await client
-      .getSendStatus({ botId, messageId, sessionId })
-      .catch(() => undefined);
-    if (result?.status === "accepted" || result?.status === "rejected") {
-      settle();
-      if (result.status === "accepted") return { accepted: true };
-      throw new Error("Grok Bot rejected this message.");
+      const result = await client
+        .getSendStatus({ botId, messageId, sessionId })
+        .catch(() => undefined);
+      if (result?.status === "accepted" || result?.status === "rejected") {
+        settle();
+        if (result.status === "accepted") return { accepted: true };
+        throw new Error("Grok Bot rejected this message.");
+      }
+      // An earlier attempt that Grok Bot never saw, or one stuck for too long,
+      // must not block this text forever: release it and send again.
+      const age = claimAge(claim);
+      if (
+        !owner &&
+        round === 0 &&
+        ((result?.status === "not-found" && age > CLAIM_GRACE_MS) ||
+          age > CLAIM_TTL_MS)
+      ) {
+        settle();
+        continue;
+      }
+      break;
     }
     throw new Error(
       "Delivery is unknown. Check the conversation before sending again.",
@@ -408,8 +686,11 @@ async function rpc(method: string, body: object, timeoutMs = 12_000) {
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (response.status === 401) rejectExpired(value);
-  if (!response.ok)
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    if (isOutdatedClient(response.status, text)) throw new ClientVersionRejected();
     throw new Error(`Grok Bot declined ${method} (HTTP ${response.status}).`);
+  }
   return response.json();
 }
 export async function browserGateway(wake: boolean) {

@@ -142,6 +142,22 @@ const roleWords = (text: string) => new Set(text.toLowerCase().replace(/['’]s\
 
 /** Whether a turn says one of these bots' names as a whole word or words
  * ("Jasper", "F.I.N.C.H." spoken as "Finch", "Finch's"). */
+/** The bots whose name the user said anywhere in `text`, each with the
+ * longest of its names that was said, longest first. */
+export function mentionedBots(text: string, bots: Agent[]): { bot: Agent; name: string }[] {
+  const spoken = ` ${text.replace(/['’]s\b/gi, "").split(/\s+/).map(normalize).filter(Boolean).join(" ")} `;
+  return bots.flatMap(bot => {
+    const said = spokenNames(bot)
+      .map(alias => alias.split(/\s+/).map(normalize).filter(Boolean).join(" "))
+      .filter(name => name && spoken.includes(` ${name} `))
+      .sort((x, y) => y.length - x.length)[0];
+    return said ? [{ bot, name: said }] : [];
+  }).sort((x, y) => y.name.length - x.name.length);
+}
+/** "Ask Grok Bot to …", "tell my bot …": the user chose no bot, so names later
+ * in the sentence are the task ("draft an email to Jerome"), not the recipient. */
+const ADDRESSES_GROK_BOT = /\b(?:ask|tell|message|ping|have|get|send|text)\s+(?:(?:my|the|our|a)\s+)?(?:grok\s*bot|bots?)\b/i;
+
 export function namesABot(text: string, bots: Agent[]): boolean {
   const spoken = ` ${text.replace(/['’]s\b/gi, "").split(/\s+/).map(normalize).filter(Boolean).join(" ")} `;
   return bots.some(b => {
@@ -370,8 +386,26 @@ export class IntentRoster {
   async chooseRecipient(bots: Agent[], input: { bot?: string; requestText?: string; task?: string; message?: string }): Promise<RecipientRoute> {
     const freshTurn = this.lastTurn && this.now() - this.lastTurn.at <= TURN_MAX_AGE_MS ? this.lastTurn.text : undefined;
     const request = input.requestText?.trim() || freshTurn;
+    // 1. The user named a bot: it goes to that bot (VOS-1672).
     const named = request && explicitRecipient(request,bots);
     if (named) return { bot: named, source:"explicit" };
+    if (request && !ADDRESSES_GROK_BOT.test(request)) {
+      const hits = mentionedBots(request, bots);
+      // "Jerome Personal" also says "Jerome": keep only the fullest names.
+      const said = hits.filter(h => h.name === hits[0].name || !` ${hits[0].name} `.includes(` ${h.name} `));
+      if (said.length === 1) return { bot: said[0].bot, source:"explicit" };
+      if (said.length > 1) {
+        // Two bots answer to the same name: ask which one.
+        if (said.every(h => h.name === said[0].name))
+          resolveSpokenRecipient(said[0].name, said.map(h => h.bot));
+        // Different bots named: the model's pick if it is one of them, else
+        // unsure, so the primary bot.
+        const ref = input.bot?.trim();
+        const picked = ref && said.find(h => h.bot.id === ref || spokenNames(h.bot).some(n => normalize(n) === normalize(ref)));
+        if (picked) return { bot: picked.bot, source:"explicit" };
+        return this.primaryRoute(bots);
+      }
+    }
     // If a caller explicitly supplied an unknown name, never replace it. A
     // generic app reference is not a bot. Direct tool calls with no transcript
     // can still use an exact ID or explicit short name.
@@ -379,11 +413,17 @@ export class IntentRoster {
     if (!request && ref && !/^(?:(?:my|the|a|our)\s+)?(?:grok\s*bot|bots?)$/i.test(ref)) {
       return { bot: resolveMessageRecipient(ref, bots), source: "explicit" };
     }
+    // 2. No bot named: match the task to a bot's role, project or recent chat.
     const task = [request, input.task, input.message].filter(Boolean).join(" ");
     const match = botForTask(task, bots);
     if (match) return { bot:match, source:"role" };
     const previous = await this.followUpRecipient(bots, task);
     if (previous) return { bot: previous, source:"role" };
+    // 3. Unsure: the primary bot.
+    return this.primaryRoute(bots);
+  }
+
+  private async primaryRoute(bots: Agent[]): Promise<RecipientRoute> {
     const primaryId = await this.primary();
     const primary = bots.find(bot => bot.id === primaryId);
     if (primary) return { bot:primary, source:"primary" };

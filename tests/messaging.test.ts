@@ -556,7 +556,7 @@ test("the roster card opens chat panes populated with card items and their curso
   expect(data.bots.map((b: any) => b.id)).toEqual(["p", "f", "t"]);
   expect(data.threads.p.map((i: any) => i.id)).toEqual(["old", "pic"]);
   expect(data.threads.g).toHaveLength(2);
-  expect(data.threads.p[1]).toMatchObject({ html: expect.stringContaining("<strong>Done.</strong>"), media: [{ kind: "image", name: "Shot", index: 0 }], t: "3m" });
+  expect(data.threads.p[1]).toMatchObject({ html: expect.stringContaining("<strong>Done.</strong>"), media: [{ kind: "image", name: "Shot", index: 0 }], t: expect.stringMatching(/^(Today|Yesterday) \d{1,2}:\d{2}/) });
   expect(data.nextBeforeSeqs).toMatchObject({ p: 31, g: 31 });
   expect(JSON.stringify(data)).not.toContain("file://");
   expect(r.groups).toEqual([{ name: "Study group", members: ["p", "f"] }]);
