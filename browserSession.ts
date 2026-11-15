@@ -20,7 +20,7 @@ import {
   pollLogin,
   type Bot,
   type LoginFlow,
-} from "grok-bot-sdk";
+} from "./vendor/grok-bot-sdk/sdk.mjs";
 import type {
   Agent,
   SentAttachment,
@@ -109,6 +109,11 @@ export async function useHostVault(host: HostVault): Promise<void> {
   memory.session = memory.pending = undefined;
   try {
     await loadVault();
+  } catch {
+    // Never crash the integration over the vault: try again at the next call.
+    retryAt = Date.now() + RETRY_MS;
+  }
+  try {
     version = (await host.clientVersion().catch(() => null)) ?? version;
   } finally {
     markReady();
@@ -120,10 +125,27 @@ export async function useHostVault(host: HostVault): Promise<void> {
 async function vaultReady(): Promise<void> {
   await ready;
   if (!vault || memoryOnly || Date.now() < retryAt) return;
-  if (loaded.size < 2 || unsaved.size) await (loading ??= loadVault().finally(() => (loading = undefined)));
+  if (loaded.size < 2 || unsaved.size)
+    await (loading ??= loadVault()
+      .catch(() => void (retryAt = Date.now() + RETRY_MS))
+      .finally(() => (loading = undefined)));
 }
 
 const legacyFile = (key: Key) => (key === "session" ? sessionFile : pendingFile);
+/** An old 1.0.0 file, or nothing: a broken or locked file must never crash startup. */
+function readOld(key: Key): unknown {
+  try {
+    return read(legacyFile(key));
+  } catch {
+    return undefined;
+  }
+}
+/** Best effort: Windows can hold a file open (EBUSY/EPERM); the next change retries. */
+function dropOld(key: Key): void {
+  try {
+    rmSync(legacyFile(key), { force: true });
+  } catch {}
+}
 function usable<T>(key: Key, value: unknown): T | undefined {
   if (key === "session") return (value as Session | undefined)?.accessToken ? (value as T) : undefined;
   const flow = value as Pending | undefined;
@@ -147,7 +169,7 @@ async function loadVault(): Promise<void> {
     if (answer.status === "rejected") {
       failed = true;
       // Until the keystore answers, an old file still signs the user in.
-      if (!unsaved.has(key) && !memory[key]) memory[key] = usable(key, read(legacyFile(key)));
+      if (!unsaved.has(key) && !memory[key]) memory[key] = usable(key, readOld(key));
       return;
     }
     loaded.add(key);
@@ -157,10 +179,10 @@ async function loadVault(): Promise<void> {
     if (stored) memory[key] = stored;
     else {
       // Move a 1.0.0 plain-file sign-in into the keystore.
-      memory[key] = usable(key, read(legacyFile(key)));
+      memory[key] = usable(key, readOld(key));
       if (memory[key]) unsaved.add(key);
     }
-    if (memoryOnly) rmSync(legacyFile(key), { force: true });
+    if (memoryOnly) dropOld(key);
   });
   for (const key of [...unsaved]) if (!(await persist(key))) failed = true;
   retryAt = failed ? Date.now() + RETRY_MS : 0;
@@ -180,7 +202,7 @@ async function persist(key: Key): Promise<boolean> {
     if (!answer.available) memoryOnly = true;
     else {
       unsaved.delete(key);
-      rmSync(legacyFile(key), { force: true });
+      dropOld(key);
     }
     return true;
   } catch {
@@ -206,7 +228,7 @@ function setSession(value: Session | undefined): Promise<void> {
   memory.session = value;
   // An old 1.0.0 file can still be here when the vault failed. A sign-out or a
   // new sign-in replaces it, so it must never come back after a restart.
-  rmSync(sessionFile, { force: true });
+  dropOld("session");
   return persist("session").then(() => {});
 }
 /** Updates the copy this process reads at once (so two callers never race),
@@ -218,7 +240,7 @@ function setPending(value: Pending | undefined): Promise<void> {
     return Promise.resolve();
   }
   memory.pending = value;
-  rmSync(pendingFile, { force: true });
+  dropOld("pending");
   return persist("pending").then(() => {});
 }
 

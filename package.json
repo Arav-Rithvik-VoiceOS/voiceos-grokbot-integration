@@ -6,7 +6,6 @@
   "type": "module",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",
-    "grok-bot-sdk": "github:RongleCat/grok-bot-sdk#42c75eb13f24630d1b689629502d4320c4219cdb",
     "highlight.js": "11.11.1",
     "katex": "0.16.45",
     "marked": "17.0.5",

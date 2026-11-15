@@ -212,3 +212,12 @@ test("a sign-out the keystore missed is saved at the next retry", async () => {
   }
   expect(host.keystore.has("session")).toBe(false);
 });
+
+test("a broken old token file does not crash startup or sign anyone in", async () => {
+  writeFileSync(join(folder, "browser-session.json"), "{ not json");
+  api.expectHostVault();
+  await api.useHostVault(flaky(2));
+  expect(api.browserSignedIn()).toBe(false);
+  expect(await api.browserAccount("status")).toEqual({ state: "signed_out" });
+  rmSync(join(folder, "browser-session.json"), { force: true });
+});

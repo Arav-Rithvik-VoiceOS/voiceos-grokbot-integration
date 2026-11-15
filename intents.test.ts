@@ -491,9 +491,12 @@ test("VOS-1672: a bot named anywhere gets the message; no name uses patterns; un
   // Not named: the role match, then the primary.
   expect(await route("Ask Grok Bot to triage the VoiceOS product email", "scout")).toMatchObject({bot:{id:"jarvis"},source:"role"});
   expect(await route("Ask Grok Bot how it is going", "scout")).toMatchObject({bot:{id:"main"},source:"primary"});
-  // Two different bots named: the model's pick if it is one of them, else the primary.
+  // Two different bots named: the model's pick if it is one of them, else ask;
+  // never a bot the user did not name.
   expect(await route("Jarvis and Scout should compare notes", "scout")).toMatchObject({bot:{id:"scout"},source:"explicit"});
-  expect(await route("Jarvis and Scout should compare notes", "nobody")).toMatchObject({bot:{id:"main"},source:"primary"});
+  await expect(route("Jarvis and Scout should compare notes", "nobody")).rejects.toThrow(/Which one should get this: .*Jarvis.* or Scout\?/);
+  // "Tell X ..." names the recipient, even when another bot is mentioned.
+  expect(await route("Tell Jarvis to check with Scout", "main")).toMatchObject({bot:{id:"jarvis"},source:"explicit"});
   // Two bots with the same name: ask, never guess.
   bots.push({id:"scout2", name:"Scout · Home"});
   await expect(route("Could Scout check this for me")).rejects.toThrow("Which one");

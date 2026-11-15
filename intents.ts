@@ -398,12 +398,13 @@ export class IntentRoster {
         // Two bots answer to the same name: ask which one.
         if (said.every(h => h.name === said[0].name))
           resolveSpokenRecipient(said[0].name, said.map(h => h.bot));
-        // Different bots named: the model's pick if it is one of them, else
-        // unsure, so the primary bot.
+        // Different bots named: the model's pick if it is one of them. Else
+        // ask: never send to a bot the user did not name (VOS-1672).
         const ref = input.bot?.trim();
         const picked = ref && said.find(h => h.bot.id === ref || spokenNames(h.bot).some(n => normalize(n) === normalize(ref)));
         if (picked) return { bot: picked.bot, source:"explicit" };
-        return this.primaryRoute(bots);
+        const choices = [...new Set(said.map(h => botChoiceLabel(h.bot)))].join(" or ");
+        throw new IntegrationError("not_found", `You named more than one bot. Which one should get this: ${choices}?`);
       }
     }
     // If a caller explicitly supplied an unknown name, never replace it. A

@@ -191,7 +191,7 @@ server.server.oninitialized = () =>
         VersionAnswer,
         { timeout: 5_000 },
       )).version,
-  });
+  }).catch((error) => log("Grok Bot vault setup failed:", error));
 
 // The trusted Settings window starts login through this private host request.
 server.server.setRequestHandler(z.object({
