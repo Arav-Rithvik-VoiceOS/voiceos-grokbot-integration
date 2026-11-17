@@ -590,6 +590,14 @@ async function runTool(
       }
       openGrokBotApp();
     }
+    // Browser sign-in has no desktop app to open or restart: each request asks
+    // Grok Bot for a fresh route and wakes the computer itself. A parked or
+    // moved computer is still starting, so say "try again" instead of the
+    // desktop Reconnect card, a dead end on Windows (VOS-1672).
+    if (isWaking() && browserSelected() && error instanceof IntegrationError
+      && (error.kind === "reconnect" || error.kind === "parked")) {
+      return result({ ok: false, retry: true, message: `${SERVICE_NAME}'s cloud computer is still starting. Try again in a minute.` });
+    }
     // The cloud computer is asleep and nothing VoiceOS holds can wake it. Opening
     // the app would not help (it keeps a parked box asleep); the Reconnect card's
     // button restarts the app once the user has messaged a bot. (VOS-1608)

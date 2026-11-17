@@ -648,7 +648,9 @@ export const browserSend = (
           await client.sendMessage({
             botId,
             sessionId,
-            text,
+            // The SDK refuses empty text, but files alone are a message
+            // (VOS-1672): their names stand in for the missing text.
+            text: text.trim() || attachments.map((a) => a.name).join(", "),
             messageId,
             attachmentPaths: attachments.map((a) => a.path),
             attachmentNames: attachments.map((a) => a.name),
@@ -659,6 +661,12 @@ export const browserSend = (
           if ((error as { httpStatus?: number }).httpStatus === 401) {
             settle();
             throw error;
+          }
+          // Refused before anything left this computer: a definite failure,
+          // not an unknown delivery, so settle and let the user send again.
+          if ((error as { code?: string }).code === "MESSAGE_INVALID") {
+            settle();
+            throw new Error("Grok Bot could not send this message.");
           }
         }
       }

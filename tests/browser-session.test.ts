@@ -173,6 +173,27 @@ test("same cards read browser roster, unread status, history and sidebar setting
     accepted: true,
   });
 });
+test("files with no text are sent, with their names as the text (VOS-1672)", async () => {
+  seed();
+  const sends = () => calls.filter((c) => c.method === "SendGrokBotUserMessage");
+  const before = sends().length;
+  const path = await client.uploadAttachment("assistant", "only-file.txt", "aGk=");
+  expect(
+    await client.sendPrompt("assistant", "", [{ path, name: "only-file.txt" }]),
+  ).toEqual({ accepted: true });
+  expect(sends().length).toBe(before + 1);
+  expect(sends().at(-1)?.body).toMatchObject({
+    text: "only-file.txt",
+    attachmentPaths: ["/sandbox/only-file.txt"],
+    attachmentNames: ["only-file.txt"],
+  });
+});
+test("Reconnect in browser mode reads the roster and never touches the desktop app (VOS-1672)", async () => {
+  seed();
+  process.env.GROKBOT_OSASCRIPT_BIN = "/nonexistent/osascript";
+  process.env.GROKBOT_OPEN_BIN = "/nonexistent/open";
+  expect(await client.reconnectGrokBot()).toEqual({ bots: 1 });
+});
 test("reading the roster or history leaves unread alone; only the displayed page clears it", async () => {
   seed();
   unreadCount = 1;

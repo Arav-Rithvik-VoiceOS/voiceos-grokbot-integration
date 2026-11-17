@@ -1480,6 +1480,9 @@ export function openBotChat(agentId: string): Promise<void> {
  * computer it parked unless the user acts in it. So the card asks the user to
  * message a bot first; this then restarts the app and waits for the file. */
 export async function reconnectGrokBot(): Promise<{ bots: number }> {
+  // Browser sign-in: no desktop app or route file. A fresh request wakes the
+  // computer, so reconnecting is just reading the roster again (VOS-1672).
+  if (browserSelected()) return { bots: (await listAgents()).length };
   await quitGrokBotApp();
   openGrokBotApp();
   const deadline = Date.now() + BOOT_WAIT_MS;
@@ -1546,6 +1549,8 @@ function grokBotPids(): Promise<number[]> {
 
 /** Launch the Grok Bot app (used on the setup / not-connected path). */
 export function openGrokBotApp(): void {
+  // The Grok Bot desktop app and /usr/bin/open exist only on a Mac.
+  if (process.platform !== "darwin") return;
   try {
     execFile(process.env.GROKBOT_OPEN_BIN || "/usr/bin/open", ["-a", "Grok Bot"], () => {});
   } catch (error) {
