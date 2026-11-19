@@ -264,6 +264,34 @@ export function explicitRecipient(request: string, bots: Agent[]): Agent | undef
   const name = addressedName(request, bots);
   return name ? resolveSpokenRecipient(name, bots) : undefined;
 }
+
+/** Two or more bots addressed together right after the verb ("Tell Jasper and
+ * Finch the meeting moved", "Ask Jasper, Finch & Max to ..."): a group message,
+ * never a send to the first name alone (VOS-1672). "Tell Jasper to check with
+ * Finch" addresses only Jasper, so it returns fewer than two bots. */
+export function jointRecipients(request: string, bots: Agent[]): Agent[] {
+  const verb = /\b(?:ask|tell|message|text|ping|instruct|have|get)\s+/i.exec(request);
+  if (!verb) return [];
+  const tokens = request.slice(verb.index + verb[0].length).toLowerCase()
+    .replace(/['’]s\b/g, "").match(/[a-z0-9]+|[,&]/g) ?? [];
+  const names = bots.filter(b => !b.isGroup)
+    .flatMap(bot => spokenNames(bot).map(name => ({ bot, words: wordsOf(name) })))
+    .filter(n => n.words.length)
+    .sort((a, b) => b.words.length - a.words.length);
+  const found: Agent[] = [];
+  let i = 0;
+  for (;;) {
+    const hit = names.find(n => n.words.every((word, k) => tokens[i + k] === word));
+    if (!hit) break;
+    if (!found.includes(hit.bot)) found.push(hit.bot);
+    i += hit.words.length;
+    // Separators between names: ",", "and", "&", ", and".
+    let joined = false;
+    while (tokens[i] === "," || tokens[i] === "and" || tokens[i] === "&") { i++; joined = true; }
+    if (!joined) break;
+  }
+  return found.length >= 2 ? found : [];
+}
 export type RecipientRoute = { bot:Agent; source:"explicit"|"role"|"primary" };
 
 /** A model-copied confirmationContext, or undefined when missing or mangled. */
@@ -386,6 +414,14 @@ export class IntentRoster {
   async chooseRecipient(bots: Agent[], input: { bot?: string; requestText?: string; task?: string; message?: string }): Promise<RecipientRoute> {
     const freshTurn = this.lastTurn && this.now() - this.lastTurn.at <= TURN_MAX_AGE_MS ? this.lastTurn.text : undefined;
     const request = input.requestText?.trim() || freshTurn;
+    // 0. Several bots addressed together: a group chat with all of them, never
+    // the first name alone. The group tool reuses a group with exactly these
+    // members or creates one (VOS-1672).
+    const together = request ? jointRecipients(request, bots) : [];
+    if (together.length) {
+      const names = together.map(b => spokenNames(b)[1] ?? b.name);
+      throw new IntegrationError("not_found", `${names.join(" and ")} were addressed together, so this goes to their group chat. Use grokbot_prepare_message with members ${JSON.stringify(together.map(b => b.id))} and no bot, then grokbot_group with the message.`);
+    }
     // 1. The user named a bot: it goes to that bot (VOS-1672).
     const named = request && explicitRecipient(request,bots);
     if (named) return { bot: named, source:"explicit" };

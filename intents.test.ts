@@ -497,6 +497,12 @@ test("VOS-1672: a bot named anywhere gets the message; no name uses patterns; un
   await expect(route("Jarvis and Scout should compare notes", "nobody")).rejects.toThrow(/Which one should get this: .*Jarvis.* or Scout\?/);
   // "Tell X ..." names the recipient, even when another bot is mentioned.
   expect(await route("Tell Jarvis to check with Scout", "main")).toMatchObject({bot:{id:"jarvis"},source:"explicit"});
+  // Bots addressed together go to their group chat, never the first name alone.
+  await expect(route("Tell Jarvis and Scout the meeting moved", "jarvis"))
+    .rejects.toThrow(/Jarvis and Scout were addressed together.*members \["jarvis","scout"\].*grokbot_group/);
+  await expect(route("Ask Jarvis, Scout & Main to compare notes", "jarvis"))
+    .rejects.toThrow(/members \["jarvis","scout","main"\]/);
+  expect(await route("Tell Jarvis and then Scout", "jarvis")).toMatchObject({bot:{id:"jarvis"},source:"explicit"});
   // Two bots with the same name: ask, never guess.
   bots.push({id:"scout2", name:"Scout · Home"});
   await expect(route("Could Scout check this for me")).rejects.toThrow("Which one");
