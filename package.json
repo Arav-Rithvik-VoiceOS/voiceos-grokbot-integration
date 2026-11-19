@@ -6,13 +6,13 @@
   "type": "module",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",
-    "zod": "^3.24.0",
-    "tsx": "^4.20.2",
     "highlight.js": "11.11.1",
     "katex": "0.16.45",
     "marked": "17.0.5",
     "marked-katex-extension": "5.1.13",
-    "sanitize-html": "2.17.0"
+    "sanitize-html": "2.17.0",
+    "tsx": "^4.20.2",
+    "zod": "^3.24.0"
   },
   "scripts": {
     "boot": "bun scripts/boot-check.ts",

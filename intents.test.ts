@@ -375,17 +375,149 @@ test("a turn that names no bot goes to the bot whose role fits its words", () =>
   expect(namesABot("Ask my bot to demonstrate the demo flow", crew)).toBe(true);
   expect(namesABot("Ask my bot to demonstrate it", crew)).toBe(false);
 });
-test("the send hook moves a guessed bot to the role match only when the turn named no bot", async () => {
+test("the send hook keeps the model's bot; with no bot it routes by the turn (VOS-1672)", async () => {
   let now = 1_000_000;
   const roster = new IntentRoster(async () => crew, () => now);
   await roster.refresh();
   roster.noteTurn("Send a message to Grok Bot about the hackathon venue");
-  const moved = await roster.beforeTool(hook({ bot: "Piper", message: "Research venues." }));
-  expect(moved.updatedArgs).toMatchObject({ bot: "Jasper", recipientId: "hx", message: "Research venues." });
+  // The model's bot is a real bot: trusted, even when the turn says "Grok Bot".
+  expect((await roster.beforeTool(hook({ bot: "Piper", message: "Research venues." }))).updatedArgs).toMatchObject({ bot: "Piper", recipientId: "hq" });
+  // No bot from the model: the turn's project match.
+  expect((await roster.beforeTool(hook({ message: "Research venues." }))).updatedArgs).toMatchObject({ bot: "Jasper", recipientId: "hx", message: "Research venues." });
   roster.noteTurn("Ask Piper about the hackathon venue");
-  expect((await roster.beforeTool(hook({ bot: "Piper", message: "Venue?" }))).updatedArgs).toMatchObject({ bot: "Piper", recipientId: "hq" });
+  expect((await roster.beforeTool(hook({ message: "Venue?" }))).updatedArgs).toMatchObject({ bot: "Piper", recipientId: "hq" });
   // A stale turn (another request long ago) never moves a send.
   roster.noteTurn("Send a message to Grok Bot about the hackathon venue");
   now += 121_000;
   expect((await roster.beforeTool(hook({ bot: "Piper", message: "Hi" }))).updatedArgs).toMatchObject({ bot: "Piper", recipientId: "hq" });
+});
+
+test("spoken short names route a send with no model bot; shared or unknown names ask", async () => {
+  const bots: Agent[] = [{id:"j", name:"Jerome · BISV Hacks"}, {id:"a",name:"Assistant"}];
+  const roster = new IntentRoster(async()=>bots);
+  roster.primary = async()=>"a";
+  await roster.refresh();
+  const choose=(requestText:string,bot?:string)=>roster.chooseRecipient(bots,{requestText,bot});
+  expect((await choose("Send a message to Jerome about calendar")).bot.id).toBe("j");
+  bots.push({id:"jj",name:"Jerome · Personal"});
+  await expect(choose("Tell Jerome to draft BISV sponsor emails")).rejects.toThrow("Which one");
+  await expect(choose("Tell Jerome to draft BISV sponsor emails","Jerome")).rejects.toThrow("Which one");
+  expect((await choose("Tell Jerome to draft BISV sponsor emails","j")).bot.id).toBe("j");
+  await expect(choose("Tell Charlotte about the sponsors")).rejects.toThrow("Charlotte");
+  await expect(choose("Tell Charlotte about the sponsors","Charlotte")).rejects.toThrow("Charlotte");
+  expect((await choose("Send hi to Jerome · Personal")).bot.id).toBe("jj");
+});
+test("unnamed tasks use discriminating project, profile or recent conversation evidence, then the actual primary",async()=>{
+  const bots:Agent[]=[{id:"first",name:"Jarvis · VoiceOS",description:"Email triage for the VoiceOS product"},{id:"main",name:"Scout"},{id:"j",name:"Jerome · BISV Hacks",title:"Event coordinator",lastMessagePreview:"Draft our robotics league sponsorship packet."}];
+  const roster=new IntentRoster(async()=>bots);
+  roster.primary=async()=>"main";
+  await roster.refresh();
+  const route=(requestText:string,task?:string)=>roster.chooseRecipient(bots,{requestText,task});
+  expect((await route("Ask Grok Bot to draft sponsor emails for BISV Hacks"))).toMatchObject({bot:{id:"j"},source:"role"});
+  expect((await route("Ask Grok Bot to draft those emails","Continuing our BISV Hacks project"))).toMatchObject({bot:{id:"j"},source:"role"});
+  expect((await route("Ask my bot to update the robotics league packet"))).toMatchObject({bot:{id:"j"},source:"role"});
+  expect((await route("Ask Grok Bot how it is going"))).toMatchObject({bot:{id:"main"},source:"primary"});
+  expect((await route("Ask Grok Bot to draft an email to Jerome"))).toMatchObject({bot:{id:"main"},source:"primary"});
+  bots[0].title=bots[2].title="Cloud engineering";
+  expect((await route("Ask Grok Bot about cloud engineering"))).toMatchObject({bot:{id:"main"},source:"primary"});
+  roster.primary=async()=>"missing";
+  await expect(route("Ask my bot for help")).rejects.toThrow("Which Grok Bot");
+});
+
+test("a generic sponsor-email reminder with no model bot uses a distinctive preview phrase; a shared model name asks", async () => {
+  const bots: Agent[] = [
+    {id:"main", name:"Assistant"},
+    {id:"j1", name:"Jerome · BISV Hacks", lastMessagePreview:"I'll draft the sponsor emails today."},
+    {id:"j2", name:"Jerome · Home", lastMessagePreview:"Here's the email from the electrician."},
+  ];
+  const roster = new IntentRoster(async()=>bots);
+  roster.primary=async()=>"main";
+  let reads=0;
+  roster.recentTopics=async()=>{reads++;return [[],[],[]];};
+  const requestText="Tell Grok Bot to remind me to send out those sponsor emails";
+  expect(await roster.chooseRecipient(bots,{requestText})).toMatchObject({bot:{id:"j1"},source:"role"});
+  expect(reads).toBe(0);
+  await expect(roster.chooseRecipient(bots,{requestText,bot:"Jerome"})).rejects.toThrow("Which one");
+  await expect(roster.chooseRecipient(bots,{requestText,bot:"a stale model guess"})).rejects.toThrow("couldn't find");
+  await expect(roster.chooseRecipient(bots,{requestText:"Tell Jerome to send out those sponsor emails"})).rejects.toThrow("Which one");
+  await expect(roster.chooseRecipient(bots,{requestText:"Tell Keira about sponsors"})).rejects.toThrow("Keira");
+  await expect(roster.chooseRecipient(bots,{requestText:"send Marlo hi"})).rejects.toThrow("Marlo");
+  await expect(roster.chooseRecipient(bots,{requestText:"send hi to Marlo"})).rejects.toThrow("Marlo");
+});
+test("follow-up uses complete recent chat coverage, never a single unrelated keyword or an incomplete roster", async () => {
+  const bots:Agent[]=[{id:"m",name:"Primary",description:"I manage reminders and emails."},{id:"j",name:"Jerome · BISV Hacks"},{id:"o",name:"Scout"}];
+  const roster=new IntentRoster(async()=>bots);
+  roster.primary=async()=>"m";
+  const requestText="Tell Grok Bot to remind me to send out those sponsor emails";
+  const route=()=>roster.chooseRecipient(bots,{requestText});
+  let histories:string[][]=[["Calendar is clear"],["We sent three sponsor emails","See you tomorrow"],["Mail is ready"]];
+  let reads=0;
+  roster.recentTopics=async(_bots,_signal)=>{reads++;return histories;};
+  expect(await route()).toMatchObject({bot:{id:"j"},source:"role"});
+  histories[2].push("The sponsor emails look fine");
+  expect(await route()).toMatchObject({bot:{id:"m"},source:"primary"});
+  histories=[[], ["Sponsor is interested","An email arrived."], []];
+  expect(await route()).toMatchObject({bot:{id:"m"},source:"primary"});
+  histories=[[], ["We sent sponsor emails"]];
+  expect(await route()).toMatchObject({bot:{id:"m"},source:"primary"});
+  roster.recentTopics=async()=>{throw new Error("one conversation unavailable");};
+  expect(await route()).toMatchObject({bot:{id:"m"},source:"primary"});
+  const before=reads;
+  roster.recentTopics=async()=>{reads++;return [];};
+  expect((await roster.chooseRecipient(bots,{requestText:"Ask Grok Bot to send an email"})).source).toBe("primary");
+  expect((await roster.chooseRecipient(bots,{requestText:"Ask Grok Bot to do that again"})).source).toBe("primary");
+  expect((await roster.chooseRecipient([...bots,...Array.from({length:4},(_,i)=>({id:"extra"+i,name:"Extra "+i}))],{requestText})).source).toBe("primary");
+  expect(reads).toBe(before);
+});
+
+test("slow follow-up history is aborted and uses the verified primary", async () => {
+  const bots=[{id:"p",name:"Primary"},{id:"j",name:"Jerome"}];
+  const roster=new IntentRoster(async()=>bots);
+  roster.primary=async()=>"p";
+  let aborted=false;
+  roster.recentTopics=async(_bots,signal)=>new Promise((_resolve,reject)=>signal.addEventListener("abort",()=>{aborted=true;reject(new Error("aborted"));},{once:true}));
+  expect(await roster.chooseRecipient(bots,{requestText:"Ask Grok Bot to handle those sponsor emails"})).toMatchObject({bot:{id:"p"},source:"primary"});
+  expect(aborted).toBe(true);
+});
+
+test("VOS-1672: the model's bot wins; with none, a bot named in the turn, then patterns, then the primary", async () => {
+  const bots: Agent[] = [
+    {id:"jarvis", name:"Jarvis · VoiceOS", description:"Email triage for the VoiceOS product"},
+    {id:"scout", name:"Scout"},
+    {id:"main", name:"Main"},
+  ];
+  const roster = new IntentRoster(async()=>bots);
+  roster.primary = async()=>"main";
+  await roster.refresh();
+  const route = (requestText:string, bot?:string) => roster.chooseRecipient(bots,{requestText,bot});
+  // Two sends in one turn: each keeps the bot the model gave it.
+  const both = "Tell Jarvis the build passed and ask Scout to deploy";
+  expect(await route(both, "jarvis")).toMatchObject({bot:{id:"jarvis"},source:"explicit"});
+  expect(await route(both, "Scout")).toMatchObject({bot:{id:"scout"},source:"explicit"});
+  // A follow-up turn names no bot ("Message Scout." … "Tell him the build is
+  // green."): the bot the model carried over gets it.
+  expect(await route("Tell him the build is green", "scout")).toMatchObject({bot:{id:"scout"},source:"explicit"});
+  // A made-up model name asks instead of guessing; "Grok Bot" is not a bot.
+  await expect(route("Tell him the build is green", "Nobody")).rejects.toThrow("couldn't find");
+  expect(await route("Ask Grok Bot how it is going", "Grok Bot")).toMatchObject({bot:{id:"main"},source:"primary"});
+  // No model bot: a bot named anywhere in the turn gets it.
+  expect(await route("Can Scout look at the venue list?")).toMatchObject({bot:{id:"scout"},source:"explicit"});
+  expect(await route("I need Scout's take on the venue list")).toMatchObject({bot:{id:"scout"},source:"explicit"});
+  expect(await route("Tell Jarvis to check with Scout")).toMatchObject({bot:{id:"jarvis"},source:"explicit"});
+  expect(await route("Tell Jarvis and then Scout")).toMatchObject({bot:{id:"jarvis"},source:"explicit"});
+  // Not named: the role match, then the primary.
+  expect(await route("Ask Grok Bot to triage the VoiceOS product email")).toMatchObject({bot:{id:"jarvis"},source:"role"});
+  expect(await route("Ask Grok Bot how it is going")).toMatchObject({bot:{id:"main"},source:"primary"});
+  // Two different bots named with no model bot: ask, never pick one.
+  await expect(route("Jarvis and Scout should compare notes")).rejects.toThrow(/Which one should get this: .*Jarvis.* or Scout\?/);
+  // Bots addressed together go to their group chat.
+  await expect(route("Tell Jarvis and Scout the meeting moved"))
+    .rejects.toThrow(/Jarvis and Scout were addressed together.*members \["jarvis","scout"\].*grokbot_group/);
+  await expect(route("Ask Jarvis, Scout & Main to compare notes"))
+    .rejects.toThrow(/members \["jarvis","scout","main"\]/);
+  // Two bots with the same name: ask, never guess.
+  bots.push({id:"scout2", name:"Scout · Home"});
+  await expect(route("Could Scout check this for me")).rejects.toThrow("Which one");
+  await expect(route("Could Scout check this for me", "Scout")).rejects.toThrow("Which one");
+  expect(await route("Could Scout Home check this for me")).toMatchObject({bot:{id:"scout2"},source:"explicit"});
 });

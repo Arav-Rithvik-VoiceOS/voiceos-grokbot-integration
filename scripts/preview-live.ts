@@ -45,11 +45,19 @@ const NOW = Date.now(), MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 const agents: Agent[] = [
   { id: "piper", name: "Piper", title: "EA", avatarColor: "orange", isRunning: true, lastMessagePreview: "Drafting the Q3 board deck", lastActivityAt: NOW - 2 * MIN },
   { id: "finch", name: "Finch", title: "School", avatarColor: "green", avatarShape: "hex", isComposingMessage: true, lastMessagePreview: "Checking what submitted last night", lastActivityAt: NOW - 9 * MIN },
-  { id: "jasper", name: "Jasper", title: "BISV Hacks", avatarColor: "red", avatarShape: "wedge", lastActivityAt: NOW - 3 * DAY },
+  // Jasper wears a picture (the app's photo avatar): the card draws it round, no eyes.
+  { id: "jasper", name: "Jasper", title: "BISV Hacks", avatarColor: "red", avatarShape: "star", lastActivityAt: NOW - 3 * DAY, hasUnread: true, avatarVersion: "v1", avatarImage: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAABICAYAAABV7bNHAAAE20lEQVR4nO2ay0skVxSHf1Vtv9NO+2pDfDCjTmYmtk9CYiBGR8xiAu6CyarFleAmzs74J7gSNCTqLjDgQjMiEjPqQgYhC5UsdJEgZhY+RoO2trat/axwa3RotfV02TUayPmgkK7Hrdtf3XPuPdVKABQwlyJffohhQUnAI4iABRGwIAIWRMCCCFgQAQsiYEEELIiABRGwIAIWRMCCCFgQAQsiYEEELIiABRGwIAIWRMCCCNKgE2azGSaTCYqi7We2cDiMYDCY8v0tsozjWAz/SUFVVVUYGBhAVlaWJkHi3EAggPX1dczOzmJoaAgrKyua759vMePnqo8QiMYwvrWNZ+ubOIhENbdzaT9T2crLy5WVlRVFD7a2thSPx6O5D4+zM5T9J3XKwZM6xf9VnfKiplK5a7Ok9L1Ot5RyUGlpKUZGRlBUVKTLk3K5XOjv70dNTY2m6+7bbZAkqCF2FI3h80wnfip/CKcx9QCRU5EzOjqKkpIS6InFYkFLS4uma4psFkhxn4+iUXyWcQcfO9NT7s+1FBcWFmJwcBC5ubnY3d291o0lSYLT6Ux4LC8vT1NbH9ptiJ1LfYeRKLaCIdyKIJ/PB4/Ho85A10UIampqQk9PD2T57EDe29tLuh27wYB7diuicZODQZLgDYfw+jh4e4J8Pl/KN19cXEy4f+K3F3CZjCiwWhC74r9zxKi5a7PAZTKdESRLEjaOg9gNR25ekN1uR2trq/pX65rnFHGdWBI0NzdfGD0zL19ibPQ5npU9wBc5mQhfsbZRTmSI/BPfE4MELB4cnpF2Y4KKi4vR29sLvRGLxampKbS3t6MlMx2PXVmIKDE1XCiUBJ//9B/q0i/Ns1hBQQHeBcvLy/ju6VNgfQ3fPypWn74IoWQWK/EIneGYgleB49sR5Ha7dblxonZHn/+CkOt9TLz+B3aDDJN89WaUpYTJ/yASwavAkS790hxi1dXVCfePj49jbW3tQk5JlH+sVivq6+vV5UI8Ze4yfP3tN+gf+BFFjveuzCHiiFmS8chhOxOGBkBN0GK7cUFGo1HNQec5OjpCR0eHpjqqsbERk5OT6hOP55OqSvwQCOLL3/8g26i848DEpxVnkrRI2n8HjtUV9Y2HWGZmZsJF3MbGBjY3N5NuR1T9lZWVF+QIIidFZjK554HdBpvBcCYPiajTK7w0j6DCwkJkZ2df2J+Tk4OxsbGkp/2MjAxUVFRcmqyT5aHDpgqJR3ThL38AtyLI7XYjLe3iJenp6WhoaEi5M6FQCNPT00mff89mVYWcIlwdRqNY3PdDLzSF2NzcHLxeL94VfX19mJ+fT+pcq0HG/XMlhsg/3nAEGzrUYG/b1HLy0tIS2trasL+/Dz0RSb67uxtdXV1JX/OBxXxSirwZOeKLmGQJ26Ew9kLXrxFTnuaHh4exurqKzs5O1NbWwuFwJEy2lyHylChy/X6/2s7MzIz6JnFhYUHzW0SjJCEoZivpTe7ZDYfw69Y2QjqUGKecL2O0dTI/X53ZtAiKxWJqWSFG4c7OzrXfCIiXYQUW89vOi5HkDYWxqWN4pSzo/wD/7EPAgghYEAELImBBBCyIgAURsCACFkTAgghYEAELImBBBCyIgAURsCACFkTAgghYEAELImBBBCyIgAURsCACFkTAgnA1/wKU1B8nyOAF0AAAAABJRU5ErkJggg==" },
+  { id: "nova", name: "Nova · Troll", avatarColor: "gray", avatarShape: "pebble", lastMessagePreview: "Jerome is shut down and out of the VC.", lastActivityAt: NOW - 5 * HOUR },
+  // The 0.78 Halloween shape: a pumpkin with its stem (jarvis in Arav's roster).
+  { id: "jarvis", name: "jarvis · VoiceOS", avatarColor: "orange", avatarShape: "pumpkin", lastMessagePreview: "Here's the link: join the VoiceOS Dev Team Meeting on Google Meet.", lastActivityAt: NOW - 50 * MIN },
   { id: "theo", name: "Theo", title: "Research", avatarColor: "blue", avatarShape: "tablet", awaitingUserResponse: true, lastMessagePreview: "Needs an API key", lastActivityAt: NOW - 40 * MIN },
   { id: "g1", name: "Study group", isGroup: true, memberIds: ["piper", "finch", "theo"], lastMessagePreview: "CSA 1.7 is next.", lastActivityAt: NOW - 20 * MIN },
 ];
 const byId = (id: string) => agents.find((a) => a.id === id)!;
+// The sidebar layout the app keeps for this user: Piper and the group pinned, Piper the Main Bot,
+// a "School" section, the rest Unassigned. FLAT: the same user before they made sections.
+const PREFS = { pinnedIds: ["piper", "jarvis", "g1"], mainId: "piper", sections: [{ id: "s-school", name: "School", agentIds: ["finch", "theo", "piper"] }, { id: "s-work", name: "Work", agentIds: [], isCollapsed: true }] };
+const FLAT = { pinnedIds: PREFS.pinnedIds, mainId: PREFS.mainId, sections: [] };
 const piper = byId("piper"), group = { id: "g1", name: "Study group", members: ["piper", "finch", "theo"] };
 
 const me = (id: string, content: string, ago: number): TranscriptEntry =>
@@ -257,16 +265,18 @@ const htmlOf = (card: Card) => card._voiceos_glance.blocks[0].html;
 // Cursors: 300 → the first older page. The show card bakes 6-entry tails (like
 // grokbot_show), so its cursor 350 points at the rest of the newest page.
 const OLDER_CURSOR = 300, SHOW_CURSOR = 350, SHOW_TAIL = 6;
-const showEntries: Record<string, TranscriptEntry[]> = { piper: piperEntries, finch: finchEntries, jasper: [], theo: theoEntries, g1: groupEntries };
+const showEntries: Record<string, TranscriptEntry[]> = { piper: piperEntries, finch: finchEntries, jasper: [], nova: [], jarvis: [], theo: theoEntries, g1: groupEntries };
 // The roster card as grokbot_show bakes it (6-entry tails); `open` bakes the opened conversation's
 // longer page first, the way voice (grokbot_send / grokbot_group / grokbot_thread show) opens it.
-const showOf = (open?: Parameters<typeof cards.showCard>[4], full?: string) => cards.showCard(
+const showOf = (open?: Parameters<typeof cards.showCard>[4], full?: string, prefs = PREFS) => cards.showCard(
   agents, "",
   Object.fromEntries(Object.entries(showEntries).map(([id, e]) => [id, conv.toCardThread(id === full ? e : e.slice(-SHOW_TAIL))])),
   Object.fromEntries(Object.entries(showEntries).filter(([id, e]) => id === full || e.length > SHOW_TAIL).map(([id]) => [id, id === full ? OLDER_CURSOR : SHOW_CURSOR])),
   open,
+  prefs,
 ) as Card;
 const show = showOf();
+const showFlat = showOf(undefined, undefined, FLAT);
 const voicePiper = showOf({ open: { bot: "piper" }, message: "Keep this draft while the chat refreshes" }, "piper");
 // "Send a message to Piper": voice already sent it, so it flies from the box into the orb on open.
 const voiceSent = showOf({ open: { bot: "piper" }, message: "Can you send me the Q3 numbers?", sent: true }, "piper");
@@ -299,9 +309,12 @@ const scenarios: Scenario[] = [
   { slug: "voice-new-group", title: "Voice → new group", theme: "dark", invoke: true, html: htmlOf(voiceNewGroup), glance: cards.glanceChars(voiceNewGroup), initArgs: {},
     blurb: "What \"Message Piper and Jasper…\" opens when no such group exists: the new-group pane. Tap the avatars to pick bots, name it, and the first send creates the group.",
     hint: "After the first send the pane turns into the new group's live chat, and the roster behind it lists the group." },
-  { slug: "show-roster", title: "Roster → chat pane", theme: "dark", invoke: true, html: htmlOf(show), glance: cards.glanceChars(show), initArgs: demoArgs(htmlOf(show)),
-    blurb: "The show card. Piper has a baked thread; Finch, Jasper and Theo load theirs from the first refresh when you open them.",
+  { slug: "show-roster", title: "Roster with sections → chat pane", theme: "dark", invoke: true, html: htmlOf(show), glance: cards.glanceChars(show), initArgs: demoArgs(htmlOf(show)),
+    blurb: "The show card as the Grok Bot sidebar lays it out: Piper (Main Bot, star) and the group pinned as tiles, then the School section, a folded Work section, and Unassigned. Jasper carries the blue unread dot.",
     hint: "Click a bot inside the card to open its chat pane. Type a draft, go Back, open another bot, come back: the draft must return. Close + reopen on the roster stays on the roster." },
+  { slug: "show-flat", title: "Roster without sections", theme: "dark", invoke: true, html: htmlOf(showFlat), glance: cards.glanceChars(showFlat), initArgs: demoArgs(htmlOf(showFlat)),
+    blurb: "The same user before they made sections: pinned tiles, then one list by newest activity.",
+    hint: "Hover a bot: it turns toward the cursor. Move the cursor around: every orb's eyes follow it anywhere on the card." },
   { slug: "no-invoke", title: "Host without invokeTool", theme: "dark", invoke: false, html: htmlOf(voicePiper), glance: cards.glanceChars(voicePiper), initArgs: {},
     blurb: "Piper's chat on a host whose capabilities.invokeTool is false.",
     hint: "The card must not call any tool: no refresh, no image loads. Sending shows its unavailable message. Every invokeTool line here is a bug." },
@@ -361,7 +374,7 @@ const FX = JSON.parse(document.getElementById('fx').textContent);
 const $ = s => document.querySelector(s);
 const frame = $('#card'), logEl = $('#log'), countsEl = $('#counts'), metaEl = $('#meta');
 const UI_CALLABLE = new Set(FX.uiCallable);
-const CARD_REQUEST = new Set(['grokbot_card_snapshot', 'grokbot_card_entry', 'grokbot_card_image', 'grokbot_card_action']);
+const CARD_REQUEST = new Set(['grokbot_card_snapshot', 'grokbot_card_seen', 'grokbot_card_entry', 'grokbot_card_image', 'grokbot_card_action']);
 const clone = v => JSON.parse(JSON.stringify(v));
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -525,19 +538,34 @@ function answerOf(w, values, custom) {
   return answer;
 }
 
+const UP = {};
 const HANDLERS = {
+  // The card's chunked file upload: pieces collect under uploadId; the last one answers with a stored path.
+  grokbot_card_upload(a) {
+    const u = UP[a.uploadId] || (UP[a.uploadId] = { have: 0, total: a.total, name: a.name });
+    if (a.offset !== u.have) throw new Error('The upload got out of order. Attach the file again.');
+    u.have += String(a.chunk).length;
+    if (u.have < u.total) return { ok: true, received: u.have, total: u.total };
+    delete UP[a.uploadId];
+    log('mock', 'stored ' + a.name + ' (' + u.total + ' base64 chars)', 'dim');
+    return { ok: true, done: true, path: '/home/box/sand-data/attachments/' + a.name, name: a.name };
+  },
   grokbot_card_snapshot(a) {
-    if (!a.bot) return { ok: true, bots: botsNow(), groups: FX.groups, thread: [] };
+    if (!a.bot) return { ok: true, bots: botsNow(), groups: FX.groups, ...FX.layout, thread: [] };
     const t = tgt(a.bot);
     if (a.beforeSeq != null) {
-      const p = olderPage(t, a.beforeSeq), out = { ok: true, bots: botsNow(), groups: FX.groups, thread: clone(p.thread) };
+      const p = olderPage(t, a.beforeSeq), out = { ok: true, bots: botsNow(), groups: FX.groups, ...FX.layout, thread: clone(p.thread) };
       if (p.next != null) out.nextBeforeSeq = p.next;
       return out;
     }
     addLive(t);
-    const out = { ok: true, bots: botsNow(t.group ? null : t.id), groups: FX.groups, thread: clone(t.base.concat(t.live)) };
+    const out = { ok: true, bots: botsNow(t.group ? null : t.id), groups: FX.groups, ...FX.layout, thread: clone(t.base.concat(t.live)) };
     if (t.older.length) out.nextBeforeSeq = FX.olderCursor;
     return out;
+  },
+  grokbot_card_seen(a) {
+    const t = tgt(a.bot), newest = t.base.concat(t.live).at(-1);
+    return { ok: true, seen: newest?.id === a.entryId };
   },
   grokbot_card_entry(a) {
     const t = tgt(a.bot), f = t.full[a.entryId];
@@ -582,7 +610,8 @@ const HANDLERS = {
   },
   grokbot_card_send(a) {
     const message = String(a.message || '').trim();
-    if (!message) throw new Error('Type a message first.');
+    const media = Array.isArray(a.attachments) ? a.attachments.map((f, i) => ({ kind: /\.(png|jpe?g|gif|webp)$/i.test(f.name) ? 'image' : 'file', name: f.name, index: i })) : [];
+    if (!message && !media.length) throw new Error('Type a message first.');
     if (a.bot === undefined && a.group === undefined) {
       // A new group: created on its first send, like the gateway's createGroup.
       const members = Array.isArray(a.members) ? a.members : String(a.members || '').split(',').filter(Boolean);
@@ -597,7 +626,7 @@ const HANDLERS = {
     const ref = a.bot !== undefined ? a.bot : a.group, r = String(ref).trim().toLowerCase();
     const b = botNamed(ref) || FX.groups.find(x => x.id === ref || x.name.toLowerCase() === r);
     if (!b) throw new Error('No bot named ' + ref + '.');
-    if (S.targets[b.id]) mine(S.targets[b.id], message);
+    if (S.targets[b.id]) mine(S.targets[b.id], message, media);
     if (a.group !== undefined && (a.members !== undefined || a.groupName !== undefined)) {
       // An existing group's edits save before the send, like setGroupMembers + renameGroup.
       const members = Array.isArray(a.members) ? a.members : a.members !== undefined ? String(a.members).split(',').filter(Boolean) : b.members;
@@ -645,7 +674,7 @@ function hostPage(s: Scenario): string {
   const fx = {
     scenario: { slug: s.slug, theme: s.theme, invoke: s.invoke },
     card: instrument(s.html), glance: s.glance ?? 0, initArgs: s.initArgs, uiCallable,
-    bots: agents.filter((a) => !a.isGroup).map(cards.toBot), groups: agents.filter((a) => a.isGroup).map(cards.toGroup),
+    ...(() => { const r = cards.rosterData(agents, s.slug === "show-flat" ? FLAT : PREFS).card; return { bots: r.bots, groups: r.groups, layout: { pinned: r.pinned, sections: r.sections, ...(r.mainId ? { mainId: r.mainId } : {}) } }; })(),
     targets, liveTemplates, images, olderCursor: OLDER_CURSOR, showCursor: SHOW_CURSOR, showTail: SHOW_TAIL,
   };
   const warnings = warningsFor(s);

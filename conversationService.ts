@@ -6,6 +6,8 @@ import {
   openGrokBotApp,
   openBotChat,
   readAttachmentImage,
+  markChatRead,
+  isBotReply,
   type TranscriptEntry,
 } from "./client.ts";
 import {
@@ -32,6 +34,7 @@ export const conversationTransport = {
   openGrokBotApp,
   openBotChat,
   readAttachmentImage,
+  markChatRead,
 };
 type Transport = typeof conversationTransport;
 
@@ -114,7 +117,20 @@ export async function conversationSnapshot(bot?: string, beforeSeq?: number, tra
     // CardItems (no media paths, no `t`): versions match conversationEntry's.
     thread: boundThread(toCardThread(tail.entries ?? [])),
     nextBeforeSeq: tail.nextBeforeSeq,
+    /** The bot's replies in this read, for the "seen in the card" rule (server only, not sent to the card). */
+    replyIds: (tail.entries ?? []).filter(isBotReply).map((e) => e.id),
   };
+}
+
+/** Called only after the card displays the newest page. A reply that landed
+ * since that page was fetched must remain unread until it too is displayed. */
+export async function acknowledgeChat(bot: string, entryId: string, transport: Transport = conversationTransport) {
+  const { agents, thread } = await conversationSnapshot(bot, undefined, transport);
+  const selected = agents.find(agent => agent.id === bot)!;
+  if (thread.at(-1)?.id !== entryId) return { ok: true, seen: false };
+  if (selected.hasUnread || (selected.unreadCount ?? 0) > 0) await transport.markChatRead(bot);
+  return { ok: true, seen: true, botId: bot, bot: selected.name, entryId,
+    uniqueName: agents.filter(agent => !agent.isGroup && agent.name === selected.name).length === 1 };
 }
 
 /** Read a complete transcript entry in bounded chunks; never require an app handoff. */
