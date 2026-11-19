@@ -447,8 +447,20 @@ export class IntentRoster {
     // generic app reference is not a bot. Direct tool calls with no transcript
     // can still use an exact ID or explicit short name.
     const ref = input.bot?.trim();
-    if (!request && ref && !/^(?:(?:my|the|a|our)\s+)?(?:grok\s*bot|bots?)$/i.test(ref)) {
+    const genericRef = !!ref && /^(?:(?:my|the|a|our)\s+)?(?:grok\s*bot|bots?)$/i.test(ref);
+    if (!request && ref && !genericRef) {
       return { bot: resolveMessageRecipient(ref, bots), source: "explicit" };
+    }
+    // This turn names no bot, but the model carried one over from the
+    // conversation ("Message Jasper." … "Tell him the build is green."): keep
+    // it when it is a real bot. A turn that says "Grok Bot" or "my bot"
+    // ("Send a message to Grok Bot about …") stays an unnamed task for
+    // role/primary routing (VOS-1672).
+    if (request && ref && !genericRef && !/\bgrok\s*bots?\b|\b(?:my|the|a|our)\s+bots?\b/i.test(request)) {
+      const byId = bots.find(b => b.id === ref);
+      const carried = byId ? [byId] : bots.filter(b => spokenNames(b).some(n => normalize(n) === normalize(ref)));
+      if (carried.length === 1) return { bot: carried[0], source: "explicit" };
+      if (carried.length > 1) resolveSpokenRecipient(ref, carried); // throws: which one?
     }
     // 2. No bot named: match the task to a bot's role, project or recent chat.
     const task = [request, input.task, input.message].filter(Boolean).join(" ");

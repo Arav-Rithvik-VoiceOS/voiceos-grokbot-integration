@@ -503,6 +503,13 @@ test("VOS-1672: a bot named anywhere gets the message; no name uses patterns; un
   await expect(route("Ask Jarvis, Scout & Main to compare notes", "jarvis"))
     .rejects.toThrow(/members \["jarvis","scout","main"\]/);
   expect(await route("Tell Jarvis and then Scout", "jarvis")).toMatchObject({bot:{id:"jarvis"},source:"explicit"});
+  // A follow-up turn names no bot ("Message Scout." … "Tell him the build is
+  // green."): the bot the model carried over wins over role or primary.
+  expect(await route("Tell him the build is green", "scout")).toMatchObject({bot:{id:"scout"},source:"explicit"});
+  expect(await route("Tell him the build is green", "Scout")).toMatchObject({bot:{id:"scout"},source:"explicit"});
+  // A made-up name is not carried over; "Grok Bot" turns stay unnamed tasks.
+  expect(await route("Tell him the build is green", "Nobody")).toMatchObject({bot:{id:"main"},source:"primary"});
+  expect(await route("Ask Grok Bot how it is going", "scout")).toMatchObject({bot:{id:"main"},source:"primary"});
   // Two bots with the same name: ask, never guess.
   bots.push({id:"scout2", name:"Scout · Home"});
   await expect(route("Could Scout check this for me")).rejects.toThrow("Which one");
