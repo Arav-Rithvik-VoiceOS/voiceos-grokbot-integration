@@ -56,10 +56,10 @@ import { ReplyNotices, shortBotName } from "./replyNotices.ts";
 import { RFB_B64 } from "./assets.generated.ts";
 import { guideCard, reconnectCard, showCard, rosterData, orbIcon, type ShowOpen, toBot, toThread, confirmationRows, confirmationContext, type ConfirmRow, GROK_COLOR_IDS, GROK_SHAPE_IDS, normalizeColorId, normalizeShapeId } from "./cards.ts";
 
-import { PREPARE_DESCRIPTION, SEND_MODEL_DESCRIPTION, SEND_BOT_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, CONTEXT_DESCRIPTION, botChoiceLabel, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
+import { PREPARE_DESCRIPTION, SEND_MODEL_DESCRIPTION, SEND_BOT_DESCRIPTION, CARD_SEND_DESCRIPTION, GROUP_DESCRIPTION, refersToBot, CONTEXT_DESCRIPTION, botChoiceLabel, resolveMessageRecipient, tidySpoken, resolveMessageGroup, threadForModel, THREAD_DESCRIPTION, type MessageArgs } from "./messaging.ts";
 import { acknowledgeChat, conversationSnapshot, conversationImage, conversationEntry, performConversationAction } from "./conversationService.ts";
 import { needsAttention, toCardThread, type CardItem } from "./conversation.ts";
-import { IntentRoster, registerIntentSupport, explicitRecipient } from "./intents.ts";
+import { IntentRoster, registerIntentSupport } from "./intents.ts";
 import { INTENT_SLOT_VALUES_META_KEY } from "./intentSdk.generated.js";
 
 const server = new McpServer({ name: TOOLKIT, version: "1.0.0" });
@@ -1052,9 +1052,11 @@ const sendTool = server.registerTool(
       // account's primary or project match changes while approval is pending.
       const bot = args.recipientId ? bots.find(a => a.id === args.recipientId) : (await intentRoster.chooseRecipient(bots, args)).bot;
       if (!bot) throw new IntegrationError("not_found", "The prepared Grok Bot is no longer on your roster. Which bot should I use?");
-      if (args.recipientId && args.requestText) {
-        const named = explicitRecipient(args.requestText, bots);
-        if (named && named.id !== bot.id) throw new IntegrationError("not_found", "The prepared recipient differs from the bot you named. Which one should receive this message?");
+      // The pin is the model's pick for this send. The whole turn may name
+      // other bots for other sends, so only this send's own `bot` is checked
+      // against it (VOS-1672).
+      if (args.recipientId && args.bot && !refersToBot(args.bot, bot)) {
+        throw new IntegrationError("not_found", "The prepared recipient differs from this message's bot. Which one should receive it?");
       }
       const files = notchAttachments(args.files, extra?._meta);
       const text = tidySpoken(args.message ?? "");

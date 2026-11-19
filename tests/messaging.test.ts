@@ -274,15 +274,23 @@ test("a lookup without a recipient or a verified primary asks which bot", async 
 test("direct, prepared and card sends use the same unique Jerome, with no writes when ambiguous", async () => {
   agents.push({ id:"j",name:"Jerome · BISV Hacks",title:"Sponsorships" });
   const requestText = "Tell Jerome to collect sponsor emails";
-  const prep = await call("grokbot_prepare_message",{ bot:"Piper",requestText });
+  // No bot from the model: the bot named in the turn.
+  const prep = await call("grokbot_prepare_message",{ requestText });
   expect(prep).toMatchObject({ ready:true,args:{bot:"j"},recipient:{id:"j",name:"Jerome · BISV Hacks"},routing:{source:"explicit"} });
+  // The model's bot is trusted, even when the turn names another (VOS-1672).
+  expect(await call("grokbot_prepare_message",{ bot:"Piper",requestText })).toMatchObject({ args:{bot:"p"},recipient:{id:"p"},routing:{source:"explicit"} });
   expect((await call("grokbot_send",{bot:"Jerome",message:"Hello",requestText})).botId).toBe("j");
   agents.push({id:"j2",name:"Jerome · Calendar"});
   const before=writes.length;
-  const ambiguous = await call("grokbot_prepare_message",{bot:"j",requestText});
-  expect(ambiguous.error).toContain("Jerome · Calendar");
-  expect((await call("grokbot_send",{bot:"Jerome · BISV Hacks",recipientId:"j",requestText,message:"Hello"})).isError).toBe(true);
+  // "Jerome" now means two bots: ask, never write.
+  expect((await call("grokbot_prepare_message",{requestText})).error).toContain("Jerome · Calendar");
+  expect((await call("grokbot_prepare_message",{bot:"Jerome",requestText})).error).toContain("Jerome · Calendar");
+  expect((await call("grokbot_send",{bot:"Jerome",requestText,message:"Hello"})).isError).toBe(true);
+  // A pin that disagrees with this send's own bot is refused.
+  expect((await call("grokbot_send",{bot:"Jerome · Calendar",recipientId:"j",requestText,message:"Hello"})).isError).toBe(true);
   expect(writes.length).toBe(before);
+  // The model's exact, unique choice still sends.
+  expect((await call("grokbot_send",{bot:"Jerome · BISV Hacks",recipientId:"j",requestText,message:"Hello"})).botId).toBe("j");
   expect((await call("grokbot_card_send",{bot:"j2",message:"Hello"})).botId).toBe("j2");
 });
 test("a voice toggle flips one bot's Notify on updates switch, and skips a no-op write", async () => {

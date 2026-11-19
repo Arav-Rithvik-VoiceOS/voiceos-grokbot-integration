@@ -56,6 +56,14 @@ export function spokenNames(bot: Agent): string[] {
   return [...new Set([bot.name, personal, ...aliases])].filter(Boolean);
 }
 
+/** Does this name or ID refer to this bot? A send's `bot` must agree with its
+ * pinned `recipientId`, or the pin was made for a different send (VOS-1672). */
+export function refersToBot(ref: string, bot: Agent): boolean {
+  const name = normalize(ref);
+  return ref.trim() === bot.id
+    || [bot.name, botChoiceLabel(bot), ...spokenNames(bot)].some(n => normalize(n) === name);
+}
+
 export function resolveMessageRecipient(value: string, agents: Agent[]): Agent {
   const token = value.trim();
   const byId = agents.find(a => a.id === token);

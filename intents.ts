@@ -2,7 +2,7 @@ import type { IntentDefinition } from "./sdk/intents.ts";
 import type { PreToolUseHookInput, TranscriptHookInput, HookResult } from "./sdk/hooks.ts";
 import { type Agent, normalize, IntegrationError, log, isWaking, withoutWaking } from "./client.ts";
 import { confirmationContext, confirmationRows, type ConfirmRow } from "./cards.ts";
-import { resolveMessageRecipient, resolveSpokenRecipient, botChoiceLabel, spokenNames } from "./messaging.ts";
+import { resolveMessageRecipient, resolveSpokenRecipient, botChoiceLabel, spokenNames, refersToBot } from "./messaging.ts";
 import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { defineHooks, INTENT_SLOT_VALUES_META_KEY, INTENT_REFRESH_NOTIFICATION_METHOD } from "./intentSdk.generated.js";
@@ -414,15 +414,23 @@ export class IntentRoster {
   async chooseRecipient(bots: Agent[], input: { bot?: string; requestText?: string; task?: string; message?: string }): Promise<RecipientRoute> {
     const freshTurn = this.lastTurn && this.now() - this.lastTurn.at <= TURN_MAX_AGE_MS ? this.lastTurn.text : undefined;
     const request = input.requestText?.trim() || freshTurn;
-    // 0. Several bots addressed together: a group chat with all of them, never
-    // the first name alone. The group tool reuses a group with exactly these
-    // members or creates one (VOS-1672).
+    // 1. Trust the model. It reads the whole conversation, so "Tell him the
+    // build is green" and two sends in one turn ("Tell Jasper X and ask Finch
+    // Y") already carry the right bot. A real bot it names gets the message;
+    // a shared name asks which one; an unknown name asks, never guesses.
+    // "Grok Bot" or "my bot" is the app, not a bot (VOS-1672).
+    const ref = input.bot?.trim();
+    if (ref && !/^(?:(?:my|the|a|our)\s+)?(?:grok\s*bot|bots?)$/i.test(ref)) {
+      return { bot: resolveMessageRecipient(ref, bots), source: "explicit" };
+    }
+    // The model named no bot: look for one the user named in this turn.
+    // Several bots addressed together go to their group chat; the group tool
+    // reuses a group with exactly these members or creates one.
     const together = request ? jointRecipients(request, bots) : [];
     if (together.length) {
       const names = together.map(b => spokenNames(b)[1] ?? b.name);
       throw new IntegrationError("not_found", `${names.join(" and ")} were addressed together, so this goes to their group chat. Use grokbot_prepare_message with members ${JSON.stringify(together.map(b => b.id))} and no bot, then grokbot_group with the message.`);
     }
-    // 1. The user named a bot: it goes to that bot (VOS-1672).
     const named = request && explicitRecipient(request,bots);
     if (named) return { bot: named, source:"explicit" };
     if (request && !ADDRESSES_GROK_BOT.test(request)) {
@@ -434,33 +442,9 @@ export class IntentRoster {
         // Two bots answer to the same name: ask which one.
         if (said.every(h => h.name === said[0].name))
           resolveSpokenRecipient(said[0].name, said.map(h => h.bot));
-        // Different bots named: the model's pick if it is one of them. Else
-        // ask: never send to a bot the user did not name (VOS-1672).
-        const ref = input.bot?.trim();
-        const picked = ref && said.find(h => h.bot.id === ref || spokenNames(h.bot).some(n => normalize(n) === normalize(ref)));
-        if (picked) return { bot: picked.bot, source:"explicit" };
         const choices = [...new Set(said.map(h => botChoiceLabel(h.bot)))].join(" or ");
         throw new IntegrationError("not_found", `You named more than one bot. Which one should get this: ${choices}?`);
       }
-    }
-    // If a caller explicitly supplied an unknown name, never replace it. A
-    // generic app reference is not a bot. Direct tool calls with no transcript
-    // can still use an exact ID or explicit short name.
-    const ref = input.bot?.trim();
-    const genericRef = !!ref && /^(?:(?:my|the|a|our)\s+)?(?:grok\s*bot|bots?)$/i.test(ref);
-    if (!request && ref && !genericRef) {
-      return { bot: resolveMessageRecipient(ref, bots), source: "explicit" };
-    }
-    // This turn names no bot, but the model carried one over from the
-    // conversation ("Message Jasper." … "Tell him the build is green."): keep
-    // it when it is a real bot. A turn that says "Grok Bot" or "my bot"
-    // ("Send a message to Grok Bot about …") stays an unnamed task for
-    // role/primary routing (VOS-1672).
-    if (request && ref && !genericRef && !/\bgrok\s*bots?\b|\b(?:my|the|a|our)\s+bots?\b/i.test(request)) {
-      const byId = bots.find(b => b.id === ref);
-      const carried = byId ? [byId] : bots.filter(b => spokenNames(b).some(n => normalize(n) === normalize(ref)));
-      if (carried.length === 1) return { bot: carried[0], source: "explicit" };
-      if (carried.length > 1) resolveSpokenRecipient(ref, carried); // throws: which one?
     }
     // 2. No bot named: match the task to a bot's role, project or recent chat.
     const task = [request, input.task, input.message].filter(Boolean).join(" ");
@@ -505,9 +489,12 @@ export class IntentRoster {
       const requestText = typeof input.args.requestText === "string" ? input.args.requestText : undefined;
       let bot: Agent;
       if (typeof input.args.recipientId === "string") {
+        // The pin is the model's pick for this send. The whole turn may name
+        // other bots for other sends, so only this send's own `bot` is checked
+        // against it (VOS-1672).
         const pinned = individuals.find(a => a.id === input.args.recipientId);
-        const named = requestText && explicitRecipient(requestText, individuals);
-        if (!pinned || (named && named.id !== pinned.id)) throw new IntegrationError("not_found", "The prepared recipient changed. Which Grok Bot did you mean?");
+        const ref = typeof input.args.bot === "string" ? input.args.bot : undefined;
+        if (!pinned || (ref && !refersToBot(ref, pinned))) throw new IntegrationError("not_found", "The prepared recipient changed. Which Grok Bot did you mean?");
         bot = pinned;
       } else {
         ({ bot } = await this.chooseRecipient(individuals, {
