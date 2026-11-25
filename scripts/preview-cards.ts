@@ -12,7 +12,7 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { setIntegrationMark } from "../widgetKit.ts";
-import { connectCard, exampleConfirmCard, exampleListCard, exampleReceiptCard, glanceStats } from "../cards.ts";
+import { exampleConfirmCard, exampleListCard, exampleReceiptCard, glanceStats } from "../cards.ts";
 
 try {
   const markBytes = readFileSync(new URL("../mark.png", import.meta.url));
@@ -25,8 +25,6 @@ const LONG =
   "Refactor the authentication middleware to support rotating refresh tokens without breaking existing sessions 🚀🚀";
 
 const cards = [
-  ["connect (first run — browser opened, no link)", connectCard("https://backend.composio.dev/api/v3/s/EXAMPLE123")],
-  ["connect (open failed — link fallback)", connectCard("https://backend.composio.dev/api/v3/s/EXAMPLE123", false)],
   [
     "list (busy + worst-case)",
     exampleListCard(

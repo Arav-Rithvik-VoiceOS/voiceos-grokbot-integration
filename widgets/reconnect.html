@@ -1,11 +1,11 @@
 <!doctype html>
 <meta charset="utf-8" />
-<title>Connect Grok Bot</title>
+<title>Reconnect Grok Bot</title>
 <style>
 *{box-sizing:border-box;scrollbar-width:none}::-webkit-scrollbar{display:none}
-:root{--k-radius:26px;--accent:#FF8A00;--ink-1:rgba(255,255,255,.95);--ink-2:rgba(255,255,255,.62);--ink-3:rgba(255,255,255,.40);--line:rgba(255,255,255,.09);--fill-1:rgba(255,255,255,.06);--fill-2:rgba(255,255,255,.11);--fill-3:rgba(255,255,255,.16);--good:#34c96e;--bad:#ff5d5d;--eye:#161616}
-html[data-theme=light]{--ink-1:rgba(0,0,0,.92);--ink-2:rgba(0,0,0,.56);--ink-3:rgba(0,0,0,.38);--line:rgba(0,0,0,.08);--fill-1:rgba(0,0,0,.045);--fill-2:rgba(0,0,0,.08);--fill-3:rgba(0,0,0,.12)}
-html,body{margin:0;background:transparent}
+:root{--k-radius:26px;--bg:#0e0e0e;--accent:#FF8A00;--ink-1:#ececec;--ink-2:#8f8f8f;--ink-3:#5c5c5c;--line:#1f1f1f;--fill-1:#161616;--fill-2:#1f1f1f;--fill-3:#2a2a2a;--good:#10ab61;--bad:#e72e3b;--eye:#161616}
+html[data-theme=light]{--bg:#fcfcfc;--ink-1:#1c1c1c;--ink-2:#1c1c1cad;--ink-3:#1c1c1c8f;--line:#1c1c1c14;--fill-1:#1c1c1c0a;--fill-2:#1c1c1c0f;--fill-3:#1c1c1c1a}
+html,body{margin:0;background:var(--bg)}
 body{color:var(--ink-1);font:13.5px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden}
 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
 input,textarea{font:inherit;color:var(--ink-1);background:var(--fill-1);border:1px solid var(--line);border-radius:12px;padding:9px 12px;width:100%;outline:none;resize:none;transition:border-color .15s,background .15s}
@@ -70,76 +70,51 @@ input::placeholder,textarea::placeholder{color:var(--ink-3)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 
-<style>.perm{display:flex;align-items:center;gap:12px;padding:6px 15px}.perm .ic{width:30px;height:30px;border-radius:9px;background:var(--fill-2);display:grid;place-items:center;color:var(--ink-1);flex:none}.perm .ic svg{width:15px;height:15px}.hero{display:flex;align-items:center;justify-content:center;gap:14px;padding:10px 0 8px}.hero .box{width:48px;height:48px;border-radius:15px;display:grid;place-items:center;background:var(--fill-2);border:1px solid var(--line)}.hero .link{display:flex;gap:4px}.hero .link i{width:5px;height:5px;border-radius:50%;background:var(--ink-3)}.hero .link i:nth-child(2){background:var(--accent)}.acct{display:flex;align-items:center;gap:10px;margin:6px 15px 0;padding:9px 11px;border:1px solid var(--line);border-radius:14px}.acct .who{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,#FF8A00,#ff3d6e);flex:none}</style>
-<div class="hd"><span class="mark"><i></i>Grok Bot</span><span class="grow"></span><span class="t3">Connect</span></div>
-<div class="hero">
-  <div class="box"><span class="av circ" data-state="idle" style="--c:#FF8A00;width:28px;height:28px"><span class="eyes"><i class="eye l"></i><i class="eye r"></i></span></span></div>
-  <div class="link"><i></i><i></i><i></i></div>
-  <div class="box" style="background:var(--ink-1)"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v18M7 8v8M17 8v8M3 11v2M21 11v2"/></svg></div>
+<style>.body{padding:2px 15px 14px}.lead{font-size:16px;font-weight:650;letter-spacing:-.012em;line-height:1.25}.sub{color:var(--ink-2);margin-top:4px;line-height:1.45;font-size:12.5px}.steps{margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}.steps li{display:flex;gap:10px;align-items:flex-start}.steps .n{flex:none;width:22px;height:22px;border-radius:50%;background:var(--fill-2);color:var(--ink-1);font-size:11.5px;font-weight:650;display:grid;place-items:center}.steps .n.on{background:var(--accent);color:#000}.cta{margin-top:14px;display:flex;align-items:center;gap:10px}.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:18px;background:var(--ink-1);color:#000;font-weight:650;font-size:13.5px;transition:transform .12s,opacity .15s}.btn:active{transform:scale(.97)}.btn[disabled]{opacity:.45;cursor:default}.note{color:var(--ink-3);font-size:11.5px}.state{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12.5px;min-height:18px;margin-top:10px}.state.good{color:var(--good)}.state.bad{color:var(--bad)}.spin{width:12px;height:12px;border:2px solid var(--ink-3);border-top-color:var(--ink-1);border-radius:50%;animation:spin .8s linear infinite;flex:none}@keyframes spin{to{transform:rotate(360deg)}}</style>
+<div class="hd"><span class="mark"><i></i>Grok Bot</span><span class="grow"></span><span class="t3">Reconnect</span></div>
+<div class="body">
+  <div style="display:flex;gap:12px;align-items:center">
+    <span class="av blob" id="face" data-state="waiting" style="--c:#FF8A00"><span class="eyes"><i class="eye l"></i><i class="eye r"></i></span></span>
+    <div class="grow"><div class="lead">Grok Bot needs a quick reconnect</div><div class="sub">Its cloud computer fell asleep, and only the Grok Bot app can wake it now.</div></div>
+  </div>
+  <ol class="steps">
+    <li><span class="n on">1</span><div><div class="t2">Send any message to a bot in Grok Bot</div><div class="t3">That wakes the computer.</div></div></li>
+    <li><span class="n">2</span><div><div class="t2">Tap Reconnect</div><div class="t3">Grok Bot restarts. An unsent draft in Grok Bot is lost.</div></div></li>
+  </ol>
+  <div class="cta"><button class="btn" id="go">Reconnect</button><span class="note" id="hint">Takes about half a minute</span></div>
+  <div class="state" id="state"></div>
 </div>
-<div style="text-align:center;padding:0 24px 12px"><div class="t1" style="font-size:17px;white-space:normal">Connect Grok Bot to VoiceOS</div><div class="t3" style="white-space:normal;margin-top:3px">Talk to your Bots from the notch. VoiceOS will be able to:</div></div>
-<div class="perm"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span><div class="grow"><div class="t2">See your Bots and threads</div><div class="t3">Status, labels and recent messages</div></div></div>
-<div class="perm"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></span><div class="grow"><div class="t2">Send messages as you</div><div class="t3">Always shown for confirmation first</div></div></div>
-<div class="perm"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span><div class="grow"><div class="t2">Create Bots and groups</div><div class="t3">Using the same builder you know</div></div></div>
-<div class="acct" style="margin-top:4px"><span class="who"></span><div class="grow"><div class="t2" id="acct-name">—</div><div class="t3" id="acct-mail">—</div></div><span class="t3">Switch</span></div>
-<div class="foot">Disconnect anytime in Integrations</div>
 
 <script>
 const DEMO=__VOICEOS_DEMO__;
 
 const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const EYES='<span class="eyes"><i class="eye l"></i><i class="eye r"></i></span>';
-const av=(b,cls='')=>'<span class="av '+(b.shape||'blob')+' '+cls+'" data-state="'+esc(b.status||'idle')+'" style="--c:'+esc(b.color)+'">'+EYES+'</span>';
 let inited=false;
-addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;inited=true;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
+addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='voiceos:init')return;CAN_INVOKE=!!(m.capabilities&&m.capabilities.invokeTool);if(inited)return;inited=true;boot(m.data||DEMO.data,m.args||DEMO.args,(m.theme&&m.theme.mode)||'dark');});
 setTimeout(()=>{if(!inited)boot(DEMO.data,DEMO.args,'dark')},350);
-function boot(data,args,mode){document.documentElement.dataset.theme=mode;render(data||{},args||{});hydrate(args||{});report();new ResizeObserver(report).observe(document.body);}
-function getVal(el){return 'value' in el&&el.tagName!=='BUTTON'?el.value:(el.dataset.value??'')}
-function setVal(el,v){if('value' in el&&el.tagName!=='BUTTON')el.value=v??'';else{el.dataset.value=v;el.dispatchEvent(new CustomEvent('hydrate',{detail:v}))}}
-function hydrate(args){$$('[data-voiceos-key]').forEach(el=>{const k=el.dataset.voiceosKey;if(k in args)setVal(el,args[k]);el.addEventListener('input',()=>stage(k,getVal(el)))})}
-function stage(key,value){parent.postMessage({type:'voiceos:updateInput',key,value},'*')}
+function boot(data,args,mode){document.documentElement.dataset.theme=mode;report();new ResizeObserver(report).observe(document.body);}
 function report(){if(document.hidden||!document.documentElement.offsetWidth)return;const h=Math.ceil(document.body.getBoundingClientRect().height);if(h>=8)parent.postMessage({type:'voiceos:resize',height:h},'*')}
 
-/* Motion — an original avatar liveness engine: wandering gaze, blinks, cursor-follow, per-state behavior. */
-const Motion=(()=>{
- const R=(a,b)=>a+Math.random()*(b-a);
- const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
- let pointer=null,ptrAt=0;
- addEventListener('pointermove',e=>{pointer={x:e.clientX,y:e.clientY};ptrAt=performance.now()});
- document.documentElement.addEventListener('pointerleave',()=>pointer=null);
- const live=new Set();
- const st=m=>m.el.dataset.state||'idle';
- function later(m,fn,ms){const t=setTimeout(()=>{m.timers.delete(t);fn()},ms);m.timers.add(t)}
- function clear(m){m.timers.forEach(clearTimeout);m.timers.clear()}
- function gaze(m,x,y,dur){if(pointer)return;m.eyes.style.transition='transform '+dur+'ms cubic-bezier(.3,.7,.2,1)';m.eyes.style.transform='translate('+x+'%,'+y+'%)'}
- function blink(m,dbl){if(reduce)return;m.el.classList.add('blink');later(m,()=>{m.el.classList.remove('blink');if(dbl)later(m,()=>blink(m),170)},120)}
- function schedule(m){clear(m);const s=st(m);
-  const bl=()=>{blink(m,Math.random()<.2);later(m,bl,R(s==='working'?1600:2600,s==='working'?3200:5800))};later(m,bl,R(300,2400));
-  const gz=()=>{
-   if(s==='idle'){gaze(m,R(-14,14),R(-8,8),R(500,900));later(m,()=>gaze(m,0,0,800),R(900,2400))}
-   else if(s==='working'){gaze(m,R(-16,-8),R(4,10),130);later(m,()=>gaze(m,R(8,16),R(4,10),130),R(220,420))}
-   else if(s==='thinking'){gaze(m,Math.random()<.75?14:-14,-12,600)}
-   else if(s==='waiting'){gaze(m,0,-3,500)}
-   else if(s==='blocked'){gaze(m,0,12,500)}
-   else gaze(m,0,0,300);
-   later(m,gz,s==='working'?R(600,1200):s==='idle'?R(2400,6000):R(1600,3200))};
-  gz();
-  if(s==='done')later(m,()=>set(m.el,'idle'),2200);
- }
- function mount(el){if(el._m||!el.querySelector('.eyes'))return;const m=el._m={el,eyes:el.querySelector('.eyes'),timers:new Set()};live.add(m);schedule(m)}
- function scan(){document.querySelectorAll('.av').forEach(mount);live.forEach(m=>{if(!m.el.isConnected){clear(m);live.delete(m);delete m.el._m}})}
- function tick(){if(pointer&&!reduce){if(performance.now()-ptrAt>4000)pointer=null;else live.forEach(m=>{if(!m.el.isConnected)return;const r=m.el.getBoundingClientRect();const dx=pointer.x-(r.left+r.width/2),dy=pointer.y-(r.top+r.height/2);const d=Math.hypot(dx,dy)||1,k=Math.min(1,d/140);m.eyes.style.transition='transform 200ms cubic-bezier(.2,.8,.2,1)';m.eyes.style.transform='translate('+(dx/d*16*k).toFixed(1)+'%,'+(dy/d*10*k).toFixed(1)+'%)'})}requestAnimationFrame(tick)}
- requestAnimationFrame(tick);
- new MutationObserver(scan).observe(document.documentElement,{childList:true,subtree:true});
- function set(el,s){if(!el)return;el.dataset.state=s;if(el._m)schedule(el._m)}
- function react(el){if(!el)return;el.classList.remove('ack');void el.offsetWidth;el.classList.add('ack');if(el._m)blink(el._m)}
- return{scan,set,react};
-})();
+/* Card→host tool bridge (voiceos:invokeTool): runs one of this integration's own
+   uiCallable tools and waits for the terminal voiceos:toolResult. Only results
+   from parent are trusted; interim statuses are ignored. */
+let CAN_INVOKE=false;
+const TERMINAL={completed:1,cancelled:1,failed:1,unknown:1};
+const _pending=new Map();let _rq=0;
+addEventListener('message',e=>{if(e.source!==parent)return;const m=e.data;if(!m||m.type!=='voiceos:toolResult')return;const p=_pending.get(m.requestId);if(!p)return;if(!TERMINAL[m.status])return;_pending.delete(m.requestId);if(m.status==='completed')p.resolve(m.result||{});else p.reject({status:m.status,error:m.error||'That didn’t go through.'})});
+function invoke(name,args){return new Promise((resolve,reject)=>{const requestId='r'+(++_rq)+'_'+Date.now();_pending.set(requestId,{resolve,reject});parent.postMessage({type:'voiceos:invokeTool',name,args,requestId},'*');setTimeout(()=>{if(_pending.delete(requestId))reject({status:'unknown',error:'No response — check the app before trying again.'})},130000)})}
+function unpackResult(result){if(result&&result.isError)throw new Error('The reconnect failed.');if(result&&result.structuredContent)return result.structuredContent;const t=result&&result.content&&result.content.find(b=>b.type==='text');return t&&typeof t.text==='string'?JSON.parse(t.text):result}
 
-function autosize(t){t.style.height='auto';t.style.height=t.scrollHeight+'px'}
-
-
-function render(d){$('#acct-name').textContent=d.account?.name||'';$('#acct-mail').textContent=d.account?.email||''}
-
+function setState(kind,text){const el=$('#state');el.className='state'+(kind==='good'?' good':kind==='bad'?' bad':'');el.textContent='';if(kind==='busy'){const s=document.createElement('span');s.className='spin';el.appendChild(s)}el.appendChild(document.createTextNode(text));const face=$('#face');face.dataset.state=kind==='good'?'done':kind==='bad'?'blocked':kind==='busy'?'working':'waiting';$$('.steps .n')[1].classList.toggle('on',kind==='busy'||kind==='good')}
+$('#go').addEventListener('click',async()=>{
+  const btn=$('#go');
+  if(!CAN_INVOKE){setState('bad','Quit Grok Bot and open it again, then try your request once more.');return}
+  btn.disabled=true;$('#hint').textContent='';
+  setState('busy','Restarting Grok Bot…');
+  try{
+    const r=unpackResult(await invoke('grokbot_reconnect',{}));
+    if(r&&r.ok){setState('good',r.message||'Connected. Say your request again.')}
+    else{setState('bad',(r&&r.message)||'Still asleep. Send a message in Grok Bot first, then tap Reconnect.');btn.disabled=false}
+  }catch(e){setState('bad',(e&&(e.error||e.message))||'That didn’t go through. Try again.');btn.disabled=false}
+});
 </script>

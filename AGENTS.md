@@ -32,6 +32,11 @@ card** declared in the manifest, which the user can edit and approve.
 
 1. **Tool descriptions are routing rules for the model**: what it does + when
    to use it ("Use when the user asks …").
+   A tool the user can see has a short, plain manifest description; its
+   routing text lives on the server's `registerTool` description (for
+   `grokbot_send`: `SEND_DESCRIPTION` is the short manifest text and
+   `SEND_MODEL_DESCRIPTION` the routing text, both in `messaging.ts`). Agent-only
+   tools (`"visibility": "agent"`) keep the full routing text in both places.
 2. **Results carry data AND a glance card**: JSON the model reasons about,
    plus a `_voiceos_glance: { blocks: [...] }` key spread into the result
    for the user. Never put information only in the card.
@@ -90,6 +95,21 @@ Integrations → open **Grok Bot** → **Reload**. The agent sees your
 changes on its next turn — just talk to it.
 
 ## Versioning
+
+### Canonical source and VoiceOS production
+
+The canonical repository is
+[`Arav-Rithvik-VoiceOS/voiceos-grokbot-integration`](https://github.com/Arav-Rithvik-VoiceOS/voiceos-grokbot-integration).
+Use its reviewed `main` revision for releases. Personal copies are not release
+sources; use a fork only to submit changes back through a pull request.
+
+Keep this source and VoiceOS's production integration in sync. When a canonical
+change ships in VoiceOS, sync the maintained example source and the generated
+bundled runtime together, preserve only VoiceOS's required host manifest policy,
+and record the canonical commit, manifest version, and shipped file hashes in
+VoiceOS's Grok Bot release pin. Verify those pins before release. When fixing a
+production integration bug, submit the fix here too, so a later canonical sync
+cannot remove it. Do not describe a pending pull request as merged or deployed.
 
 The manifest `version` uses semver. Bump it in `voiceos.integration.json`
 whenever a change ships:

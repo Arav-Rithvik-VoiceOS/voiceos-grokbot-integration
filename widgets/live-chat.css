@@ -21,7 +21,7 @@
 .lc-file:hover{background:var(--fill-3);color:var(--ink-1)}
 .lc-card{max-width:88%;min-width:0;display:flex;flex-direction:column;gap:7px;padding:9px 11px 10px;border-radius:16px;border-bottom-left-radius:6px;background:var(--fill-1);border:1px solid var(--line);font-size:12.5px;line-height:1.38;overflow-wrap:anywhere}
 .lc-card.me{border-bottom-left-radius:16px;border-bottom-right-radius:6px}
-.lc-card.lc-att{border-color:rgba(255,138,0,.4)}
+.lc-card.lc-att{border-color:color-mix(in srgb,var(--bot) 45%,transparent)}
 .lc-q{display:flex;align-items:flex-start;gap:6px;font-size:13px;font-weight:600;letter-spacing:-.005em}
 .lc-q>span:first-child{flex:1;min-width:0}.lc-q .chip{flex:none;margin-top:1px}
 .lc-d{color:var(--ink-2);white-space:pre-wrap;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
@@ -33,17 +33,31 @@
 .lc-opt{display:flex;align-items:flex-start;gap:8px;width:100%;padding:6px 9px 6px 7px;border-radius:10px;background:var(--fill-1);text-align:left;transition:background .12s}
 .lc-opt:hover{background:var(--fill-2)}.lc-opt[aria-pressed=true]{background:var(--fill-3)}.lc-opt[disabled]{opacity:.5;cursor:default}
 .lc-k{flex:none;width:17px;height:17px;margin-top:1px;border-radius:5px;display:grid;place-items:center;background:var(--fill-2);color:var(--ink-2);font-size:10.5px;font-weight:650}
-.lc-opt[aria-pressed=true] .lc-k{background:var(--accent);color:#fff}
+.lc-opt[aria-pressed=true] .lc-k{background:var(--bot);color:var(--bot-ink)}
 .lc-ot{flex:1;min-width:0}.lc-ot small{display:block;color:var(--ink-3);font-size:11.5px}
 .lc-card .lc-in{padding:6px 10px;border-radius:10px;font-size:12.5px}
 .lc-row{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
 .lc-btn{height:26px;padding:0 11px;border-radius:13px;font-size:12px;font-weight:600;background:var(--fill-2);color:var(--ink-1);flex:none;transition:background .12s}
 .lc-btn:hover{background:var(--fill-3)}.lc-btn[disabled]{opacity:.45;cursor:default}
-.lc-btn.pri{background:rgba(255,138,0,.16);color:var(--accent)}.lc-btn.pri:hover{background:rgba(255,138,0,.26)}
+.lc-btn.pri{background:color-mix(in srgb,var(--bot) 18%,transparent);color:var(--ink-1)}.lc-btn.pri:hover{background:color-mix(in srgb,var(--bot) 28%,transparent)}
 .lc-pc{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;flex:none;color:var(--ink-2);background:var(--fill-1);transition:background .12s,color .12s}
 .lc-pc:hover{background:var(--fill-2);color:var(--ink-1)}.lc-pc[disabled]{opacity:.45;cursor:default}.lc-pc[hidden]{display:none}
-.lc-older:focus-visible,.lc-link:focus-visible,.lc-file:focus-visible,.lc-opt:focus-visible,.lc-btn:focus-visible,.lc-pc:focus-visible{outline:2px solid rgba(255,138,0,.6);outline-offset:1px}
-.lc-st{justify-content:center;text-align:center;padding:0 14px;max-height:48px;overflow-y:auto;flex-shrink:0}.lc-st.bad{color:var(--bad)}.lc-st[hidden]{display:none}
+.lc-older:focus-visible,.lc-link:focus-visible,.lc-file:focus-visible,.lc-opt:focus-visible,.lc-btn:focus-visible,.lc-pc:focus-visible{outline:2px solid color-mix(in srgb,var(--bot) 60%,transparent);outline-offset:1px}
+/* Status lines stay quiet and gray, never red: the app shows no warnings in a chat. */
+.lc-st{justify-content:center;text-align:center;padding:0 14px;max-height:48px;overflow-y:auto;flex-shrink:0;color:var(--ink-3)}.lc-st.bad{color:var(--ink-3)}.lc-st[hidden]{display:none}
 /* Grok Bot's unread divider (sand-unread-divider): a line, the label, a line — red here. */
 .lc-new{align-self:stretch;display:flex;align-items:center;gap:8px;margin:14px 0 8px;padding:2px 0;flex-shrink:0;color:var(--bad);font-size:11px;font-weight:500;line-height:14px}
 .lc-new i{flex:1 1 0;height:1px;background:currentColor;opacity:.6}
+/* The working row under the last message (Grok Bot's typing row): the face pops in and spins
+   once (its eyes slide off one side and back in from the other), then the label shimmers. */
+.lc-act{display:flex;align-items:center;gap:8px;align-self:flex-start;margin:6px 0 2px 2px;flex-shrink:0;transition:opacity .26s ease,transform .26s ease}
+.lc-act.lc-act-out{opacity:0;transform:scale(.85);transform-origin:10px 50%}
+.lc-orb{display:inline-flex;animation:lc-pop .32s cubic-bezier(.3,1.4,.5,1) both}
+/* backwards, not both: once the turn ends the Motion engine moves the eyes again. */
+.lc-orb .av .eyes{animation:lc-turn .9s .28s cubic-bezier(.45,0,.3,1) backwards}
+.lc-act-t{font-size:12.5px;line-height:18px;color:transparent;background:linear-gradient(90deg,var(--ink-3) 0 35%,var(--ink-1) 50%,var(--ink-3) 65% 100%) 0 0/260% 100%;-webkit-background-clip:text;background-clip:text;animation:lc-act-in .3s .2s ease both,lc-shine 1.8s linear infinite;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@keyframes lc-pop{0%{opacity:0;transform:scale(.3)}100%{opacity:1;transform:scale(1)}}
+@keyframes lc-turn{0%{transform:translate(0,0)}25%{transform:translate(-16%,12%)}55%{transform:translate(-130%,8%)}55.01%{transform:translate(130%,8%)}100%{transform:translate(0,0)}}
+@keyframes lc-act-in{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:none}}
+@keyframes lc-shine{from{background-position:100% 0}to{background-position:-60% 0}}
+@media (prefers-reduced-motion:reduce){.lc-orb,.lc-orb .av .eyes{animation:none}.lc-act-t{animation:none;color:var(--ink-3);background:none}}

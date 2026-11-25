@@ -32,6 +32,13 @@ try {
             try {
               const message = JSON.parse(line);
               assert.equal(message.jsonrpc, "2.0");
+              // A request from the server (e.g. the VoiceOS-only Grok Bot vault):
+              // answer like a plain MCP host, which proves the fallback works.
+              if (message.method) {
+                if (message.id !== undefined)
+                  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } }) + "\n");
+                continue;
+              }
               if (message.id === 1) {
                 assert.ok(message.result, "Initialize failed");
                 child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");

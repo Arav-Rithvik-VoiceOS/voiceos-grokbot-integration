@@ -1,4 +1,4 @@
-import { Marked, Renderer } from "marked";
+import { Marked, Renderer, type Token } from "marked";
 import hljs from "highlight.js";
 import markedKatex from "marked-katex-extension";
 import sanitizeHtml from "sanitize-html";
@@ -61,6 +61,16 @@ renderer.link = function ({ href, title, tokens }) {
 // Attachments are resolved separately through Grok's authenticated media reader.
 // Never turn transcript-supplied image URLs into browser network requests.
 renderer.image = () => "";
+// A reply that is only "4." or "10." parses as a list whose one item is empty,
+// so the bubble showed a grey list number. Such a "list" is just the text.
+const isEmptyList = (token: Token) =>
+  token.type === "list" && token.items.every((item) => !item.text.trim());
+const baseList = renderer.list;
+renderer.list = function (token) {
+  if (isEmptyList(token))
+    return `<p>${token.items.map((item) => escapeHtml(item.raw.trim())).join("<br>")}</p>`;
+  return baseList.call(this, token);
+};
 
 const markdown = new Marked({ gfm: true, breaks: true, renderer });
 markdown.use(
@@ -73,6 +83,30 @@ markdown.use(
     maxSize: 20,
   }),
 );
+
+/** A roster preview is plain text. Format before clipping so link destinations
+ * and emphasis delimiters never take up the one visible line. */
+export function markdownPreview(source: string): string {
+  function visible(token: Token): string {
+    switch (token.type) {
+      case "list": return isEmptyList(token) ? token.raw.trim() : token.items.map(visible).join(" ");
+      case "table": return [token.header, ...token.rows].flat().map(cell => cell.tokens.map(visible).join("")).join(" ");
+      case "space": case "hr": case "br": return " ";
+      case "html": return /<br\b/i.test(token.text) ? " " : token.text.replace(/<[^>]+>/g, "");
+    }
+    if ("tokens" in token && token.tokens) return token.tokens.map(visible).join("");
+    return "text" in token ? token.text : "";
+  }
+  // The service sometimes clips a preview inside a link or emphasis span.
+  // Complete just that unfinished span so the lexer still returns its label.
+  const complete = source
+    .replace(/(^|\s)!?\[([^\[\]\n]+(?:…|\.\.\.))$/, "$1$2")
+    .replace(/(!?\[[^\]\n]+\]\()([^()\s]*)$/, "$1$2)")
+    .replace(/(^|\s)(\*\*|__)([^\n]*?)$/, (match, gap, delimiter, rest) =>
+      rest.includes(delimiter) ? match : gap + delimiter + rest + delimiter);
+  const line = markdown.lexer(complete).map(visible).join(" ").replace(/\s+/g, " ").trim();
+  return line.length > 120 ? line.slice(0, 119).trimEnd() + "…" : line;
+}
 
 export function markdownImages(text: string): { url: string; alt: string }[] {
   if (!text.includes("![")) return [];
