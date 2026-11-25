@@ -5,8 +5,12 @@
 //
 //   GROKBOT_HEALTH_TOKEN=<test account access token> bun scripts/health-check.ts
 //
+// It tests the version users get: the PostHog flag "grokbot-client-version"
+// for this platform. Set POSTHOG_API_KEY (the project token; POSTHOG_HOST is
+// optional) so it can read the flag. Without the flag it tests the built-in
+// version and says so.
 // Optional: GROKBOT_HEALTH_TEAM_ID, GROKBOT_HEALTH_VERSION (try a new client
-// version before you set it in the PostHog flag "grokbot-client-version").
+// version before you set it in the flag).
 // Exit codes: 0 ok, 1 broken, 2 Grok Bot rejected the client version,
 // 3 the token expired (sign the test account in again).
 // Run it on Mac and on Windows: each presents its own platform headers.
@@ -38,8 +42,28 @@ writeFileSync(
 );
 
 const browser = await import("../browserSession.ts");
-const version = process.env.GROKBOT_HEALTH_VERSION ?? browser.DEFAULT_CLIENT_VERSION;
-if (process.env.GROKBOT_HEALTH_VERSION)
+const { flagClientVersion } = await import("./flagVersion.ts");
+const posthogKey = process.env.POSTHOG_API_KEY ?? process.env.VITE_POSTHOG_API_KEY;
+let flagVersion: string | undefined;
+if (!process.env.GROKBOT_HEALTH_VERSION && posthogKey) {
+  try {
+    flagVersion = await flagClientVersion({
+      apiKey: posthogKey,
+      host: process.env.POSTHOG_HOST ?? process.env.VITE_POSTHOG_HOST,
+      platform: process.platform,
+    });
+  } catch (error) {
+    console.error(`Could not read the "grokbot-client-version" flag: ${(error as Error).message}`);
+    process.exit(1);
+  }
+}
+const version = process.env.GROKBOT_HEALTH_VERSION ?? flagVersion ?? browser.DEFAULT_CLIENT_VERSION;
+const versionSource = process.env.GROKBOT_HEALTH_VERSION ? "GROKBOT_HEALTH_VERSION" : flagVersion ? "flag" : "built-in";
+if (versionSource === "built-in")
+  console.error(posthogKey
+    ? "The flag has no version for this platform: testing the built-in version, as users get."
+    : "POSTHOG_API_KEY is not set: testing the built-in version, NOT the flag version users may get.");
+if (versionSource !== "built-in")
   await browser.useHostVault({
     // Memory only: the token is already in the throwaway file above.
     get: async () => ({ available: false }),
@@ -80,5 +104,5 @@ failed(await check("computer route", async () => {
 }));
 
 rmSync(home, { recursive: true, force: true });
-console.log(JSON.stringify({ ok: code === 0, code, platform: process.platform, version, checks }, null, 2));
+console.log(JSON.stringify({ ok: code === 0, code, platform: process.platform, version, versionSource, checks }, null, 2));
 process.exit(code);
