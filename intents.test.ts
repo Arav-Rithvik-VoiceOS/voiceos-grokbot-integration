@@ -521,3 +521,32 @@ test("VOS-1672: the model's bot wins; with none, a bot named in the turn, then p
   await expect(route("Could Scout check this for me", "Scout")).rejects.toThrow("Which one");
   expect(await route("Could Scout Home check this for me")).toMatchObject({bot:{id:"scout2"},source:"explicit"});
 });
+
+test("a task that names a bot goes to the bot the user addressed, not the named bot (VOS-1672)", async () => {
+  const bots: Agent[] = [{ id: "main", name: "Scout" }, { id: "j", name: "Jerome" }, { id: "p", name: "Jasper" }];
+  const roster = new IntentRoster(async () => bots);
+  roster.primary = async () => "main";
+  roster.recentTopics = async () => [];
+  await roster.refresh();
+  const choose = (requestText: string, bot?: string) => roster.chooseRecipient(bots, { requestText, bot });
+  for (const text of [
+    "Send this to Grok Bot: draft an email to Jerome",
+    "Can Grok Bot draft an email to Jerome?",
+    "Grok Bot, draft an email to Jerome",
+    "Send a message to my bot to email Jerome",
+    "Ask Grok Bot to draft an email to Jerome",
+  ]) {
+    expect((await choose(text)).bot.id).toBe("main");
+    // The model copied the task's name as the bot: still the addressed bot.
+    expect((await choose(text, "Jerome")).bot.id).toBe("main");
+  }
+  // A person who is not a bot is part of the task.
+  expect((await choose("Ask Grok Bot to tell Sarah the plan changed")).bot.id).toBe("main");
+  // The user addressed a bot directly, before or after "Grok Bot".
+  expect((await choose("Grok Bot, tell Jasper the build is green")).bot.id).toBe("p");
+  expect((await choose("Ask my bot Jasper to email Jerome")).bot.id).toBe("p");
+  expect((await choose("Tell Jasper to ask Grok Bot for the notes")).bot.id).toBe("p");
+  expect((await choose("Ask my bot named Jasper to email Jerome")).bot.id).toBe("p");
+  // A model bot that the turn does not name as the task is still trusted.
+  expect((await choose("Send this to Grok Bot: draft an email to Jerome", "Jasper")).bot.id).toBe("p");
+});

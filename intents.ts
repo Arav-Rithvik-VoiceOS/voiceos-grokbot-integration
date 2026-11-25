@@ -154,9 +154,28 @@ export function mentionedBots(text: string, bots: Agent[]): { bot: Agent; name: 
     return said ? [{ bot, name: said }] : [];
   }).sort((x, y) => y.name.length - x.name.length);
 }
-/** "Ask Grok Bot to …", "tell my bot …": the user chose no bot, so names later
- * in the sentence are the task ("draft an email to Jerome"), not the recipient. */
-const ADDRESSES_GROK_BOT = /\b(?:ask|tell|message|ping|have|get|send|text)\s+(?:(?:my|the|our|a)\s+)?(?:grok\s*bot|bots?)\b/i;
+/** "Grok Bot" or "my bot" said as the addressee, not as part of "my bot named X". */
+const GROK_BOT_WORDS = /\b(?:grok\s*bots?|(?:my|the|our)\s+bots?)\b(?!\s+(?:named|called)\b)/i;
+
+/** "Send this to Grok Bot: draft an email to Jerome", "Can Grok Bot …",
+ * "Grok Bot, draft …", "ask my bot to …": the user spoke to the app before
+ * naming any bot, so names later in the sentence are the task, not the
+ * recipient (VOS-1672). Returns the words after the address, or undefined
+ * when the user named a bot first ("Tell Jasper to ask Grok Bot …") or
+ * named it right after ("my bot Jasper"). */
+export function afterGrokBotAddress(request: string, bots: Agent[]): string | undefined {
+  const said = GROK_BOT_WORDS.exec(request);
+  if (!said || namesABot(request.slice(0, said.index), bots)) return undefined;
+  const after = request.slice(said.index + said[0].length);
+  return startsWithBotName(after, bots) ? undefined : after;
+}
+
+/** "Jasper to email Jerome" starts with a bot's name. */
+function startsWithBotName(text: string, bots: Agent[]): boolean {
+  const next = wordsOf(text);
+  return bots.flatMap(spokenNames).map(wordsOf)
+    .some(words => words.length > 0 && words.every((word, i) => word === next[i]));
+}
 
 export function namesABot(text: string, bots: Agent[]): boolean {
   const spoken = ` ${text.replace(/['’]s\b/gi, "").split(/\s+/).map(normalize).filter(Boolean).join(" ")} `;
@@ -242,7 +261,10 @@ function addressedName(request: string, bots: Agent[]): string | undefined {
     if (prefix) { rest = rest.slice(prefix[0].length); recipientSlot = true; }
   }
   const namedPrefix = /^(?:(?:my|the|a)\s+)?(?:grok\s*)?bot\s+(?:named|called)\s+/i;
+  const plainPrefix = /^(?:(?:my|the|a)\s+)?(?:grok\s*)?bot\s+/i.exec(rest);
   if (namedPrefix.test(rest)) { rest = rest.replace(namedPrefix,""); recipientSlot = true; }
+  // "Ask my bot Jasper to …" names Jasper.
+  else if (plainPrefix && startsWithBotName(rest.slice(plainPrefix[0].length), bots)) { rest = rest.slice(plainPrefix[0].length); recipientSlot = true; }
   else if (generalRecipient.test(rest)) return undefined;
   const spoken = wordsOf(rest);
   const candidates = bots.flatMap(b => spokenNames(b)).map(name => ({ name, words: wordsOf(name) }));
@@ -419,8 +441,16 @@ export class IntentRoster {
     // Y") already carry the right bot. A real bot it names gets the message;
     // a shared name asks which one; an unknown name asks, never guesses.
     // "Grok Bot" or "my bot" is the app, not a bot (VOS-1672).
+    const toApp = request ? afterGrokBotAddress(request, bots) : undefined;
+    // "Grok Bot, tell Jasper the build is green" still addresses Jasper. A
+    // person who is not a bot ("ask Grok Bot to tell Sarah …") is the task.
+    let appNamed: Agent | undefined;
+    if (toApp !== undefined) try { appNamed = explicitRecipient(toApp, bots); } catch { appNamed = undefined; }
+    // A bot named only inside the task ("Send this to Grok Bot: draft an email
+    // to Jerome") is who the task is about, not who gets it.
+    const taskOnly = toApp === undefined || appNamed ? [] : mentionedBots(toApp, bots).map(h => h.bot);
     const ref = input.bot?.trim();
-    if (ref && !/^(?:(?:my|the|a|our)\s+)?(?:grok\s*bot|bots?)$/i.test(ref)) {
+    if (ref && !/^(?:(?:my|the|a|our)\s+)?(?:grok\s*bot|bots?)$/i.test(ref) && !taskOnly.some(bot => refersToBot(ref, bot))) {
       return { bot: resolveMessageRecipient(ref, bots), source: "explicit" };
     }
     // The model named no bot: look for one the user named in this turn.
@@ -431,9 +461,9 @@ export class IntentRoster {
       const names = together.map(b => spokenNames(b)[1] ?? b.name);
       throw new IntegrationError("not_found", `${names.join(" and ")} were addressed together, so this goes to their group chat. Use grokbot_prepare_message with members ${JSON.stringify(together.map(b => b.id))} and no bot, then grokbot_group with the message.`);
     }
-    const named = request && explicitRecipient(request,bots);
+    const named = toApp === undefined ? request && explicitRecipient(request, bots) : appNamed;
     if (named) return { bot: named, source:"explicit" };
-    if (request && !ADDRESSES_GROK_BOT.test(request)) {
+    if (request && toApp === undefined) {
       const hits = mentionedBots(request, bots);
       // "Jerome Personal" also says "Jerome": keep only the fullest names.
       const said = hits.filter(h => h.name === hits[0].name || !` ${hits[0].name} `.includes(` ${h.name} `));
