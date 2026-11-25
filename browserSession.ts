@@ -205,7 +205,12 @@ async function persist(key: Key): Promise<boolean> {
       dropOld(key);
     }
     return true;
-  } catch {
+  } catch (error) {
+    // -32601: this app has no vault at all, so it holds no copy to delete.
+    if ((error as { code?: number }).code === -32601) {
+      memoryOnly = true;
+      return true;
+    }
     retryAt = Math.min(retryAt || Infinity, Date.now() + RETRY_MS);
     return false;
   }
@@ -219,17 +224,17 @@ function getPending(): Pending | undefined {
 }
 /** Updates the copy this process reads at once (so two callers never race),
  * then the keystore. */
-function setSession(value: Session | undefined): Promise<void> {
+function setSession(value: Session | undefined): Promise<boolean> {
   if (!vault) {
     if (value) save(sessionFile, value);
     else rmSync(sessionFile, { force: true });
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
   memory.session = value;
   // An old 1.0.0 file can still be here when the vault failed. A sign-out or a
   // new sign-in replaces it, so it must never come back after a restart.
   dropOld("session");
-  return persist("session").then(() => {});
+  return persist("session");
 }
 /** Updates the copy this process reads at once (so two callers never race),
  * then the keystore. */
@@ -347,7 +352,11 @@ export async function browserAccount(action: "status" | "connect" | "disconnect"
   if (action === "disconnect") {
     // pollFlow verifies the outstanding request id before storing a session.
     await setPending(undefined);
-    await setSession(undefined);
+    // The keystore copy must be gone too: the app restarts Grok Bot after a
+    // sign-out, and a copy left behind (a locked file on Windows, a vault
+    // timeout) would sign the user back in. Try twice, then say so.
+    if (!(await setSession(undefined)) && !(await persist("session")))
+      throw new Error("Couldn't sign out of Grok Bot. Try again.");
     return { state: "signed_out" };
   }
   if (browserSignedIn()) return { state: "connected" };

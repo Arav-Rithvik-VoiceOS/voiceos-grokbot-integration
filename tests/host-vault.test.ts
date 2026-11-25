@@ -133,7 +133,8 @@ const failing = (code: number) => {
 // -32601 an app with no vault at all.
 for (const code of [-32001, -32600, -32601])
   test(`a vault error (${code}) keeps the sign-in in memory, never in a plain file`, async () => {
-    await api.browserAccount("disconnect");
+    // The previous vault failed on purpose, so this sign-out can report it.
+    await api.browserAccount("disconnect").catch(() => {});
     api.expectHostVault();
     await api.useHostVault(failing(code));
     expect(await api.browserAccount("connect")).toEqual({ state: "pending" });
@@ -143,13 +144,14 @@ for (const code of [-32001, -32600, -32601])
   });
 
 test("an old plain-file sign-in is still read when the vault fails", async () => {
-  await api.browserAccount("disconnect");
+  await api.browserAccount("disconnect").catch(() => {});
   writeFileSync(join(folder, "browser-session.json"), JSON.stringify({ accessToken: "old" }));
   api.expectHostVault();
   await api.useHostVault(failing(-32600));
   expect(api.browserSignedIn()).toBe(true);
   // Signing out deletes it, so the old token never comes back after a restart.
-  await api.browserAccount("disconnect");
+  // The vault refused, so it may still hold a copy: the sign-out says so.
+  await expect(api.browserAccount("disconnect")).rejects.toThrow("Couldn't sign out");
   expect(plainFiles()).toEqual([]);
 });
 
@@ -201,7 +203,7 @@ test("a sign-out the keystore missed is saved at the next retry", async () => {
   await api.useHostVault(host);
   expect(api.browserSignedIn()).toBe(true);
   (host as any).delete = async () => { throw new Error("locked"); };
-  await api.browserAccount("disconnect");
+  await expect(api.browserAccount("disconnect")).rejects.toThrow("Couldn't sign out");
   expect(host.keystore.has("session")).toBe(true);
   (host as any).delete = async (key: string) => (host.keystore.delete(key), { available: true });
   setSystemTime(new Date(Date.now() + 61_000));
@@ -220,4 +222,27 @@ test("a broken old token file does not crash startup or sign anyone in", async (
   expect(api.browserSignedIn()).toBe(false);
   expect(await api.browserAccount("status")).toEqual({ state: "signed_out" });
   rmSync(join(folder, "browser-session.json"), { force: true });
+});
+
+test("a sign-out that cannot delete the keystore copy says so, so the app does not sign back in", async () => {
+  const keystore = new Map([["session", JSON.stringify({ accessToken: "kept" })]]);
+  let deletes = 0;
+  const locked = {
+    get: async (key: "session" | "pending") => ({ available: true, value: keystore.get(key) ?? null }),
+    set: async (key: "session" | "pending", value: string) => (keystore.set(key, value), { available: true }),
+    delete: async (key: "session" | "pending") => {
+      if (key === "session") { deletes++; throw Object.assign(new Error("EBUSY"), { code: -32603 }); }
+      keystore.delete(key);
+      return { available: true };
+    },
+    clientVersion: async () => null,
+  };
+  api.expectHostVault();
+  await api.useHostVault(locked);
+  await expect(api.browserAccount("disconnect")).rejects.toThrow("Couldn't sign out");
+  expect(deletes).toBe(2);
+  // A second try that works reports signed out.
+  locked.delete = async (key) => (keystore.delete(key), { available: true });
+  expect(await api.browserAccount("disconnect")).toEqual({ state: "signed_out" });
+  expect(keystore.has("session")).toBe(false);
 });
