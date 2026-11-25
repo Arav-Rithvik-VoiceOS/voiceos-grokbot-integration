@@ -45,6 +45,8 @@ boot=function(data,args,mode){const d=data&&Array.isArray(data.bots)?data:DEMO.d
  // The voice message is used once: a reopened card must not put it back in the box or fly it in again.
  // args.sent = voice already sent it (it flies in below); otherwise it is a draft for the box.
  const k=gbKey(a.open),voice=!s.argsUsed&&k&&a.message?String(a.message):'';
+ // A send with no clear bot (VOS-1672): the roster opens, and the bot the user taps gets the message in its box.
+ const pick=!s.argsUsed&&!a.open&&a.pick?String(a.pick):'';if(pick)gbPut({pick});
  if(voice&&!a.sent&&!lcDrafts.has(k)){lcDrafts.set(k,voice);gbSaveDrafts()}
  gbPut({argsUsed:true});
  // boot runs inside show.html's init listener, before ours mirrors CAN_INVOKE: a pane opened below
@@ -52,7 +54,8 @@ boot=function(data,args,mode){const d=data&&Array.isArray(data.bots)?data:DEMO.d
  lcBridge.canInvoke=CAN_INVOKE;
  lcBoot(d,a,mode);
  // Where the user left the card beats where voice opened it (null = they went back to the roster).
- const pane=s.pane!==undefined?s.pane:(a.open||null);if(pane)gbOpen(pane,true);
+ const pane=pick?null:s.pane!==undefined?s.pane:(a.open||null);if(pane)gbOpen(pane,true);
+ gbPickHint();
  // Wait two frames so the pane has its final layout before the flight measures the box and the orb.
  if(voice&&a.sent)requestAnimationFrame(()=>requestAnimationFrame(()=>{if(lcPane&&lcPane.id===k)gbFlyIn(lcPane,voice)}));
  // Check the roster once per open, even behind a chat: the saved chat's own bot may be the deleted one.
@@ -119,7 +122,14 @@ function gbCloseScreen(){$('#panes').classList.remove('screen');const g=gbScreen
  setTimeout(()=>{if(g&&g.destroy)g.destroy();if(!gbScreen){const h=$('#screen-pane');if(h)h.innerHTML=''}if(typeof report==='function')report()},360)}
 
 const lcOpen=openChat;
-openChat=function(b){lcClose();gbNew=null;lcOpen(b);lcMount(b);if(lcPane)gbPut({pane:b.group?{group:lcPane.id}:{bot:b.id}})};
+openChat=function(b){const pk=gbGet().pick;
+ if(pk&&!b.group){if(!lcDrafts.get(b.id))lcDrafts.set(b.id,pk);gbSaveDrafts();gbPut({pick:''});gbPickHint()}
+ lcClose();gbNew=null;lcOpen(b);lcMount(b);if(lcPane)gbPut({pane:b.group?{group:lcPane.id}:{bot:b.id}})};
+// "Which bot should get this?" above the roster while a picked send waits for its bot.
+function gbPickHint(){const l=$('#list');if(!l)return;const t=gbGet().pick;let h=$('#gb-pick-hint');
+ if(!t){if(h)h.remove();return}
+ if(!h){h=document.createElement('div');h.id='gb-pick-hint';h.className='sys gb-pick';h.setAttribute('role','status');l.before(h)}
+ h.textContent='Which bot should get this? Tap one: \u201c'+(t.length>80?t.slice(0,79)+'\u2026':t)+'\u201d'}
 // The host allows one pending action per card: the card's own send waits its turn behind the live chat's calls.
 const lcInv=invoke;invoke=(n,a)=>lcBridge.queue(()=>lcInv(n,a));
 // Same composer wiring as show.html, plus: the saved draft,

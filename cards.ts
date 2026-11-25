@@ -593,10 +593,13 @@ export function showCard(
   nextBeforeSeqs: Record<string, number | undefined> = {},
   open?: { open: ShowOpen; message?: string; sent?: boolean },
   prefs?: SidebarPrefs,
+  /** A message waiting for the user to tap its bot on the roster (VOS-1672). */
+  pick?: string,
 ) {
   const { card: roster, order } = rosterData(agents, prefs);
   const { bots, groups } = roster;
-  const args = open ? { open: open.open, ...(open.message ? { message: open.message, ...(open.sent ? { sent: true } : {}) } : {}) } : {};
+  const args = open ? { open: open.open, ...(open.message ? { message: open.message, ...(open.sent ? { sent: true } : {}) } : {}) }
+    : pick ? { pick } : {};
   const focus = open ? ("bot" in open.open ? open.open.bot : "group" in open.open ? open.open.group : undefined) : undefined;
   const avatars = avatarMap(agents, focus);
   const card = (ids: string[], perThread: number, focusThread = perThread) => {

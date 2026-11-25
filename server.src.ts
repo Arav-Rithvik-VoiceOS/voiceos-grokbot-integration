@@ -1034,6 +1034,7 @@ const sendTool = server.registerTool(
       requestText: z.string().optional().describe("Current user request supplied by VoiceOS."),
       files: notchFileRefs,
       recipientId: z.string().optional().describe("Internal: recipient ID pinned by the preparation hook. Never compose or change this value."),
+      routedBy: z.string().optional().describe("Internal: set by VoiceOS. Never compose or change this value."),
       message: z
         .string()
         .optional()
@@ -1044,13 +1045,18 @@ const sendTool = server.registerTool(
     },
     _meta: { [INTENT_SLOT_VALUES_META_KEY]: { bot: [] } },
   },
-  async (args: MessageArgs & { recipientId?: string; files?: string[] }, extra) =>
+  async (args: MessageArgs & { recipientId?: string; routedBy?: string; files?: string[] }, extra) =>
     handle("grokbot_send", async () => {
       const agents = await listAgents();
       const bots = agents.filter(a => !a.isGroup);
       // A prepared ID is the user's approved recipient. Never switch it if the
       // account's primary or project match changes while approval is pending.
-      const bot = args.recipientId ? bots.find(a => a.id === args.recipientId) : (await intentRoster.chooseRecipient(bots, args)).bot;
+      const route = args.recipientId ? undefined : await intentRoster.chooseRecipient(bots, args);
+      const bot = args.recipientId ? bots.find(a => a.id === args.recipientId) : route!.bot;
+      // Neither the user nor the model named this bot: it was matched by role,
+      // a recent chat, or is just the main bot. Never send on a guess. The user
+      // taps the bot on the roster, and the message waits in its box (VOS-1672).
+      const guessed = route ? route.source !== "explicit" : args.routedBy !== undefined && args.routedBy !== "explicit";
       if (!bot) throw new IntegrationError("not_found", "The prepared Grok Bot is no longer on your roster. Which bot should I use?");
       // The pin is the model's pick for this send. The whole turn may name
       // other bots for other sends, so only this send's own `bot` is checked
@@ -1060,6 +1066,15 @@ const sendTool = server.registerTool(
       }
       const files = notchAttachments(args.files, extra?._meta);
       const text = tidySpoken(args.message ?? "");
+      if (guessed && files.length)
+        throw new IntegrationError("not_found", "Which bot should get these files? Say its name.");
+      if (guessed && text) {
+        const { recent, cursors } = await rosterThreads(agents);
+        return result(
+          { opened: true, sent: false, needsBot: true, message: "Which bot should get this? Tap one in the notch: your message will be in its box." },
+          showCard(agents, undefined, recent, cursors, undefined, await rosterPrefs(), text),
+        );
+      }
       // Read BEFORE sending: the card's history then ends just before this
       // message, which arrives as the fly-in and the live chat's next refresh.
       const tail = await transcriptTail(bot.id, 20);

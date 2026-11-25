@@ -28,3 +28,6 @@
 /* The notch caps a result card at 360 px when it has text above it (a reply notification's card does), and
    show.html's 268 px chat made the pane 381 px: the frame cut it and scrolled. 244 px keeps every pane under 360. */
 #chat .msgs{max-height:244px!important}
+
+/* VOS-1672: the hint above the roster while a send waits for the user to pick its bot. */
+.gb-pick{margin:6px 12px;font-size:12px;opacity:.8}
