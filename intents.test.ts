@@ -550,3 +550,19 @@ test("a task that names a bot goes to the bot the user addressed, not the named 
   // A model bot that the turn does not name as the task is still trusted.
   expect((await choose("Send this to Grok Bot: draft an email to Jerome", "Jasper")).bot.id).toBe("p");
 });
+
+test("names with accents match the plain spelling, both ways (VOS-1672)", async () => {
+  const bots: Agent[] = [{ id: "main", name: "Scout" }, { id: "z", name: "Zoë" }, { id: "c", name: "Chloé · Design" }, { id: "r", name: "Rene" }];
+  const roster = new IntentRoster(async () => bots);
+  roster.primary = async () => "main";
+  roster.recentTopics = async () => [];
+  await roster.refresh();
+  const choose = (requestText: string, bot?: string) => roster.chooseRecipient(bots, { requestText, bot });
+  expect((await choose("Can Zoe look at this?")).bot.id).toBe("z");
+  expect((await choose("Can Zoë look at this?")).bot.id).toBe("z");
+  expect((await choose("Tell Chloe the mockups are ready")).bot.id).toBe("c");
+  expect((await choose("Send this to Chloé")).bot.id).toBe("c");
+  expect((await choose("Ask René about it")).bot.id).toBe("r");
+  expect((await choose("hello", "Chloe")).bot.id).toBe("c");
+  expect((await choose("Tell Zoe and Chloe the plan").catch((e: Error) => e.message))).toContain("group chat");
+});

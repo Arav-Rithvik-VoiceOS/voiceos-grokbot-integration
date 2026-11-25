@@ -1395,7 +1395,9 @@ export async function pollForBotReply(
 // bot, so ambiguity is an error ("which one?"), never a coin flip.
 
 /** "F.I.N.C.H." / "finch" / "Finch" → one comparable token. */
-export const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+/** "Zoë" → "zoe", "Chloé" → "chloe": accents never stop a name from matching. */
+export const foldAccents = (value: string) => value.normalize("NFD").replace(/\p{M}/gu, "");
+export const normalize = (value: string) => foldAccents(value).toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /** Resolve one spoken name to exactly one bot, or throw a spoken error. */
 export async function resolveAgent(spoken: string, agents?: Agent[]): Promise<Agent> {

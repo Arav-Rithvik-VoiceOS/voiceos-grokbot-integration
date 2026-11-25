@@ -1,6 +1,6 @@
 import type { IntentDefinition } from "./sdk/intents.ts";
 import type { PreToolUseHookInput, TranscriptHookInput, HookResult } from "./sdk/hooks.ts";
-import { type Agent, normalize, IntegrationError, log, isWaking, withoutWaking } from "./client.ts";
+import { type Agent, normalize, foldAccents, IntegrationError, log, isWaking, withoutWaking } from "./client.ts";
 import { confirmationContext, confirmationRows, type ConfirmRow } from "./cards.ts";
 import { resolveMessageRecipient, resolveSpokenRecipient, botChoiceLabel, spokenNames, refersToBot } from "./messaging.ts";
 import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -137,7 +137,7 @@ const ROLE_STOP = new Set(("the and for you your can could would should please h
   + "saying say want wants let know there any what whats this that these those with about from into out all are was were has have had will just "
   + "get got make need needs today tomorrow now some its them they their then than also our who how why when where which see check help him her "
   + "his she one not never own under without every more most very really yes yeah okay like thing things email emails draft write prepare create grokbot remind reminder reminders again follow out").split(" "));
-const roleWords = (text: string) => new Set(text.toLowerCase().replace(/['’]s\b/g, "").split(/[^a-z0-9]+/)
+const roleWords = (text: string) => new Set(foldAccents(text).toLowerCase().replace(/['’]s\b/g, "").split(/[^a-z0-9]+/)
   .filter(w => w.length >= 3 && !ROLE_STOP.has(w)).map(w => (w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w)));
 
 /** Whether a turn says one of these bots' names as a whole word or words
@@ -194,7 +194,7 @@ const sameRoot = (a: string, b: string) => a === b || (Math.min(a.length, b.leng
 // phrase like "sponsor emails", it corroborates a distinctive subject word.
 const MEDIA = new Set(["email", "message", "draft", "report", "list", "note", "plan", "document", "file", "proposal", "packet"]);
 const COMMON_TOPIC = new Set(["old", "new", "original", "earlier", "recent", "previous", "last", "latest", "remind", "reminder", "update", "follow"]);
-const topicTokens = (text: string) => (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).map(w => w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w);
+const topicTokens = (text: string) => (foldAccents(text).toLowerCase().match(/[a-z0-9]+/g) ?? []).map(w => w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w);
 function topicPhrases(text: string): Set<string> {
   const tokens = topicTokens(text);
   const phrases = new Set<string>();
@@ -243,7 +243,7 @@ export function botForTask(text: string, bots: Agent[]): Agent | undefined {
   return top.b;
 }
 
-const wordsOf = (value: string) => value.toLowerCase().replace(/['’]s\b/g, "").split(/[^a-z0-9]+/).filter(Boolean);
+const wordsOf = (value: string) => foldAccents(value).toLowerCase().replace(/['’]s\b/g, "").split(/[^a-z0-9]+/).filter(Boolean);
 const generalRecipient = /^(?:(?:my|the|a|our)\s+)?(?:grok\s*bot|bots?)\b/i;
 
 /** The addressee ends where the message starts. A name in "Ask Grok Bot to
@@ -294,7 +294,7 @@ export function explicitRecipient(request: string, bots: Agent[]): Agent | undef
 export function jointRecipients(request: string, bots: Agent[]): Agent[] {
   const verb = /\b(?:ask|tell|message|text|ping|instruct|have|get)\s+/i.exec(request);
   if (!verb) return [];
-  const tokens = request.slice(verb.index + verb[0].length).toLowerCase()
+  const tokens = foldAccents(request.slice(verb.index + verb[0].length)).toLowerCase()
     .replace(/['’]s\b/g, "").match(/[a-z0-9]+|[,&]/g) ?? [];
   const names = bots.filter(b => !b.isGroup)
     .flatMap(bot => spokenNames(bot).map(name => ({ bot, words: wordsOf(name) })))
