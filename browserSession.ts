@@ -431,12 +431,16 @@ function rejectExpired(value: Session): never {
   throw new BrowserLoginRequired();
 }
 async function useClient<T>(
-  work: (client: GrokBotClient) => Promise<T>,
+  /** `refused()` is true once Grok Bot turned away our client version. */
+  work: (client: GrokBotClient, refused: () => boolean) => Promise<T>,
   signal?: AbortSignal,
   /** Sees the raw JSON of these methods' replies, for fields the SDK drops. */
   peek?: { methods: string[]; seen: (method: string, body: unknown) => void },
 ): Promise<T> {
   const value = await session();
+  // The SDK reports only a code like RPC_FAILED, never the reply body, and it
+  // swallows a throw from here. So the body is read here and remembered.
+  let outdated = false;
   const client = new GrokBotClient({
     accessToken: value.accessToken,
     teamId: value.selectedTeamId,
@@ -451,16 +455,17 @@ async function useClient<T>(
       const method = String(url).split("/").pop() ?? "";
       if (peek?.methods.includes(method) && response.ok)
         peek.seen(method, await response.clone().json().catch(() => null));
+      if (response.status >= 400 && response.status !== 401 &&
+          isOutdatedClient(response.status, await response.clone().text().catch(() => "")))
+        outdated = true;
       return response;
     },
   });
   try {
-    return await work(client);
+    return await work(client, () => outdated);
   } catch (error) {
-    const status = (error as { httpStatus?: number }).httpStatus;
-    if (status === 401) rejectExpired(value);
-    if (status !== undefined && status >= 400 && isOutdatedClient(status, String((error as Error).message ?? "")))
-      throw new ClientVersionRejected();
+    if ((error as { httpStatus?: number }).httpStatus === 401) rejectExpired(value);
+    if (outdated) throw new ClientVersionRejected();
     throw error;
   }
 }
@@ -617,7 +622,7 @@ export const browserSend = (
   text: string,
   attachments: SentAttachment[],
 ) =>
-  useClient(async (client) => {
+  useClient(async (client, refused) => {
     const { sessionId } = await findBot(client, botId);
     const digest = createHash("sha256")
       .update(JSON.stringify([botId, sessionId, text, attachments.map(a => a.sha256 ? { name: a.name, sha256: a.sha256 } : a)]))
@@ -670,6 +675,11 @@ export const browserSend = (
           if ((error as { httpStatus?: number }).httpStatus === 401) {
             settle();
             throw error;
+          }
+          // Grok Bot turned away this version: nothing was delivered.
+          if (refused()) {
+            settle();
+            throw new ClientVersionRejected();
           }
           // Refused before anything left this computer: a definite failure,
           // not an unknown delivery, so settle and let the user send again.

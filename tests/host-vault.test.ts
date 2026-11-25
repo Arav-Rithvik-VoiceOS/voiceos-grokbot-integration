@@ -101,6 +101,29 @@ test("a rejected client version says so instead of a generic failure", async () 
   expect(api.isOutdatedClient(404, "bot not found")).toBe(false);
 });
 
+test("a version rejection in a 400 reply body shows the clear message on roster and send", async () => {
+  const outdated = () => new Response(JSON.stringify({ code: "failed_precondition", message: "Client version outdated" }), { status: 400 });
+  answer = outdated;
+  await expect(api.browserRoster()).rejects.toBeInstanceOf(api.ClientVersionRejected);
+  // Only the send is refused: no "Delivery is unknown", and the text can be sent again.
+  let sends = 0;
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = (async (url, init) => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith("/ListGrokBotAgents")) return Response.json({ agents: [{ agentId: "b1", name: "Scout", sessionId: "s1" }] });
+    if (path.endsWith("/SendGrokBotUserMessage")) return (sends++, outdated());
+    return savedFetch(url, init);
+  }) as typeof fetch;
+  try {
+    await expect(api.browserSend("b1", "hello there", [])).rejects.toBeInstanceOf(api.ClientVersionRejected);
+    await expect(api.browserSend("b1", "hello there", [])).rejects.toBeInstanceOf(api.ClientVersionRejected);
+    expect(sends).toBe(2);
+  } finally {
+    globalThis.fetch = savedFetch;
+    answer = () => Response.json({ agents: [] });
+  }
+});
+
 test("a 401 signs out in the vault, not by writing a file", async () => {
   answer = () => Response.json({ code: "unauthenticated" }, { status: 401 });
   await expect(api.browserGateway(false)).rejects.toBeInstanceOf(api.BrowserLoginRequired);
