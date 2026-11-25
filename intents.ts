@@ -154,6 +154,22 @@ export function mentionedBots(text: string, bots: Agent[]): { bot: Agent; name: 
     return said ? [{ bot, name: said }] : [];
   }).sort((x, y) => y.name.length - x.name.length);
 }
+/** Names that are also everyday words ("check the max budget", "will the
+ * demo be ready?"). Said in passing they name no one. */
+const COMMON_WORD_NAMES = new Set(["will", "max", "mark", "bill", "art", "grace", "hope", "faith", "joy", "rose", "may", "june", "april", "august", "rich", "frank", "pat", "sue", "jack", "chase", "drew", "ray", "sky", "sunny", "summer", "dawn", "skip", "rob", "gene", "lane", "page", "reed", "cole", "miles", "hunter", "scout", "echo", "nova", "sage", "ace", "buddy", "chip", "penny", "ivy", "lily", "jade", "ruby", "amber", "pearl", "holly", "brook", "storm", "river", "angel", "don", "guy", "dean", "major", "king", "earl", "duke", "baker", "cook", "carter", "mason", "bishop", "hall", "worth", "harper", "piper", "rowan", "wade", "lou"]);
+
+/** A one-word everyday name counts only when the user speaks to or about that
+ * bot: right after an addressing word ("ask Max", "hey Will"), before a
+ * comma ("Max, check this"), or capitalized mid-sentence ("Can Max look?"). */
+function addressedCommonName(text: string, name: string): boolean {
+  if (!COMMON_WORD_NAMES.has(name)) return true;
+  const word = `(${name})(?![\\p{L}0-9])`;
+  if (new RegExp(`(?:^|[^\\p{L}0-9])(?:(?:ask|tell|message|text|ping|have|get|send|cc|hey|hi|thanks)\\s*,?\\s+|@)${word}`, "iu").test(foldAccents(text))) return true;
+  if (new RegExp(`(?:^|[.!?]\\s+)${word}\\s*[,:]`, "iu").test(foldAccents(text))) return true;
+  // Capitalized, and not as the first word of a sentence.
+  return new RegExp(`[^.!?\\s]\\s+${name[0].toUpperCase()}${name.slice(1)}(?![\\p{L}0-9])`, "u").test(foldAccents(text));
+}
+
 /** "Grok Bot" or "my bot" said as the addressee, not as part of "my bot named X". */
 const GROK_BOT_WORDS = /\b(?:grok\s*bots?|(?:my|the|our)\s+bots?)\b(?!\s+(?:named|called)\b)/i;
 
@@ -464,7 +480,7 @@ export class IntentRoster {
     const named = toApp === undefined ? request && explicitRecipient(request, bots) : appNamed;
     if (named) return { bot: named, source:"explicit" };
     if (request && toApp === undefined) {
-      const hits = mentionedBots(request, bots);
+      const hits = mentionedBots(request, bots).filter(h => addressedCommonName(request, h.name));
       // "Jerome Personal" also says "Jerome": keep only the fullest names.
       const said = hits.filter(h => h.name === hits[0].name || !` ${hits[0].name} `.includes(` ${h.name} `));
       if (said.length === 1) return { bot: said[0].bot, source:"explicit" };

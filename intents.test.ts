@@ -566,3 +566,21 @@ test("names with accents match the plain spelling, both ways (VOS-1672)", async 
   expect((await choose("hello", "Chloe")).bot.id).toBe("c");
   expect((await choose("Tell Zoe and Chloe the plan").catch((e: Error) => e.message))).toContain("group chat");
 });
+
+test("bots named after everyday words are not picked by ordinary sentences (VOS-1672)", async () => {
+  const bots: Agent[] = [{ id: "main", name: "Scout" }, { id: "m", name: "Max" }, { id: "w", name: "Will" }];
+  const roster = new IntentRoster(async () => bots);
+  roster.primary = async () => "main";
+  roster.recentTopics = async () => [];
+  await roster.refresh();
+  const choose = (requestText: string) => roster.chooseRecipient(bots, { requestText });
+  expect((await choose("Check the max budget")).bot.id).toBe("main");
+  expect((await choose("Will the demo be ready?")).bot.id).toBe("main");
+  expect((await choose("will the max budget fit")).bot.id).toBe("main");
+  // Spoken to or about the bot: still that bot.
+  expect((await choose("Ask Max to check the budget")).bot.id).toBe("m");
+  expect((await choose("Max, check the budget")).bot.id).toBe("m");
+  expect((await choose("Can Max look at the budget?")).bot.id).toBe("m");
+  expect((await choose("hey Will, is the demo ready?")).bot.id).toBe("w");
+  expect((await choose("Tell Will the demo is ready")).bot.id).toBe("w");
+});
