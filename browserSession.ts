@@ -586,12 +586,16 @@ const CLAIM_GRACE_MS = 60_000;
 const CLAIM_TTL_MS = 10 * 60_000;
 /** Send records older than this are deleted. */
 const SENDS_KEEP_MS = 7 * 24 * 60 * 60_000;
-let sendsSwept = false;
+/** How often a long-running process cleans up send records again. */
+const SWEEP_EVERY_MS = 6 * 60 * 60_000;
+let sweptAt = 0;
 
-/** Once per run: delete send records nobody needs any more. */
-function sweepSends(root: string, now = Date.now()) {
-  if (sendsSwept) return;
-  sendsSwept = true;
+/** At most every few hours: delete send records nobody needs any more. A
+ * text sent often ("ok") keeps one folder that is always recent, so each
+ * generation is aged by its own files, never by the folder (VOS-1672). */
+export function sweepSends(root: string, now = Date.now()) {
+  if (now - sweptAt < SWEEP_EVERY_MS) return;
+  sweptAt = now;
   let names: string[];
   try {
     names = readdirSync(root);
@@ -601,10 +605,22 @@ function sweepSends(root: string, now = Date.now()) {
   for (const name of names) {
     const dir = join(root, name);
     try {
-      if (now - statSync(dir).mtimeMs > SENDS_KEEP_MS)
+      const files = readdirSync(dir);
+      const age = (file: string) => now - statSync(join(dir, file)).mtimeMs;
+      if (files.every((file) => age(file) > SENDS_KEEP_MS)) {
         rmSync(dir, { recursive: true, force: true });
+        continue;
+      }
+      // Keep the newest generation: its number stops a late answer to an
+      // older send from unlocking a newer one.
+      const generations = files.map((file) => Number(/^(\d+)\./.exec(file)?.[1] ?? NaN));
+      const newest = Math.max(...generations.filter(Number.isFinite));
+      files.forEach((file, i) => {
+        if (generations[i] !== newest && age(file) > SENDS_KEEP_MS)
+          rmSync(join(dir, file), { force: true });
+      });
     } catch {
-      // Gone or unreadable: the next run tries again.
+      // Gone or unreadable: the next sweep tries again.
     }
   }
 }
