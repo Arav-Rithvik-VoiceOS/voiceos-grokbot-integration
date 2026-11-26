@@ -579,7 +579,9 @@ async function runTool(
     // the desktop sign-in instructions. Once a connection has worked here, it is
     // never setup again (VOS-1616): a rejected or unreadable session gets the
     // Reconnect card, and a real sign-out gets its plain message.
-    if (isWaking() && error instanceof IntegrationError && (error.kind === "setup" || error.kind === "not_connected")) {
+    // Desktop-app mode only. VoiceOS always uses the browser sign-in, which
+    // never shows a connection card: Apps connects Grok Bot like every app.
+    if (isWaking() && !browserSelected() && error instanceof IntegrationError && (error.kind === "setup" || error.kind === "not_connected")) {
       if (!hasConnectedBefore()) {
         openGrokBotApp();
         return result({ ok: false, needsSetup: true, message: error.message });
@@ -601,7 +603,7 @@ async function runTool(
     // The cloud computer is asleep and nothing VoiceOS holds can wake it. Opening
     // the app would not help (it keeps a parked box asleep); the Reconnect card's
     // button restarts the app once the user has messaged a bot. (VOS-1608)
-    if (isWaking() && error instanceof IntegrationError && error.kind === "reconnect") {
+    if (isWaking() && !browserSelected() && error instanceof IntegrationError && error.kind === "reconnect") {
       reconnectOffered = true;
       return result({ ok: false, needsReconnect: true, message: error.message }, reconnectCard());
     }
@@ -765,7 +767,7 @@ server.registerTool(
   {
     title: "How to use Grok Bot",
     description:
-      "When asked to sign in or connect, direct the user to Apps → Grok Bot → Connect. If already connected, show the bot list. Use for setup or help as well.",
+      "Use when the user asks how to use Grok Bot or what they can say to it; shows the bot list when connected. Never for connecting, signing in or setup: VoiceOS connects Grok Bot like every other app.",
     inputSchema: {
       page: z
         .enum(["setup", "keychain", "ideas"])
@@ -1053,10 +1055,11 @@ const sendTool = server.registerTool(
       // account's primary or project match changes while approval is pending.
       const route = args.recipientId ? undefined : await intentRoster.chooseRecipient(bots, args);
       const bot = args.recipientId ? bots.find(a => a.id === args.recipientId) : route!.bot;
-      // Neither the user nor the model named this bot: it was matched by role,
-      // a recent chat, or is just the main bot. Never send on a guess. The user
-      // taps the bot on the roster, and the message waits in its box (VOS-1672).
-      const guessed = route ? route.source !== "explicit" : args.routedBy !== undefined && args.routedBy !== "explicit";
+      // The user did not name this bot in this turn: the model picked it, or it
+      // was matched by role, a recent chat, or is just the main bot. A prepared
+      // send without a known source counts the same. Never send on a guess. The
+      // user taps the bot on the roster, and the message waits in its box (VOS-1672).
+      const guessed = route ? route.source !== "explicit" : args.routedBy !== "explicit";
       if (!bot) throw new IntegrationError("not_found", "The prepared Grok Bot is no longer on your roster. Which bot should I use?");
       // The pin is the model's pick for this send. The whole turn may name
       // other bots for other sends, so only this send's own `bot` is checked

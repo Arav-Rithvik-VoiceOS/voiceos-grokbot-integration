@@ -23,7 +23,7 @@ export const intents: IntentDefinition[] = [
   },
   {
     name: "send_message", tool: "grokbot_send",
-    description: "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. A name the user says wins, even if another bot's role fits better. If the user names no bot, let the integration route by project or role (school work → the school bot); 'Grok Bot', 'a bot' or 'my bot' is the app, not a name. If there is no clear match, the integration uses the user's primary bot. Ambiguous or unknown spoken names require clarification. 'Send this task to …' and 'dispatch …' are sends. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask <bot> how the test is going' → 'How's the test going?'). Drop the lead-in, keep the meaning and line breaks, capital first letter, right end punctuation. A long task is one whole message. Reject groups, multiple recipients, or separate actions outside the message.",
+    description: "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. A name the user says wins, even if another bot's role fits better. If the user names no bot, pass no bot: VoiceOS opens the bot list and the user picks one. 'Grok Bot', 'a bot' or 'my bot' is the app, not a name. Never pick a bot by role or use the main bot. Ambiguous or unknown spoken names require clarification. 'Send this task to …' and 'dispatch …' are sends. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask <bot> how the test is going' → 'How's the test going?'). Drop the lead-in, keep the meaning and line breaks, capital first letter, right end punctuation. A long task is one whole message. Reject groups, multiple recipients, or separate actions outside the message.",
     utterances: { en: ["Send a message to {bot} asking {message}", "Ask {bot} {message}", "Ask {bot} to {message}", "Message {bot} saying {message}", "Send {bot} a message saying {message}", "Tell Grok bot {bot} to {message}", "Grok Bot send {bot} {message}", "Have {bot} {message}", "Get {bot} to {message}", "Send this task to {bot}: {message}", "Send this to {bot}: {message}", "Dispatch a task to {bot}: {message}", "Dispatch {message} to {bot}", "Give {bot} this task: {message}", "Give {bot} a task to {message}", "Tell {bot} {message}", "Tell {bot} to {message}", "Say {message} to {bot}", "Message {bot} {message}", "Text {bot} {message}"] },
     slots: {
       bot: { type: "enum", valuesFrom: "tool", required: true },
@@ -75,8 +75,8 @@ export const intents: IntentDefinition[] = [
   },
   {
     name: "help", tool: "grokbot_help",
-    description: "When asked to sign in or connect, direct the user to Apps → Grok Bot → Connect. If already connected, show the bot list. Use for setup or help as well.",
-    utterances: { en: ["Sign in to Grok Bot", "Can you sign in to Grok Bot", "Log in to Grok Bot", "Connect Grok Bot", "How do I use Grok Bot", "Help me set up Grok Bot", "How do I set up Grok Bot", "What can Grok Bot do", "Grok Bot help", "Show me how to use Grok Bot", "How does Grok Bot work"] },
+    description: "Show how to use Grok Bot and what the user can say to it. Never for connecting, signing in or setup: VoiceOS connects Grok Bot like every other app.",
+    utterances: { en: ["How do I use Grok Bot", "What can Grok Bot do", "Grok Bot help", "Show me how to use Grok Bot", "How does Grok Bot work"] },
     response: { en: "Opening Grok Bot." },
   },
 ];
@@ -128,7 +128,7 @@ const GROK_TURN = /\bgrok\b|\bbots?\b|\bdispatch/i;
 const SEND_TURN = /\b(?:send|ask|tell|message|text|dispatch|task|assign|give)|(?:^|\b(?:can|could|will|would) you |\bplease )(?:have|get|make)\b/i;
 /** The host keeps at most 2,000 characters of one hook's context. */
 const ROSTER_CONTEXT_MAX = 2_000;
-const ROSTER_CONTEXT_HEAD = "Grok Bot routing (current, from the live Grok Bot app): Grok Bot is an app with several bots. 'Grok Bot', 'my bot' or 'my Grok bot' is never another name for one bot, even if saved memory or earlier turns say so: that is out of date. If the user names a bot, use that bot. If not, choose by role below: call grokbot_send with the one bot whose role fits the task best, and let the integration choose the verified primary (default bot) for an unclear or generic task. If an explicitly spoken name fits several bots, ask which one. Bots (name — role):";
+const ROSTER_CONTEXT_HEAD = "Grok Bot routing (current, from the live Grok Bot app): Grok Bot is an app with several bots. 'Grok Bot', 'my bot' or 'my Grok bot' is never another name for one bot, even if saved memory or earlier turns say so: that is out of date. If the user names a bot, use that bot. If not, call grokbot_send with no bot: VoiceOS opens the bot list so the user picks one. Never pick a bot by role or use the main bot yourself. If an explicitly spoken name fits several bots, ask which one. Bots (name — role):";
 
 /** How long a spoken turn counts as the one a send belongs to. */
 const TURN_MAX_AGE_MS = 120_000;
@@ -330,7 +330,10 @@ export function jointRecipients(request: string, bots: Agent[]): Agent[] {
   }
   return found.length >= 2 ? found : [];
 }
-export type RecipientRoute = { bot:Agent; source:"explicit"|"role"|"primary" };
+/** "explicit": the user named the bot in this turn. "model": the model chose
+ * a bot the user did not name. Only "explicit" sends; the others are guesses
+ * and open the bot list (VOS-1672). */
+export type RecipientRoute = { bot:Agent; source:"explicit"|"model"|"role"|"primary" };
 
 /** A model-copied confirmationContext, or undefined when missing or mangled. */
 function copiedContext(value: unknown): Record<string, any> | undefined {
@@ -407,9 +410,9 @@ export class IntentRoster {
     } finally { clearTimeout(timer); }
   }
 
-  /** Each bot's role for a turn about Grok Bot, so the model routes a task
-   * that names no bot ("send this to Grok Bot …", "ask my bot …") by role
-   * instead of guessing a familiar name. Cache only: the transcript hook has
+  /** Each bot's name and role for a turn about Grok Bot, so the model knows
+   * which spoken names are bots. A task that names no bot ("send this to
+   * Grok Bot …", "ask my bot …") opens the bot list (VOS-1672). Cache only: the transcript hook has
    * 500 ms, too little for a gateway read. */
   transcriptContext(transcript: string): string | undefined {
     const bots = this.agents.filter(a => !a.isGroup);
@@ -452,10 +455,10 @@ export class IntentRoster {
   async chooseRecipient(bots: Agent[], input: { bot?: string; requestText?: string; task?: string; message?: string }): Promise<RecipientRoute> {
     const freshTurn = this.lastTurn && this.now() - this.lastTurn.at <= TURN_MAX_AGE_MS ? this.lastTurn.text : undefined;
     const request = input.requestText?.trim() || freshTurn;
-    // 1. Trust the model. It reads the whole conversation, so "Tell him the
-    // build is green" and two sends in one turn ("Tell Jasper X and ask Finch
-    // Y") already carry the right bot. A real bot it names gets the message;
-    // a shared name asks which one; an unknown name asks, never guesses.
+    // 1. The model's bot. A shared name asks which one; an unknown name asks,
+    // never guesses. The model can also pick a bot by role, from memory or
+    // from a pronoun ("Tell him …"): only a bot the user named in this turn
+    // is the user's choice. Any other is a guess and opens the bot list.
     // "Grok Bot" or "my bot" is the app, not a bot (VOS-1672).
     const toApp = request ? afterGrokBotAddress(request, bots) : undefined;
     // "Grok Bot, tell Jasper the build is green" still addresses Jasper. A
@@ -467,7 +470,10 @@ export class IntentRoster {
     const taskOnly = toApp === undefined || appNamed ? [] : mentionedBots(toApp, bots).map(h => h.bot);
     const ref = input.bot?.trim();
     if (ref && !/^(?:(?:my|the|a|our)\s+)?(?:grok\s*bot|bots?)$/i.test(ref) && !taskOnly.some(bot => refersToBot(ref, bot))) {
-      return { bot: resolveMessageRecipient(ref, bots), source: "explicit" };
+      const bot = resolveMessageRecipient(ref, bots);
+      const said = !!request && mentionedBots(request, bots)
+        .some(h => h.bot.id === bot.id && addressedCommonName(request, h.name));
+      return { bot, source: said ? "explicit" : "model" };
     }
     // The model named no bot: look for one the user named in this turn.
     // Several bots addressed together go to their group chat; the group tool
@@ -534,6 +540,7 @@ export class IntentRoster {
       const individuals = this.agents.filter(a => !a.isGroup);
       const requestText = typeof input.args.requestText === "string" ? input.args.requestText : undefined;
       let bot: Agent;
+      let routedBy: string | undefined;
       if (typeof input.args.recipientId === "string") {
         // The pin is the model's pick for this send. The whole turn may name
         // other bots for other sends, so only this send's own `bot` is checked
@@ -543,12 +550,16 @@ export class IntentRoster {
         if (!pinned || (ref && !refersToBot(ref, pinned))) throw new IntegrationError("not_found", "The prepared recipient changed. Which Grok Bot did you mean?");
         bot = pinned;
       } else {
-        ({ bot } = await this.chooseRecipient(individuals, {
+        let source: RecipientRoute["source"];
+        ({ bot, source } = await this.chooseRecipient(individuals, {
           bot: typeof input.args.bot === "string" ? input.args.bot : undefined,
           requestText,
           task: typeof input.args.task === "string" ? input.args.task : undefined,
           message: typeof input.args.message === "string" ? input.args.message : undefined,
         }));
+        // The send step opens the bot list for anything but a named bot.
+        // VoiceOS replaces this with its own check (VOS-1672).
+        routedBy = source;
       }
       // Cosmetic only: a copy that is mangled, or prepared for another bot, just
       // loses its rows, and a send without prepared rows reads them itself.
@@ -563,6 +574,7 @@ export class IntentRoster {
           // A send routed by role names its new bot, so the result and card agree.
           ...((input.args.bot === bot.id || input.args.bot === botChoiceLabel(bot) || input.args.bot === bot.name) ? {} : { bot: bot.name }),
           recipientId: bot.id,
+          ...(routedBy ? { routedBy } : {}),
           confirmationContext: confirmationContext(individuals, rows?.length ? { [bot.id]: rows } : {}, [bot.id], true),
         },
       };

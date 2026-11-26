@@ -332,7 +332,9 @@ test("a Grok Bot turn gets each bot's role; other turns and an empty roster get 
   expect(context).toContain("- Jasper — BISV Hacks EA: Sponsorships, fundraising, and venue.");
   expect(context).toContain("- Piper — EA: Chief of Staff.");
   expect(context).not.toContain("Crew");
-  expect(context).toContain("default bot");
+  // No bot named: the model passes none and the bot list opens (VOS-1672).
+  expect(context).toContain("call grokbot_send with no bot");
+  expect(context).not.toContain("default bot");
   for (const turn of ["Ask my bot about the venue", "Dispatch a task: research venues"]) expect(roster.transcriptContext(turn)).toBe(context);
   expect(roster.transcriptContext("What's the weather tomorrow?")).toBeUndefined();
 });
@@ -495,8 +497,12 @@ test("VOS-1672: the model's bot wins; with none, a bot named in the turn, then p
   expect(await route(both, "jarvis")).toMatchObject({bot:{id:"jarvis"},source:"explicit"});
   expect(await route(both, "Scout")).toMatchObject({bot:{id:"scout"},source:"explicit"});
   // A follow-up turn names no bot ("Message Scout." … "Tell him the build is
-  // green."): the bot the model carried over gets it.
-  expect(await route("Tell him the build is green", "scout")).toMatchObject({bot:{id:"scout"},source:"explicit"});
+  // green."): the model's bot is not named by the user, so it is a guess and
+  // the bot list opens with Scout's message ready (VOS-1672).
+  expect(await route("Tell him the build is green", "scout")).toMatchObject({bot:{id:"scout"},source:"model"});
+  // The model picks the main bot for "my bot": a guess, never a send (Nika's QA).
+  expect(await route("Send a message to my bot to check the venue", "Main")).toMatchObject({bot:{id:"main"},source:"model"});
+  expect(await route("Ask my bot to check the venue", "Scout")).toMatchObject({bot:{id:"scout"},source:"model"});
   // A made-up model name asks instead of guessing; "Grok Bot" is not a bot.
   await expect(route("Tell him the build is green", "Nobody")).rejects.toThrow("couldn't find");
   expect(await route("Ask Grok Bot how it is going", "Grok Bot")).toMatchObject({bot:{id:"main"},source:"primary"});

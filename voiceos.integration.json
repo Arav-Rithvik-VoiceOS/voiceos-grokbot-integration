@@ -106,7 +106,7 @@
       "name": "grokbot_help",
       "title": "How to use Grok Bot",
       "hidePermissionToggle": true,
-      "description": "When asked to sign in or connect, direct the user to Apps → Grok Bot → Connect. If already connected, show the bot list. Use for setup or help as well.",
+      "description": "Use when the user asks how to use Grok Bot or what they can say to it; shows the bot list when connected. Never for connecting, signing in or setup: VoiceOS connects Grok Bot like every other app.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -211,7 +211,7 @@
           },
           "bot": {
             "type": "string",
-            "description": "The bot's name as spoken or the exact ID from preparation. For an unnamed task omit the bot. The live roster supplies a clear role or project match, then the primary bot if available. Ask which bot when an explicit name is ambiguous."
+            "description": "The bot's name as spoken or the exact ID from preparation. Only a bot the user named. For an unnamed task omit the bot: VoiceOS opens the bot list so the user picks one. Never pick a bot by role or use the main bot. Ask which bot when an explicit name is ambiguous."
           },
           "message": {
             "type": "string",
@@ -820,7 +820,7 @@
     {
       "name": "send_message",
       "tool": "grokbot_send",
-      "description": "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. A name the user says wins, even if another bot's role fits better. If the user names no bot, let the integration route by project or role (school work → the school bot); 'Grok Bot', 'a bot' or 'my bot' is the app, not a name. If there is no clear match, the integration uses the user's primary bot. Ambiguous or unknown spoken names require clarification. 'Send this task to …' and 'dispatch …' are sends. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask <bot> how the test is going' → 'How's the test going?'). Drop the lead-in, keep the meaning and line breaks, capital first letter, right end punctuation. A long task is one whole message. Reject groups, multiple recipients, or separate actions outside the message.",
+      "description": "Send a message or task to one Grok Bot right away and open its live chat. Each bot choice is its name, then its role. A name the user says wins, even if another bot's role fits better. If the user names no bot, pass no bot: VoiceOS opens the bot list and the user picks one. 'Grok Bot', 'a bot' or 'my bot' is the app, not a name. Never pick a bot by role or use the main bot. Ambiguous or unknown spoken names require clarification. 'Send this task to …' and 'dispatch …' are sends. Write the message TO the bot, the way the user would type it: it is sent exactly as written. Make reported speech direct ('ask <bot> how the test is going' → 'How's the test going?'). Drop the lead-in, keep the meaning and line breaks, capital first letter, right end punctuation. A long task is one whole message. Reject groups, multiple recipients, or separate actions outside the message.",
       "utterances": {
         "en": [
           "Send a message to {bot} asking {message}",
@@ -992,16 +992,10 @@
     {
       "name": "help",
       "tool": "grokbot_help",
-      "description": "When asked to sign in or connect, direct the user to Apps → Grok Bot → Connect. If already connected, show the bot list. Use for setup or help as well.",
+      "description": "Show how to use Grok Bot and what the user can say to it. Never for connecting, signing in or setup: VoiceOS connects Grok Bot like every other app.",
       "utterances": {
         "en": [
-          "Sign in to Grok Bot",
-          "Can you sign in to Grok Bot",
-          "Log in to Grok Bot",
-          "Connect Grok Bot",
           "How do I use Grok Bot",
-          "Help me set up Grok Bot",
-          "How do I set up Grok Bot",
           "What can Grok Bot do",
           "Grok Bot help",
           "Show me how to use Grok Bot",
