@@ -23,7 +23,7 @@ test("signed-out shortcuts point to Apps without a sign-in card or browser launc
       const reply = await client.request({ method: "voiceos/grokbot/account", params: { action } }, accountState);
       expect(reply).toEqual({ state: "signed_out" });
     }
-    for (const phrase of ["Sign in to Grok Bot", "Can you sign in to Grok Bot", "Show my bots", "Show all my bots"]) {
+    for (const phrase of ["How do I use Grok Bot", "Grok Bot help", "Show my bots", "Show all my bots"]) {
       const intent = manifest.intents.find(i => i.utterances.en.includes(phrase));
       expect(intent).toBeDefined();
       const reply = await client.callTool({ name: intent!.tool, arguments: {} });
@@ -39,4 +39,12 @@ test("signed-out shortcuts point to Apps without a sign-in card or browser launc
     await client.close();
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("connecting Grok Bot is left to VoiceOS's own integrations card", () => {
+  const phrases = manifest.intents.flatMap(i => i.utterances.en.map(u => u.toLowerCase()));
+  for (const word of ["connect", "sign in", "log in", "set up"])
+    expect(phrases.filter(p => p.includes(word))).toEqual([]);
+  const help = manifest.tools.find(t => t.name === "grokbot_help");
+  expect(help?.description).toContain("Never for connecting");
 });

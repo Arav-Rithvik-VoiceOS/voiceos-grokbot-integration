@@ -75,8 +75,8 @@ export const intents: IntentDefinition[] = [
   },
   {
     name: "help", tool: "grokbot_help",
-    description: "When asked to sign in or connect, direct the user to Apps → Grok Bot → Connect. If already connected, show the bot list. Use for setup or help as well.",
-    utterances: { en: ["Sign in to Grok Bot", "Can you sign in to Grok Bot", "Log in to Grok Bot", "Connect Grok Bot", "How do I use Grok Bot", "Help me set up Grok Bot", "How do I set up Grok Bot", "What can Grok Bot do", "Grok Bot help", "Show me how to use Grok Bot", "How does Grok Bot work"] },
+    description: "Show how to use Grok Bot and what the user can say to it. Never for connecting, signing in or setup: VoiceOS connects Grok Bot like every other app.",
+    utterances: { en: ["How do I use Grok Bot", "What can Grok Bot do", "Grok Bot help", "Show me how to use Grok Bot", "How does Grok Bot work"] },
     response: { en: "Opening Grok Bot." },
   },
 ];
