@@ -1055,10 +1055,11 @@ const sendTool = server.registerTool(
       // account's primary or project match changes while approval is pending.
       const route = args.recipientId ? undefined : await intentRoster.chooseRecipient(bots, args);
       const bot = args.recipientId ? bots.find(a => a.id === args.recipientId) : route!.bot;
-      // Neither the user nor the model named this bot: it was matched by role,
-      // a recent chat, or is just the main bot. Never send on a guess. The user
-      // taps the bot on the roster, and the message waits in its box (VOS-1672).
-      const guessed = route ? route.source !== "explicit" : args.routedBy !== undefined && args.routedBy !== "explicit";
+      // The user did not name this bot in this turn: the model picked it, or it
+      // was matched by role, a recent chat, or is just the main bot. A prepared
+      // send without a known source counts the same. Never send on a guess. The
+      // user taps the bot on the roster, and the message waits in its box (VOS-1672).
+      const guessed = route ? route.source !== "explicit" : args.routedBy !== "explicit";
       if (!bot) throw new IntegrationError("not_found", "The prepared Grok Bot is no longer on your roster. Which bot should I use?");
       // The pin is the model's pick for this send. The whole turn may name
       // other bots for other sends, so only this send's own `bot` is checked

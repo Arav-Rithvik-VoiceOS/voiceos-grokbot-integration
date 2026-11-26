@@ -69,9 +69,9 @@ async function callSend(args: Record<string, unknown>) {
   }
 }
 
-for (const routedBy of ["role", "primary"])
-  test(`a send VoiceOS routed by ${routedBy} opens the roster to pick a bot and sends nothing`, async () => {
-    const { text, sent } = await callSend({ recipientId: "scout", bot: "Scout", routedBy, message: "Draft the sponsor email" });
+for (const routedBy of ["role", "primary", "model", "unverified", undefined])
+  test(`a send VoiceOS routed by ${routedBy ?? "nothing"} opens the roster to pick a bot and sends nothing`, async () => {
+    const { text, sent } = await callSend({ recipientId: "scout", bot: "Scout", ...(routedBy ? { routedBy } : {}), message: "Draft the sponsor email" });
     expect(sent).toEqual([]);
     expect(text).toContain("needsBot");
     expect(text).toContain("Which bot should get this?");
@@ -82,5 +82,25 @@ for (const routedBy of ["role", "primary"])
 test("a named bot still sends at once", async () => {
   const { text, sent } = await callSend({ recipientId: "jerome", bot: "Jerome", routedBy: "explicit", message: "Hi" });
   expect(sent.length).toBe(1);
+  expect(text).not.toContain("needsBot");
+}, 30000);
+
+// Nika's QA (VOS-1672): "my bot" went straight to the main bot. The model
+// picked the bot itself; only a bot the user named in this turn may send.
+for (const requestText of [
+  "Send a message to my bot to draft the sponsor email",
+  "Ask my bot to draft the sponsor email",
+  "Tell my Grok bot to draft the sponsor email",
+])
+  test(`"${requestText}" with a bot the model picked opens the roster`, async () => {
+    const { text, sent } = await callSend({ bot: "Scout", requestText, message: "Draft the sponsor email" });
+    expect(sent).toEqual([]);
+    expect(text).toContain("needsBot");
+  }, 30000);
+
+test("a bot the user named in this turn still sends at once", async () => {
+  const { text, sent } = await callSend({ bot: "Jerome", requestText: "Tell Jerome the build is green", message: "The build is green." });
+  expect(sent.length).toBe(1);
+  expect(text).toContain("Jerome");
   expect(text).not.toContain("needsBot");
 }, 30000);

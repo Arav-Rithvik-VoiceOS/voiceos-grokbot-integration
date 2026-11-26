@@ -97,6 +97,8 @@ const call = async (name: string, args: any, metadata?: Record<string, unknown>)
       // Simulate the host preparation hook followed by approval. Direct
       // unverified handler calls are tested separately in intents.test.ts.
       await handlers.get("grokbot_show")!({});
+      // VoiceOS always passes the user's words. A bot they name sends at once.
+      args = { requestText: `Message ${args.bot}`, ...args };
       const hook = await handlers.get("voiceos_hook_pre_tool_use")!({ payload_json: JSON.stringify({
         hookApiVersion: 1, event: "preToolUse", toolName: name, args,
       }) });
@@ -277,8 +279,9 @@ test("direct, prepared and card sends use the same unique Jerome, with no writes
   // No bot from the model: the bot named in the turn.
   const prep = await call("grokbot_prepare_message",{ requestText });
   expect(prep).toMatchObject({ ready:true,args:{bot:"j"},recipient:{id:"j",name:"Jerome · BISV Hacks"},routing:{source:"explicit"} });
-  // The model's bot is trusted, even when the turn names another (VOS-1672).
-  expect(await call("grokbot_prepare_message",{ bot:"Piper",requestText })).toMatchObject({ args:{bot:"p"},recipient:{id:"p"},routing:{source:"explicit"} });
+  // The model's bot is kept, but the turn did not name it: it is a guess,
+  // so the send opens the bot list (VOS-1672).
+  expect(await call("grokbot_prepare_message",{ bot:"Piper",requestText })).toMatchObject({ args:{bot:"p"},recipient:{id:"p"},routing:{source:"model"} });
   expect((await call("grokbot_send",{bot:"Jerome",message:"Hello",requestText})).botId).toBe("j");
   agents.push({id:"j2",name:"Jerome · Calendar"});
   const before=writes.length;
@@ -289,8 +292,9 @@ test("direct, prepared and card sends use the same unique Jerome, with no writes
   // A pin that disagrees with this send's own bot is refused.
   expect((await call("grokbot_send",{bot:"Jerome · Calendar",recipientId:"j",requestText,message:"Hello"})).isError).toBe(true);
   expect(writes.length).toBe(before);
-  // The model's exact, unique choice still sends.
-  expect((await call("grokbot_send",{bot:"Jerome · BISV Hacks",recipientId:"j",requestText,message:"Hello"})).botId).toBe("j");
+  // An exact, unique bot that VoiceOS checked as named still sends. Without
+  // that check a pinned send opens the bot list (VOS-1672).
+  expect((await call("grokbot_send",{bot:"Jerome · BISV Hacks",recipientId:"j",routedBy:"explicit",requestText,message:"Hello"})).botId).toBe("j");
   expect((await call("grokbot_card_send",{bot:"j2",message:"Hello"})).botId).toBe("j2");
 });
 test("a voice toggle flips one bot's Notify on updates switch, and skips a no-op write", async () => {
@@ -501,7 +505,8 @@ test("saved bot IDs retain conversation identity after a rename and name reuse",
   expect(thread).toMatchObject({ bot: "Piper Renamed", botId: "p" });
   expect(cardData(thread).args.open).toEqual({ bot: "p" });
   for (const tool of ["grokbot_send", "grokbot_card_send"]) {
-    const sent = await call(tool, { bot: "p", message: "Keep this conversation" });
+    const sent = await call(tool, { bot: "p", message: "Keep this conversation",
+      ...(tool === "grokbot_send" ? { requestText: "Tell Piper Renamed to keep this conversation" } : {}) });
     expect(sent).toMatchObject({ sent: true, bot: "Piper Renamed", botId: "p" });
   }
   expect(writes.map(write => write[1])).toEqual(["p", "p"]);
