@@ -141,10 +141,16 @@ function readOld(key: Key): unknown {
   }
 }
 /** Best effort: Windows can hold a file open (EBUSY/EPERM); the next change retries. */
-function dropOld(key: Key): void {
+/** Removes the old 1.0.0 plain file. False when it is still there (a locked
+ * file on Windows): a sign-out must then say so, or the next start would move
+ * it back into the vault and sign the user in again. */
+function dropOld(key: Key): boolean {
   try {
     rmSync(legacyFile(key), { force: true });
-  } catch {}
+    return true;
+  } catch {
+    return false;
+  }
 }
 function usable<T>(key: Key, value: unknown): T | undefined {
   if (key === "session") return (value as Session | undefined)?.accessToken ? (value as T) : undefined;
@@ -238,15 +244,15 @@ function setSession(value: Session | undefined): Promise<boolean> {
 }
 /** Updates the copy this process reads at once (so two callers never race),
  * then the keystore. */
-function setPending(value: Pending | undefined): Promise<void> {
+function setPending(value: Pending | undefined): Promise<boolean> {
   if (!vault) {
     if (value) save(pendingFile, value);
     else rmSync(pendingFile, { force: true });
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
   memory.pending = value;
   dropOld("pending");
-  return persist("pending").then(() => {});
+  return persist("pending");
 }
 
 function read<T>(file: string): T | undefined {
@@ -350,12 +356,13 @@ export async function browserAccount(action: "status" | "connect" | "disconnect"
   if (!scope) throw new Error("Sign in to VoiceOS before connecting Grok Bot.");
   await vaultReady();
   if (action === "disconnect") {
-    // pollFlow verifies the outstanding request id before storing a session.
-    await setPending(undefined);
-    // The keystore copy must be gone too: the app restarts Grok Bot after a
-    // sign-out, and a copy left behind (a locked file on Windows, a vault
-    // timeout) would sign the user back in. Try twice, then say so.
-    if (!(await setSession(undefined)) && !(await persist("session")))
+    // The app restarts Grok Bot after a sign-out. Any copy left behind (a
+    // locked file on Windows, a vault timeout) would sign the user back in:
+    // the session, the half-finished browser login (a restart resumes it)
+    // and the old 1.0.0 files. Try each delete twice, then say so.
+    const pendingGone = (await setPending(undefined)) || (await persist("pending"));
+    const sessionGone = (await setSession(undefined)) || (await persist("session"));
+    if (!pendingGone || !sessionGone || !dropOld("pending") || !dropOld("session"))
       throw new Error("Couldn't sign out of Grok Bot. Try again.");
     return { state: "signed_out" };
   }
