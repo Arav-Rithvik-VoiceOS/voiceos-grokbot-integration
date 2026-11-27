@@ -330,6 +330,49 @@ export function jointRecipients(request: string, bots: Agent[]): Agent[] {
   }
   return found.length >= 2 ? found : [];
 }
+/** Where each instruction starts: an addressing verb at the start, or after
+ * "and", "or", "then", a comma or a new sentence. A verb after "to" ("Tell
+ * Assistant to ask Jerome") or a colon is part of the task. */
+function instructionStarts(request: string): number[] {
+  const starts: number[] = [];
+  for (const verb of request.matchAll(/\b(?:send|dispatch|assign|deliver|forward|give|ask|tell|message|text|ping|have|get|instruct|say)\s+/gi)) {
+    const before = request.slice(0, verb.index).trimEnd();
+    if (!before || /(?:[,;.!?]|\b(?:and|or|then|also|plus))$/i.test(before)) starts.push(verb.index!);
+  }
+  return starts;
+}
+
+/** Did the user address `bot`, and only `bot`, in this turn? "Tell Assistant
+ * to ask Jerome" addresses Assistant: Jerome is part of the task. So a model
+ * that picked Jerome is guessing, and the bot list opens. Several bots
+ * addressed together go to their group chat (VOS-1672). */
+function userAddressed(request: string, bots: Agent[], bot: Agent): boolean {
+  const together = jointRecipients(request, bots);
+  if (together.some(b => b.id === bot.id)) {
+    const names = together.map(b => spokenNames(b)[1] ?? b.name);
+    throw new IntegrationError("not_found", `${names.join(" and ")} were addressed together, so this goes to their group chat. Use grokbot_prepare_message with members ${JSON.stringify(together.map(b => b.id))} and no bot, then grokbot_group with the message.`);
+  }
+  if (together.length) return false;
+  // The bot right after "tell", "ask", "send this to" … in each instruction
+  // ("Tell Jarvis the build passed and ask Scout to deploy" has two). A
+  // shared or unknown name asks the user which bot they meant.
+  const addressees: Agent[] = [];
+  let unclear: unknown;
+  for (const start of instructionStarts(request)) {
+    try {
+      const addressee = explicitRecipient(request.slice(start), bots);
+      if (addressee) addressees.push(addressee);
+    } catch (error) { unclear ??= error; }
+  }
+  if (addressees.some(a => a.id === bot.id)) return true;
+  if (unclear) throw unclear;
+  if (addressees.length) return false;
+  // No addressing verb ("Can Jerome look at this?"): only one bot may be named.
+  const hits = mentionedBots(request, bots).filter(h => addressedCommonName(request, h.name));
+  const fullest = hits.filter(h => h.name === hits[0].name || !` ${hits[0].name} `.includes(` ${h.name} `));
+  const ids = new Set(fullest.map(h => h.bot.id));
+  return ids.size === 1 && ids.has(bot.id);
+}
 /** "explicit": the user named the bot in this turn. "model": the model chose
  * a bot the user did not name. Only "explicit" sends; the others are guesses
  * and open the bot list (VOS-1672). */
@@ -471,9 +514,7 @@ export class IntentRoster {
     const ref = input.bot?.trim();
     if (ref && !/^(?:(?:my|the|a|our)\s+)?(?:grok\s*bot|bots?)$/i.test(ref) && !taskOnly.some(bot => refersToBot(ref, bot))) {
       const bot = resolveMessageRecipient(ref, bots);
-      const said = !!request && mentionedBots(request, bots)
-        .some(h => h.bot.id === bot.id && addressedCommonName(request, h.name));
-      return { bot, source: said ? "explicit" : "model" };
+      return { bot, source: request && userAddressed(request, bots, bot) ? "explicit" : "model" };
     }
     // The model named no bot: look for one the user named in this turn.
     // Several bots addressed together go to their group chat; the group tool

@@ -404,7 +404,8 @@ test("spoken short names route a send with no model bot; shared or unknown names
   bots.push({id:"jj",name:"Jerome · Personal"});
   await expect(choose("Tell Jerome to draft BISV sponsor emails")).rejects.toThrow("Which one");
   await expect(choose("Tell Jerome to draft BISV sponsor emails","Jerome")).rejects.toThrow("Which one");
-  expect((await choose("Tell Jerome to draft BISV sponsor emails","j")).bot.id).toBe("j");
+  // The model's exact pick is still a guess between two Jeromes: ask (VOS-1672 review).
+  await expect(choose("Tell Jerome to draft BISV sponsor emails","j")).rejects.toThrow("Which one");
   await expect(choose("Tell Charlotte about the sponsors")).rejects.toThrow("Charlotte");
   await expect(choose("Tell Charlotte about the sponsors","Charlotte")).rejects.toThrow("Charlotte");
   expect((await choose("Send hi to Jerome · Personal")).bot.id).toBe("jj");
