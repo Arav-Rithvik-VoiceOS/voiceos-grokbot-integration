@@ -14,7 +14,7 @@ function fakeGateway(sent: string[]) {
     async fetch(req) {
       const command = new URL(req.url).pathname.split("/").pop();
       const body = (await req.json().catch(() => ({}))) as { id?: string };
-      if (command === "listAgents") return Response.json([{ id: "scout", name: "Scout" }, { id: "jerome", name: "Jerome" }]);
+      if (command === "listAgents") return Response.json([{ id: "scout", name: "Scout" }, { id: "jerome", name: "Jerome" }, { id: "assistant", name: "Assistant" }]);
       if (command === "getAgentTranscriptTail") return Response.json({ entries: [] });
       if (command === "sendPrompt") { sent.push(String(body.id ?? "")); return Response.json({ accepted: true }); }
       return Response.json({});
@@ -103,4 +103,33 @@ test("a bot the user named in this turn still sends at once", async () => {
   expect(sent.length).toBe(1);
   expect(text).toContain("Jerome");
   expect(text).not.toContain("needsBot");
+}, 30000);
+
+// VOS-1672 review: a bot named inside the task is not the recipient. The
+// model's pick sends only when it is the bot the user addressed.
+for (const requestText of [
+  "Tell Assistant to ask Jerome for the report",
+  "Ask Assistant, or tell Assistant to ask Jerome for the report.",
+])
+  test(`"${requestText}" sends to Assistant when the model picks Assistant`, async () => {
+    const { text, sent } = await callSend({ bot: "Assistant", requestText, message: "Ask Jerome for the report." });
+    expect(sent.length).toBe(1);
+    expect(text).toContain("Assistant");
+    expect(text).not.toContain("needsBot");
+  }, 30000);
+
+for (const requestText of [
+  "Tell Assistant to ask Jerome for the report",
+  "Send this to Assistant: Jerome needs the payroll file",
+])
+  test(`"${requestText}" opens the bot list when the model picks Jerome`, async () => {
+    const { text, sent } = await callSend({ bot: "Jerome", requestText, message: "Ask Jerome for the report." });
+    expect(sent).toEqual([]);
+    expect(text).toContain("needsBot");
+  }, 30000);
+
+test("two bots addressed together never send to one of them", async () => {
+  const { text, sent } = await callSend({ bot: "Jerome", requestText: "Tell Assistant and Jerome the build is green", message: "The build is green." });
+  expect(sent).toEqual([]);
+  expect(text).toContain("group chat");
 }, 30000);
