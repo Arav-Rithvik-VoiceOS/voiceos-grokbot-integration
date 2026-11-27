@@ -247,6 +247,29 @@ test("a broken old token file does not crash startup or sign anyone in", async (
   rmSync(join(folder, "browser-session.json"), { force: true });
 });
 
+test("a sign-out that cannot delete the half-finished browser login says so (VOS-1672 review)", async () => {
+  const keystore = new Map([["pending", JSON.stringify({ uuid: "u", expiresAt: Date.now() + 600_000 })]]);
+  let deletes = 0;
+  const locked = {
+    get: async (key: "session" | "pending") => ({ available: true, value: keystore.get(key) ?? null }),
+    set: async (key: "session" | "pending", value: string) => (keystore.set(key, value), { available: true }),
+    delete: async (key: "session" | "pending") => {
+      if (key === "pending") { deletes++; throw Object.assign(new Error("EPERM"), { code: -32603 }); }
+      keystore.delete(key);
+      return { available: true };
+    },
+    clientVersion: async () => null,
+  };
+  api.expectHostVault();
+  await api.useHostVault(locked);
+  await expect(api.browserAccount("disconnect")).rejects.toThrow("Couldn't sign out");
+  expect(deletes).toBe(2);
+  expect(keystore.has("pending")).toBe(true);
+  locked.delete = async (key) => (keystore.delete(key), { available: true });
+  expect(await api.browserAccount("disconnect")).toEqual({ state: "signed_out" });
+  expect(keystore.has("pending")).toBe(false);
+});
+
 test("a sign-out that cannot delete the keystore copy says so, so the app does not sign back in", async () => {
   const keystore = new Map([["session", JSON.stringify({ accessToken: "kept" })]]);
   let deletes = 0;
