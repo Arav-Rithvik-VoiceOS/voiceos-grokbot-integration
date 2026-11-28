@@ -9,7 +9,7 @@
 // FIRST import, on purpose: rebinds console.log/info/warn/debug to stderr
 // before any dependency runs, so no stray stdout line corrupts the MCP wire.
 import "./stdoutGuard.ts";
-import { BrowserLoginRequired, ClientVersionRejected, browserAccount, browserSelected, browserPrefs, browserRoutingHistory, expectHostVault, useHostVault } from "./browserSession.ts";
+import { BrowserLoginRequired, ClientVersionRejected, DeliveryUnknown, browserAccount, browserSelected, browserPrefs, browserRoutingHistory, expectHostVault, useHostVault } from "./browserSession.ts";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -572,6 +572,11 @@ async function runTool(
     if (error instanceof ClientVersionRejected) {
       log(`${tool} failed:`, error);
       return result({ ok: false, message: error.message });
+    }
+    // It may have arrived: the card says "not confirmed", not "not sent".
+    if (error instanceof DeliveryUnknown) {
+      log(`${tool} failed:`, error);
+      return result({ ok: false, deliveryUnknown: true, message: error.message });
     }
     log(`${tool} failed:`, error);
     // "Not set up / needs a refresh" isn't a crash. On a Mac that never

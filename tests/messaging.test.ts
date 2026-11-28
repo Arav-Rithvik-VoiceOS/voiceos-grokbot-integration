@@ -12,7 +12,7 @@ const bots: actual.Agent[] = [
   { id: "f", name: "Finch", avatarColor: "green" },
   { id: "t", name: "Theo", avatarColor: "blue" },
 ];
-let agents: actual.Agent[], writes: any[], rejectSend: boolean;
+let agents: actual.Agent[], writes: any[], rejectSend: boolean, unknownSend = false;
 let rosterError: actual.IntegrationError | undefined;
 let signedInState: boolean | undefined;
 let connectedBefore = false;
@@ -69,6 +69,7 @@ mock.module("../client.ts", () => ({
   sendPrompt: async (id: string, message: string, files: actual.SentAttachment[] = []) => {
     writes.push(["send", id, message, ...(files.length ? [files] : [])]);
     if (rejectSend) throw new actual.IntegrationError("upstream", "Send failed");
+    if (unknownSend) throw new (await import("../browserSession.ts")).DeliveryUnknown("Delivery is unknown. Check the conversation before sending again.");
     return { accepted: true };
   },
   createGroup: async (name: string, members: string[]) => {
@@ -115,7 +116,7 @@ const demoOf = (html: string) => JSON.parse(html.match(/const DEMO=(.*);/)![1]);
 const cardData = (r: any) => demoOf(r._voiceos_glance.blocks[0].html);
 beforeEach(() => {
   agents = [...bots.map(a => ({ ...a })), { id: "g", name: "Study group", isGroup: true, memberIds: ["p", "f"] }];
-  writes = []; rejectSend = false;
+  writes = []; rejectSend = false; unknownSend = false;
   rosterError = undefined; signedInState = undefined; connectedBefore = false; appOpens = 0; rosterReadWakes = [];
   publishCreated = true;
   tail = EARLIER;
@@ -797,4 +798,16 @@ test("passive reply checks do not open the app when a session is rejected", asyn
   expect(rosterReadWakes).toEqual([false]);
   expect(r.needsSetup).toBeUndefined();
   expect(appOpens).toBe(0);
+});
+
+// VOS-1672 review: a send Grok Bot never confirmed may have arrived. The card
+// must say "not confirmed" and keep the text out of the box, never "Not sent".
+test("an unconfirmed card send is reported as unknown, not as not sent", async () => {
+  unknownSend = true;
+  const r = await call("grokbot_card_send", { bot: "Piper", message: "From the card" });
+  expect(r).toMatchObject({ ok: false, deliveryUnknown: true });
+  expect(r.sent).toBeUndefined();
+  const adapter = await Bun.file(new URL("../widgets/show-adapter.js", import.meta.url)).text();
+  // Both the bot composer and the new-group composer treat it as unconfirmed.
+  expect(adapter.match(/if\(body&&body\.deliveryUnknown\)throw \{status:'unknown'\}/g)?.length).toBe(2);
 });

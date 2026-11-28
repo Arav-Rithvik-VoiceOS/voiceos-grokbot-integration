@@ -404,6 +404,11 @@ async function session(): Promise<Session> {
   throw new BrowserLoginRequired();
 }
 /** Grok Bot turned away the client version we present. */
+/** A send Grok Bot never confirmed either way: it may have arrived. The
+ * card must say "not confirmed", never "not sent", so the user does not
+ * send it twice (VOS-1672). */
+export class DeliveryUnknown extends Error {}
+
 export class ClientVersionRejected extends Error {
   constructor() {
     super(
@@ -734,7 +739,7 @@ export const browserSend = (
       }
       break;
     }
-    throw new Error(
+    throw new DeliveryUnknown(
       "Delivery is unknown. Check the conversation before sending again.",
     );
   });

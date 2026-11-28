@@ -272,6 +272,8 @@ function gbSend(p,v,files){files=files||[];const id=p.id,root=$('#chat'),names=f
   sending=true;
   return invoke('grokbot_card_send',{...(edit?{group:id,...edit}:{bot:id}),message:v,...(att.length?{attachments:att}:{})});
  }).then(r=>{let body=null;try{body=unpackResult(r)}catch(e){throw {status:'failed',error:e.message}}
+   // Grok Bot never confirmed it either way (VOS-1672): it may have arrived, so it is not "Not sent".
+   if(body&&body.deliveryUnknown)throw {status:'unknown'};
    if(!body||body.sent!==true)throw {status:'failed',error:(body&&body.message)||'The send was not confirmed.'};
    if(files.length)gbClearFiles(root,files);gbLocal(id,localId,'sent');
    if(edit)gbSaved(id,body.members||edit.members,body.groupName||edit.groupName)})
@@ -339,6 +341,7 @@ function gbNewSend(v){const n=gbNew,c=$('#chat'),input=$('#msg',c),sb=$('.send',
  const members=n.members.slice(),groupName=n.name.trim();
  invoke('grokbot_card_send',{members,groupName,message:v})
   .then(r=>{let body=null;try{body=unpackResult(r)}catch(err){throw {status:'failed',error:err.message}}
+   if(body&&body.deliveryUnknown)throw {status:'unknown'};
    if(!body||body.sent!==true||!body.group)throw {status:'failed',error:(body&&body.message)||'The group was not created.'};
    const g={id:body.group,name:body.groupName||groupName||'New group',members:body.members||members,time:'now',last:v,color:'#777777',shape:'blob'};
    D.groups=[...(D.groups||[]).filter(x=>x.id!==g.id),g];render(D);gbPut({madeGroups:[...(gbGet().madeGroups||[]).filter(x=>x.id!==g.id),g]});
